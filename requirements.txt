@@ -4,3 +4,4 @@ numpy
 pydantic>=2.0.0
 google-genai
 streamlit
+requests
