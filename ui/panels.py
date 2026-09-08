@@ -51,6 +51,10 @@ def direction_html(a: CategoryAnalysis) -> str:
     return card_html("Market direction", body, tone_for_direction(d.direction))
 
 
+def _touches(n: int) -> str:
+    return "1 touch" if n == 1 else f"{n} touches"
+
+
 def layman_html(a: CategoryAnalysis) -> str:
     """Plain-English summary built only from the deterministic analysis (Phase 2 replaces it with the head agent)."""
     d, v, s = a.direction, a.vol, a.squeeze
@@ -65,9 +69,9 @@ def layman_html(a: CategoryAnalysis) -> str:
     if nearest_sup or nearest_res:
         bits = []
         if nearest_sup:
-            bits.append(f"support at {fmt_num(nearest_sup.price, 0, '$')} ({nearest_sup.touches} touches)")
+            bits.append(f"support at {fmt_num(nearest_sup.price, 0, '$')} ({_touches(nearest_sup.touches)})")
         if nearest_res:
-            bits.append(f"resistance at {fmt_num(nearest_res.price, 0, '$')} ({nearest_res.touches} touches)")
+            bits.append(f"resistance at {fmt_num(nearest_res.price, 0, '$')} ({_touches(nearest_res.touches)})")
         parts.append("Nearest " + " and ".join(bits) + ".")
     if v.exp_low and v.exp_high:
         parts.append(f"Volatility is {v.regime.lower()}; a one-sigma move over the {v.horizon_label} spans {fmt_num(v.exp_low, 0, '$')} to {fmt_num(v.exp_high, 0, '$')}, "
