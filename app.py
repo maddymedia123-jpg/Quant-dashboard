@@ -83,6 +83,7 @@ def category_tab(tab, key):
         if banner:
             panels.render(banner)
         render_chart(a, dark)
+        panels.render(panels.layman_html(a))
         c1, c2 = st.columns(2)
         with c1:
             panels.render(panels.direction_html(a))

@@ -17,6 +17,9 @@ class VolProfile:
     exp_low: float | None
     exp_high: float | None
     horizon_label: str
+    mean20: float | None = None      # 20-bar mean of close
+    sigma2_up: float | None = None   # mean20 + 2 std
+    sigma2_dn: float | None = None   # mean20 - 2 std
 
 
 def atr(df: pd.DataFrame, n: int = 14) -> pd.Series:
@@ -48,4 +51,7 @@ def volatility_profile(df: pd.DataFrame, horizon_bars: int, horizon_label: str, 
     sigma = float(lr.std()) * math.sqrt(horizon_bars) if lr.notna().sum() >= 5 else None
     exp_low = price * math.exp(-sigma) if sigma is not None else None
     exp_high = price * math.exp(sigma) if sigma is not None else None
-    return VolProfile(atr_v, atr_pct, regime, sigma * 100 if sigma is not None else None, exp_low, exp_high, horizon_label)
+    mu20 = float(close.tail(20).mean())
+    sd20 = float(close.tail(20).std())
+    return VolProfile(atr_v, atr_pct, regime, sigma * 100 if sigma is not None else None, exp_low, exp_high, horizon_label,
+                      mean20=mu20, sigma2_up=mu20 + 2 * sd20, sigma2_dn=mu20 - 2 * sd20)

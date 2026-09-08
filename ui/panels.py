@@ -51,6 +51,41 @@ def direction_html(a: CategoryAnalysis) -> str:
     return card_html("Market direction", body, tone_for_direction(d.direction))
 
 
+def layman_html(a: CategoryAnalysis) -> str:
+    """Plain-English summary built only from the deterministic analysis (Phase 2 replaces it with the head agent)."""
+    d, v, s = a.direction, a.vol, a.squeeze
+    sup = [l for l in a.levels if l.kind == "support"]
+    res = [l for l in a.levels if l.kind == "resistance"]
+    nearest_sup = max(sup, key=lambda l: l.price) if sup else None
+    nearest_res = min(res, key=lambda l: l.price) if res else None
+    rsi_last = float(a.rsi.dropna().iloc[-1]) if a.rsi.notna().any() else None
+    lean = {"BULLISH": "leaning up", "BEARISH": "leaning down", "NEUTRAL": "without a clear lean"}[d.direction]
+    stack = {"BULL": "above all four EMAs, a bullish stack", "BEAR": "below all four EMAs, a bearish stack", "MIXED": "inside a mixed EMA stack"}[a.ema.state]
+    parts = [f"On the {a.chart_tf} chart BTC trades at {fmt_num(a.price, 0, '$')}, {lean} with {d.confidence:.0%} confidence, {stack}."]
+    if nearest_sup or nearest_res:
+        bits = []
+        if nearest_sup:
+            bits.append(f"support at {fmt_num(nearest_sup.price, 0, '$')} ({nearest_sup.touches} touches)")
+        if nearest_res:
+            bits.append(f"resistance at {fmt_num(nearest_res.price, 0, '$')} ({nearest_res.touches} touches)")
+        parts.append("Nearest " + " and ".join(bits) + ".")
+    if v.exp_low and v.exp_high:
+        parts.append(f"Volatility is {v.regime.lower()}; a one-sigma move over the {v.horizon_label} spans {fmt_num(v.exp_low, 0, '$')} to {fmt_num(v.exp_high, 0, '$')}, "
+                     f"and the 20-bar 2σ band sits at {fmt_num(v.sigma2_dn, 0, '$')} to {fmt_num(v.sigma2_up, 0, '$')}.")
+    if rsi_last is not None:
+        zone = "overbought" if rsi_last >= 70 else "oversold" if rsi_last <= 30 else "neutral territory"
+        parts.append(f"RSI is {rsi_last:.0f}, {zone}.")
+    if a.divergences:
+        parts.append("Divergence watch: " + "; ".join(x.label for x in a.divergences) + ".")
+    if s.score is not None and s.score >= 40:
+        parts.append(f"Positioning shows {s.direction.replace('_', ' ').lower()} risk at {s.score}/100.")
+    if d.anchor is not None:
+        parts.append(f"The call stays anchored at {fmt_num(d.anchor, 0, '$')} and flips if: {d.flips_if.lower()}.")
+    else:
+        parts.append(f"It flips if: {d.flips_if.lower()}.")
+    return card_html("Summary", "<p>" + html.escape(" ".join(parts)) + "</p>", tone_for_direction(d.direction))
+
+
 def divergence_html(a: CategoryAnalysis) -> str:
     if not a.divergences:
         return card_html("RSI divergence", "<p class='muted'>No RSI divergence in the last 60 bars.</p>")
@@ -70,6 +105,7 @@ def volatility_html(a: CategoryAnalysis) -> str:
     v, s = a.vol, a.squeeze
     body = f"<p>Regime <strong>{v.regime}</strong> · ATR {fmt_num(v.atr, 0, '$')} ({fmt_num(v.atr_pct, 2, suffix='%')})</p>"
     body += f"<p>Expected range {v.horizon_label}: {fmt_num(v.exp_low, 0, '$')} – {fmt_num(v.exp_high, 0, '$')} (±{fmt_num(v.sigma_pct, 2, suffix='%')})</p>"
+    body += f"<p>2σ band (20-bar): {fmt_num(v.sigma2_dn, 0, '$')} – {fmt_num(v.sigma2_up, 0, '$')} · mean {fmt_num(v.mean20, 0, '$')}</p>"
     if s.score is None:
         body += "<p class='muted'>Squeeze risk: futures data unavailable.</p>"
     else:

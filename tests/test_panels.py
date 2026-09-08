@@ -38,6 +38,9 @@ def test_panels_render_strings_and_squeeze_banner():
     m = _market()
     a = analyze_category(CATEGORIES["weekly"], {**m.spot.frames, "4h": m.spot.frames["1h"], "1d": m.spot.frames["1h"]}, m.futures)
     assert "ti-card" in panels.direction_html(a)
+    lay = panels.layman_html(a)
+    assert "BTC trades at" in lay and "2σ band" in lay and "flips if" in lay
+    assert "2σ band (20-bar)" in panels.volatility_html(a)
     assert "RSI" in panels.divergence_html(a)
     assert a.vol.horizon_label in panels.volatility_html(a)
     assert "Run Analysis" in panels.agent_placeholder_html(a)

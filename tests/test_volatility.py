@@ -22,6 +22,7 @@ def test_profile_brackets_price_and_has_regime():
     assert vp.exp_low < price < vp.exp_high
     assert vp.regime in {"LOW", "NORMAL", "HIGH"}
     assert vp.atr_pct > 0 and vp.horizon_label == "next 24h"
+    assert vp.sigma2_dn < vp.mean20 < vp.sigma2_up
 
 
 def test_high_regime_when_recent_range_expands():
