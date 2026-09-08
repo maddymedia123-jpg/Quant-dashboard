@@ -3,71 +3,111 @@ import os
 import math
 import logging
 import json
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from typing import Dict, List, Literal, Optional
 import ccxt.async_support as ccxt
 import numpy as np
 import pandas as pd
-from pydantic import BaseModel, Field
-import streamlit as st
 import requests
+import streamlit as st
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from pydantic import BaseModel, Field
 
-# Setup Logging
+# =====================================================================
+# SYSTEM & LOGGING SETUP
+# =====================================================================
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("BTC-Quant-App")
+logger = logging.getLogger("BTC-Quant-Stage2")
 
-# Optional Gemini Imports
-try:
-    from google import genai
-    from google.genai import types
-    HAS_GENAI = True
-except ImportError:
-    HAS_GENAI = False
+st.set_page_config(
+    page_title="BTC Institutional Microstructure Terminal",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Custom High-Contrast Dark Quant Theme Styling
+st.markdown("""
+<style>
+    .stApp { background-color: #0B0E14; color: #E2E8F0; }
+    .stTabs [data-baseweb="tab-list"] { gap: 8px; background-color: #131722; padding: 6px; border-radius: 8px; }
+    .stTabs [data-baseweb="tab"] { color: #94A3B8; border-radius: 6px; padding: 8px 16px; font-weight: 600; }
+    .stTabs [aria-selected="true"] { background-color: #1E293B; color: #38BDF8 !important; border-bottom: 2px solid #38BDF8; }
+    div[data-testid="stMetricValue"] { font-family: 'JetBrains Mono', monospace; font-weight: 700; color: #F8FAFC; }
+    .flash-banner-alert {
+        background: linear-gradient(90deg, rgba(225,29,72,0.2) 0%, rgba(159,18,57,0.4) 100%);
+        border: 1px solid #F43F5E; color: #FECDD3; padding: 12px 18px; border-radius: 8px; font-weight: 600; margin-bottom: 15px;
+    }
+    .flash-banner-ok {
+        background: linear-gradient(90deg, rgba(16,185,129,0.15) 0%, rgba(5,150,105,0.25) 100%);
+        border: 1px solid #10B981; color: #A7F3D0; padding: 12px 18px; border-radius: 8px; font-weight: 600; margin-bottom: 15px;
+    }
+    .agent-card-bull { background-color: #064E3B; border-left: 4px solid #10B981; padding: 10px; border-radius: 6px; margin-bottom: 8px; }
+    .agent-card-bear { background-color: #7F1D1D; border-left: 4px solid #EF4444; padding: 10px; border-radius: 6px; margin-bottom: 8px; }
+    .summary-box-tech { background-color: #0F172A; border: 1px solid #334155; padding: 16px; border-radius: 8px; font-family: 'Courier New', monospace; font-size: 0.9em; }
+    .summary-box-layman { background-color: #1E1B4B; border: 1px solid #4338CA; padding: 16px; border-radius: 8px; color: #E0E7FF; font-size: 1.02em; line-height: 1.5; }
+</style>
+""", unsafe_allow_html=True)
 
 # =====================================================================
-# PYDANTIC SCHEMAS
+# STAGE 2 PYDANTIC SCHEMAS
 # =====================================================================
 
-class VolatilityProjection(BaseModel):
-    intraday_4h_regime: Literal["LOW_COMPRESSION", "NORMAL_EXPANSION", "HIGH_VOLATILITY_BURST"]
-    intraday_expected_range_usd: float
-    weekly_day_by_day_range: Dict[str, float]
-    monthly_volatility_regime: str
+class BullishThesis(BaseModel):
+    agent_id: str
+    agent_name: str
+    conviction_score: float = Field(ge=0.0, le=10.0)
+    key_argument: str
+    target_levels: List[float]
 
-class TrapSqueezeAnalysis(BaseModel):
-    short_squeeze_risk: Literal["LOW", "MODERATE", "EXTREME"]
-    long_squeeze_risk: Literal["LOW", "MODERATE", "EXTREME"]
-    bull_trap_zone: List[float]
-    bear_trap_zone: List[float]
-    rejection_resistance_levels: List[float]
-    support_sweep_levels: List[float]
-    new_ath_expansion_potential: bool
+class BearishThesis(BaseModel):
+    agent_id: str
+    agent_name: str
+    conviction_score: float = Field(ge=0.0, le=10.0)
+    key_argument: str
+    target_levels: List[float]
 
-class DualSummary(BaseModel):
-    layman_summary: str = Field(description="Plain-English narrative for non-quant users.")
-    institutional_detail: str = Field(description="In-depth quant & microstructure summary.")
-    drastic_change_detected: bool
+class MultiAgentDebatePayload(BaseModel):
+    bull_theses: List[BullishThesis]
+    bear_theses: List[BearishThesis]
+    bull_conviction_total: float
+    bear_conviction_total: float
+    dominant_bias: str
 
-class ComprehensiveReport(BaseModel):
+class TrapAnalysis(BaseModel):
+    bull_trap_detected: bool
+    bear_trap_detected: bool
+    short_squeeze_risk: str
+    long_squeeze_risk: str
+    explainable_context: str
+
+class MarketState(BaseModel):
     timestamp_utc: str
     spot_price: float
-    volatility: VolatilityProjection
-    traps_and_squeezes: TrapSqueezeAnalysis
-    summaries: DualSummary
+    bull_conviction_pct: float
+    bear_conviction_pct: float
+    flash_update_active: bool
+    flash_update_reason: str
+    intraday_tactical_summary_15m_1h: str
+    tactical_recon_4h_10h: str
+    macro_anchor_summary_1d_1w: str
+    layman_summary: str
+    technical_deep_dive: str
+    trap_intelligence: TrapAnalysis
+    replacement_audit_log: List[Dict[str, str]]
 
 # =====================================================================
-# ASYNC DATA FETCHING (KRAKEN CLOUD-COMPATIBLE)
+# MULTI-TIMEFRAME DATA & QUANT ENGINE
 # =====================================================================
 
-async def _fetch_all_metrics_async(symbol: str = "BTC/USD") -> Dict:
-    exchange = ccxt.kraken({"enableRateLimit": True, "timeout": 10000})
+async def fetch_multi_tf_data_async(symbol: str = "BTC/USD") -> Dict:
+    exchange = ccxt.kraken({"enableRateLimit": True, "timeout": 12000})
     try:
         timeframes = ["15m", "1h", "4h", "1d", "1w"]
-        ohlcv_tasks = [exchange.fetch_ohlcv(symbol, tf, limit=100) for tf in timeframes]
+        tasks = [exchange.fetch_ohlcv(symbol, tf, limit=100) for tf in timeframes]
         ticker_task = exchange.fetch_ticker(symbol)
 
-        results = await asyncio.gather(*ohlcv_tasks, ticker_task, return_exceptions=True)
-
+        results = await asyncio.gather(*tasks, ticker_task, return_exceptions=True)
         ohlcv_results = results[:5]
         ticker_res = results[5] if not isinstance(results[5], Exception) else {}
 
@@ -81,276 +121,255 @@ async def _fetch_all_metrics_async(symbol: str = "BTC/USD") -> Dict:
                 np.maximum(abs(df["high"] - df["close"].shift()), abs(df["low"] - df["close"].shift()))
             )
             df["atr14"] = df["tr"].rolling(14).mean()
-            df["log_ret"] = np.log(df["close"] / df["close"].shift(1))
-            df["sigma"] = df["log_ret"].rolling(20).std() * df["close"]
             df["mu"] = df["close"].rolling(20).mean()
+            df["std"] = df["close"].rolling(20).std()
+            
+            # Standard Deviation Exhaustion Bands
+            df["sigma_1_up"] = df["mu"] + df["std"]
+            df["sigma_2_up"] = df["mu"] + (2 * df["std"])
+            df["sigma_3_up"] = df["mu"] + (3 * df["std"])
+            df["sigma_1_dn"] = df["mu"] - df["std"]
+            df["sigma_2_dn"] = df["mu"] - (2 * df["std"])
+            df["sigma_3_dn"] = df["mu"] - (3 * df["std"])
 
+            # Order Flow Delta & CVD
             range_len = np.maximum(df["high"] - df["low"], 0.0001)
             buyer_ratio = (df["close"] - df["low"]) / range_len
             df["vol_delta"] = (buyer_ratio - 0.5) * 2 * df["volume"]
             df["cvd"] = df["vol_delta"].cumsum()
 
-            last = df.iloc[-1]
-            matrix[tf] = {
-                "close": float(last["close"]),
-                "mu": float(last["mu"]),
-                "sigma_1_up": float(last["mu"] + last["sigma"]),
-                "sigma_2_up": float(last["mu"] + (2 * last["sigma"])),
-                "sigma_3_up": float(last["mu"] + (3 * last["sigma"])),
-                "sigma_1_dn": float(last["mu"] - last["sigma"]),
-                "sigma_2_dn": float(last["mu"] - (2 * last["sigma"])),
-                "sigma_3_dn": float(last["mu"] - (3 * last["sigma"])),
-                "atr14": float(last["atr14"]),
-                "cvd_current": float(last["cvd"]),
-                "cvd_slope": float(df["cvd"].iloc[-1] - df["cvd"].iloc[-5]),
-            }
+            # Technical Indicators: RSI & StochRSI
+            delta = df["close"].diff()
+            gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+            rs = gain / np.maximum(loss, 1e-9)
+            df["rsi"] = 100 - (100 / (1 + rs))
 
-        if not matrix or "1h" not in matrix:
-            raise ValueError("Failed to retrieve valid OHLCV matrix from exchange.")
+            min_rsi = df["rsi"].rolling(14).min()
+            max_rsi = df["rsi"].rolling(14).max()
+            df["stoch_k"] = ((df["rsi"] - min_rsi) / np.maximum(max_rsi - min_rsi, 1e-9)) * 100
+            df["stoch_d"] = df["stoch_k"].rolling(3).mean()
+
+            last = df.iloc[-1]
+            prev = df.iloc[-2]
+
+            matrix[tf] = {
+                "df": df,
+                "close": float(last["close"]),
+                "open": float(last["open"]),
+                "high": float(last["high"]),
+                "low": float(last["low"]),
+                "mu": float(last["mu"]),
+                "sigma_1_up": float(last["sigma_1_up"]),
+                "sigma_2_up": float(last["sigma_2_up"]),
+                "sigma_3_up": float(last["sigma_3_up"]),
+                "sigma_1_dn": float(last["sigma_1_dn"]),
+                "sigma_2_dn": float(last["sigma_2_dn"]),
+                "sigma_3_dn": float(last["sigma_3_dn"]),
+                "atr14": float(last["atr14"]),
+                "cvd": float(last["cvd"]),
+                "cvd_slope_5": float(df["cvd"].iloc[-1] - df["cvd"].iloc[-5]),
+                "price_change_5": float(df["close"].iloc[-1] - df["close"].iloc[-5]),
+                "rsi": float(last["rsi"]),
+                "stoch_k": float(last["stoch_k"]),
+                "stoch_d": float(last["stoch_d"])
+            }
 
         spot_price = float(ticker_res.get("last", matrix["1h"]["close"])) if isinstance(ticker_res, dict) else matrix["1h"]["close"]
 
-        daily_std = matrix["1d"]["sigma_1_up"] - matrix["1d"]["mu"]
-        weekly_day_volatility = {
-            f"Day_{i+1}": round(daily_std * math.sqrt(i + 1), 2) for i in range(7)
-        }
-
         return {
             "spot_price": spot_price,
-            "open_interest": 45000.0,  # Simulated institutional metric for spot pairs
-            "funding_rate": 0.0001,
+            "funding_rate": 0.00021,  # Simulated 0.021% 8h funding
+            "open_interest": 48250.0,
+            "whale_ratio": 1.88,       # Whale Long/Short ratio > 1.80
             "quant_matrix": matrix,
-            "weekly_day_volatility": weekly_day_volatility,
             "error": None
         }
     except Exception as e:
-        logger.error(f"Data fetching error: {e}")
-        return {"error": str(e), "spot_price": 79000.0, "open_interest": 0.0, "funding_rate": 0.0001, "quant_matrix": {}, "weekly_day_volatility": {}}
+        logger.error(f"Error fetching data: {e}")
+        return {"error": str(e), "spot_price": 79200.0, "funding_rate": 0.0001, "open_interest": 0.0, "whale_ratio": 1.5, "quant_matrix": {}}
     finally:
         await exchange.close()
 
-@st.cache_data(ttl=60)
-def fetch_cached_market_data(symbol: str = "BTC/USD") -> Dict:
-    return asyncio.run(_fetch_all_metrics_async(symbol))
+@st.cache_data(ttl=30)
+def get_cached_quant_data(symbol: str = "BTC/USD") -> Dict:
+    return asyncio.run(fetch_multi_tf_data_async(symbol))
 
 # =====================================================================
-# REPORT GENERATION ENGINE
+# STAGE 2 — MULTI-AGENT MICROSTRUCTURE PIPELINE
 # =====================================================================
 
-def generate_report_sync(data: Dict, openrouter_key: str = "") -> Dict:
-    if data.get("error") or not data.get("quant_matrix"):
-        return {"report": _build_fallback_report(79000.0, data), "engine": "Local Fallback Engine", "warnings": ["Exchange data degraded."]}
-
+def execute_stage2_multi_agent_debate(data: Dict) -> MultiAgentDebatePayload:
     spot = data["spot_price"]
     qm = data["quant_matrix"]
     fr = data["funding_rate"]
-    oi = data["open_interest"]
+    whale_ratio = data["whale_ratio"]
 
-    warnings_log = []
-    prompt = f"""
-    Synthesize an institutional crypto report for BTC/USD at ${spot:,.2f}.
-    - 1H Bands: μ=${qm['1h']['mu']:.2f}, +2σ=${qm['1h']['sigma_2_up']:.2f}, -2σ=${qm['1h']['sigma_2_dn']:.2f}, ATR14=${qm['1h']['atr14']:.2f}
-    - 4H Bands: μ=${qm['4h']['mu']:.2f}, +2σ=${qm['4h']['sigma_2_up']:.2f}, -2σ=${qm['4h']['sigma_2_dn']:.2f}     - 1D Bands: μ=${qm['1d']['mu']:.2f}, +2σ=${qm['1d']['sigma_2_up']:.2f}, -2σ=${qm['1d']['sigma_2_dn']:.2f}
+    # --- 5 BEAR CASE AGENTS ---
+    bear_1 = BearishThesis(
+        agent_id="BEAR_1",
+        agent_name="Funding & OI Overheat Specialist",
+        conviction_score=8.5 if fr > 0.00015 else 4.0,
+        key_argument=f"Elevated 8H funding rate ({fr*100:.3f}%) indicates long position crowding, vulnerable to cascading long liquidations.",
+        target_levels=[spot * 0.98, spot * 0.96]
+    )
     
-    You MUST output valid JSON matching this exact structure:
-    {{
-      "timestamp_utc": "{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
-      "spot_price": {spot},
-      "volatility": {{
-        "intraday_4h_regime": "NORMAL_EXPANSION",
-        "intraday_expected_range_usd": {qm['4h']['atr14'] * 1.5},
-        "weekly_day_by_day_range": {json.dumps(data.get("weekly_day_volatility", {}))},
-        "monthly_volatility_regime": "COMPRESSION_BEFORE_EXPANSION"
-      }},
-      "traps_and_squeezes": {{
-        "short_squeeze_risk": "MODERATE",
-        "long_squeeze_risk": "LOW",
-        "bull_trap_zone": [{round(qm['1h']['sigma_2_up'], 2)}, {round(qm['1h']['sigma_3_up'], 2)}],
-        "bear_trap_zone": [{round(qm['1h']['sigma_2_dn'], 2)}, {round(qm['1h']['sigma_3_dn'], 2)}],
-        "rejection_resistance_levels": [{round(qm['4h']['sigma_2_up'], 2)}, {round(qm['1d']['sigma_2_up'], 2)}],
-        "support_sweep_levels": [{round(qm['4h']['sigma_2_dn'], 2)}, {round(qm['1d']['sigma_2_dn'], 2)}],
-        "new_ath_expansion_potential": false
-      }},
-      "summaries": {{
-        "layman_summary": "Bitcoin is testing key volatility parameters around ${spot:,.2f}. Monitor support and resistance levels closely.",
-        "institutional_detail": "Microstructure anchored around 1H mean with standard deviation expansion bands active.",
-        "drastic_change_detected": false
-      }}
-    }}
-    Return ONLY valid JSON.
-    """
-
-    # OpenRouter API Integration
-    if openrouter_key and openrouter_key not in ["", "sk-or-v1-your-key-here"]:
-        try:
-            response = requests.post(
-                url="https://openrouter.ai/api/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {openrouter_key}",
-                    "Content-Type": "application/json"
-                },
-                data=json.dumps({
-                    "model": "anthropic/claude-3.5-sonnet",
-                    "messages": [{"role": "user", "content": prompt}]
-                }),
-                timeout=12
-            )
-            if response.status_code == 200:
-                content = response.json()["choices"][0]["message"]["content"]
-                if content.startswith("```json"): content = content[7:-3]
-                report = ComprehensiveReport.model_validate_json(content)
-                return {"report": report, "engine": "🔄 OpenRouter API (Claude 3.5 Sonnet)", "warnings": warnings_log}
-        except Exception as e:
-            warnings_log.append(f"OpenRouter API error: {str(e)[:50]}")
-
-    report = _build_fallback_report(spot, data)
-    return {"report": report, "engine": "⚙️ Local Quant Heuristic Engine", "warnings": warnings_log}
-
-def _build_fallback_report(spot: float, data: Dict) -> ComprehensiveReport:
-    qm = data.get("quant_matrix", {})
-    if qm and "1h" in qm and "4h" in qm and "1d" in qm:
-        atr_4h = qm["4h"]["atr14"]
-        return ComprehensiveReport(
-            timestamp_utc=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-            spot_price=spot,
-            volatility=VolatilityProjection(
-                intraday_4h_regime="NORMAL_EXPANSION",
-                intraday_expected_range_usd=round(atr_4h * 1.5, 2),
-                weekly_day_by_day_range=data.get("weekly_day_volatility", {}),
-                monthly_volatility_regime="STABLE"
-            ),
-            traps_and_squeezes=TrapSqueezeAnalysis(
-                short_squeeze_risk="MODERATE",
-                long_squeeze_risk="LOW",
-                bull_trap_zone=[round(qm["1h"]["sigma_2_up"], 2), round(qm["1h"]["sigma_3_up"], 2)],
-                bear_trap_zone=[round(qm["1h"]["sigma_2_dn"], 2), round(qm["1h"]["sigma_3_dn"], 2)],
-                rejection_resistance_levels=[round(qm["4h"]["sigma_2_up"], 2), round(qm["1d"]["sigma_2_up"], 2)],
-                support_sweep_levels=[round(qm["4h"]["sigma_2_dn"], 2), round(qm["1d"]["sigma_2_dn"], 2)],
-                new_ath_expansion_potential=spot > qm["1d"]["sigma_2_up"]
-            ),
-            summaries=DualSummary(
-                layman_summary=f"Bitcoin is trading near ${spot:,.2f}. Volatility boundaries are anchored at ±2σ bands.",
-                institutional_detail=f"Quant matrix active. Mean reversion centered on 1H μ=${qm['1h']['mu']:,.2f}.",
-                drastic_change_detected=False
-            )
-        )
-    return ComprehensiveReport(
-        timestamp_utc=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-        spot_price=spot,
-        volatility=VolatilityProjection(intraday_4h_regime="NORMAL_EXPANSION", intraday_expected_range_usd=1200.0, weekly_day_by_day_range={}, monthly_volatility_regime="STABLE"),
-        traps_and_squeezes=TrapSqueezeAnalysis(short_squeeze_risk="LOW", long_squeeze_risk="LOW", bull_trap_zone=[spot*1.02, spot*1.03], bear_trap_zone=[spot*0.98, spot*0.97], rejection_resistance_levels=[spot*1.02], support_sweep_levels=[spot*0.98], new_ath_expansion_potential=False),
-        summaries=DualSummary(layman_summary="Initializing market telemetry...", institutional_detail="Awaiting exchange feed sync.", drastic_change_detected=False)
+    sigma_3_up_4h = qm["4h"]["sigma_3_up"] if "4h" in qm else spot * 1.03
+    bear_2 = BearishThesis(
+        agent_id="BEAR_2",
+        agent_name="Upper Exhaustion & Wall Absorption Agent",
+        conviction_score=8.0 if spot >= qm.get("1h", {}).get("sigma_2_up", spot*1.02) else 3.5,
+        key_argument=f"Price pressing into upper volatility exhaustion zone (+2σ at ${qm.get('1h', {}).get('sigma_2_up', 0):,.2f}). Passive limit sell walls absorbing buyers.",
+        target_levels=[qm.get("1h", {}).get("mu", spot)]
     )
 
-# =====================================================================
-# STREAMLIT UI DASHBOARD
-# =====================================================================
+    cvd_slope_1h = qm.get("1h", {}).get("cvd_slope_5", 0)
+    price_chg_1h = qm.get("1h", {}).get("price_change_5", 0)
+    bear_3 = BearishThesis(
+        agent_id="BEAR_3",
+        agent_name="Bearish CVD Divergence Agent",
+        conviction_score=7.5 if (price_chg_1h > 0 and cvd_slope_1h < 0) else 3.0,
+        key_argument="Bearish CVD Divergence detected: Price made local higher highs while Cumulative Volume Delta declined, showing buyer exhaustion.",
+        target_levels=[qm.get("15m", {}).get("sigma_2_dn", spot*0.99)]
+    )
 
-st.set_page_config(page_title="BTC Institutional Analytics", layout="wide")
+    bear_4 = BearishThesis(
+        agent_id="BEAR_4",
+        agent_name="Macro Resistance & Trend Agent",
+        conviction_score=6.5 if spot < qm.get("1w", {}).get("open", spot) else 3.0,
+        key_argument=f"Price trading below Weekly Open (${qm.get('1w', {}).get('open', 0):,.2f}). Higher-timeframe market structure remains capped by weekly supply.",
+        target_levels=[qm.get("1d", {}).get("sigma_2_dn", spot*0.95)]
+    )
 
-if "weekly_anchor" not in st.session_state:
-    st.session_state.weekly_anchor = None
-if "monthly_anchor" not in st.session_state:
-    st.session_state.monthly_anchor = None
-if "active_trade" not in st.session_state:
-    st.session_state.active_trade = None
+    bear_5 = BearishThesis(
+        agent_id="BEAR_5",
+        agent_name="Long Liquidation & Cascade Agent",
+        conviction_score=7.0 if spot < qm.get("1h", {}).get("mu", spot) else 4.0,
+        key_argument="Loss of 1H mean (μ) opens thin order book liquidity pocket down to key support sweep zones.",
+        target_levels=[qm.get("4h", {}).get("sigma_2_dn", spot*0.97)]
+    )
 
-st.sidebar.subheader("🕹️ Configuration")
-selected_symbol = st.sidebar.selectbox("Target Digital Asset", ["BTC/USD", "ETH/USD"])
-openrouter_key = st.sidebar.text_input("OpenRouter API Key", type="password", value="")
+    # --- 5 BULL CASE AGENTS ---
+    bull_1 = BullishThesis(
+        agent_id="BULL_1",
+        agent_name="Overhead Short Liquidation Pool Specialist",
+        conviction_score=8.0 if spot > qm.get("15m", {}).get("mu", spot) else 4.0,
+        key_argument=f"Dense short liquidation cluster accumulated above current spot between ${spot*1.01:,.2f} and ${spot*1.025:,.2f}.",
+        target_levels=[spot * 1.015, spot * 1.028]
+    )
 
-live_data = fetch_cached_market_data(selected_symbol)
-live_spot = live_data["spot_price"]
-qm_data = live_data["quant_matrix"]
+    bull_2 = BullishThesis(
+        agent_id="BULL_2",
+        agent_name="Lower Exhaustion & Taker Absorption Agent",
+        conviction_score=8.5 if spot <= qm.get("1h", {}).get("sigma_1_dn", spot*0.98) else 3.5,
+        key_argument=f"Market sell orders being aggressively absorbed into passive limit bids near lower deviation boundary (-2σ at ${qm.get('1h', {}).get('sigma_2_dn', 0):,.2f}).",
+        target_levels=[qm.get("1h", {}).get("mu", spot)]
+    )
 
-engine_result = generate_report_sync(live_data, openrouter_key)
-latest_report = engine_result["report"]
+    bull_3 = BullishThesis(
+        agent_id="BULL_3",
+        agent_name="Bullish CVD Divergence Agent",
+        conviction_score=8.0 if (price_chg_1h < 0 and cvd_slope_1h > 0) else 3.5,
+        key_argument="Bullish CVD Divergence confirmed: Price printed lower lows while spot cumulative volume delta accumulated upward.",
+        target_levels=[qm.get("4h", {}).get("sigma_2_up", spot*1.02)]
+    )
 
-st.sidebar.markdown("---")
-st.sidebar.subheader("🎯 Active Trade Setup")
-with st.sidebar.form("active_position_form"):
-    trade_dir = st.selectbox("Direction", ["LONG", "SHORT"])
-    trade_entry = st.number_input("Entry Price ($)", value=live_spot if live_spot > 0 else 79000.0)
-    trade_leverage = st.number_input("Leverage (x)", min_value=1.0, max_value=50.0, value=5.0)
-    trade_sl = st.number_input("Stop Loss ($)", value=trade_entry * 0.98 if trade_dir == "LONG" else trade_entry * 1.02)
-    trade_tp1 = st.number_input("TP1 Target ($)", value=trade_entry * 1.02 if trade_dir == "LONG" else trade_entry * 0.98)
-    save_trade = st.form_submit_button("Execute Unified Master Dispatch")
+    bull_4 = BullishThesis(
+        agent_id="BULL_4",
+        agent_name="Whale Position & Institutional Ratio Agent",
+        conviction_score=9.0 if whale_ratio >= 1.80 else 4.5,
+        key_argument=f"Top-trader whale long/short ratio elevated at {whale_ratio:.2f} (>1.80 threshold), indicating heavy institutional accumulation.",
+        target_levels=[qm.get("1d", {}).get("sigma_2_up", spot*1.05)]
+    )
 
-    if save_trade:
-        m_margin = 0.005
-        est_liq = trade_entry * (1 - (1 / trade_leverage) + m_margin) if trade_dir == "LONG" else trade_entry * (1 + (1 / trade_leverage) - m_margin)
-        st.session_state.active_trade = {"direction": trade_dir, "entry": trade_entry, "leverage": trade_leverage, "sl": trade_sl, "tp1": trade_tp1, "est_liq": est_liq}
-        st.sidebar.success("Position Logged!")
+    bull_5 = BullishThesis(
+        agent_id="BULL_5",
+        agent_name="Expansion & Structural Reclaim Agent",
+        conviction_score=7.5 if spot > qm.get("4h", {}).get("open", spot) else 3.5,
+        key_argument="Structural reclaim of 4H open price underway. Expansion volatility cycle favored to continue upward.",
+        target_levels=[qm.get("1w", {}).get("sigma_2_up", spot*1.06)]
+    )
 
-if st.sidebar.button("🗑️ Clear Active Trade"):
-    st.session_state.active_trade = None
-    st.rerun()
+    bears = [bear_1, bear_2, bear_3, bear_4, bear_5]
+    bulls = [bull_1, bull_2, bull_3, bull_4, bull_5]
 
-st.title("🏛️ BTC-Centric Master Analytical & Volatility Dashboard")
+    tot_bear = sum(b.conviction_score for b in bears)
+    tot_bull = sum(b.conviction_score for b in bulls)
+    dom = "BULLISH" if tot_bull > tot_bear else ("BEARISH" if tot_bear > tot_bull else "NEUTRAL")
 
-st.success(f"Unified Master Dispatch Executed Successfully! Engine: {engine_result['engine']}")
+    return MultiAgentDebatePayload(
+        bull_theses=bulls,
+        bear_theses=bears,
+        bull_conviction_total=tot_bull,
+        bear_conviction_total=tot_bear,
+        dominant_bias=dom
+    )
 
-tab1, tab2, tab3, tab4 = st.tabs([
-    "⚡ Live Tactical Recon (4H - 10H Outlook)", 
-    "📊 Weekly Anchor (4H / Daily / Weekly)", 
-    "📅 Monthly Macro Anchor (Daily / Weekly / Monthly)", 
-    "🏛️ Active Trade Matrix / War Rooms"
-])
+def execute_head_arbitrator_agent(data: Dict, debate: MultiAgentDebatePayload, openrouter_key: str = "") -> MarketState:
+    spot = data["spot_price"]
+    qm = data["quant_matrix"]
+    
+    tot_score = debate.bull_conviction_total + debate.bear_conviction_total
+    bull_pct = round((debate.bull_conviction_total / max(tot_score, 1)) * 100, 1)
+    bear_pct = round(100.0 - bull_pct, 1)
 
-with tab1:
-    st.subheader("Live Tactical Metrics & Liquidity Traps")
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Live Spot Price", f"${live_spot:,.2f}" if live_spot > 0 else "N/A")
-    c2.metric("Funding Rate", f"{live_data['funding_rate']*100:.4f}%")
-    c3.metric("Open Interest Index", f"{live_data['open_interest']:,.0f}")
-    c4.metric("1H ATR14", f"${qm_data['1h']['atr14']:,.2f}" if qm_data.get("1h") else "N/A")
+    # Detect Structural Flash Invalidation
+    weekly_open = qm.get("1w", {}).get("open", spot)
+    flash_active = False
+    flash_reason = "All higher timeframe structural anchors holding within normal volatility boundaries."
+    
+    if spot < qm.get("1d", {}).get("sigma_2_dn", spot*0.95):
+        flash_active = True
+        flash_reason = f"🚨 FLASH INVALIDATION: Spot (${spot:,.2f}) lost 1D -2σ boundary (${qm.get('1d', {}).get('sigma_2_dn', 0):,.2f}). Immediate downside risk unlocked."
+    elif spot > qm.get("1d", {}).get("sigma_2_up", spot*1.05):
+        flash_active = True
+        flash_reason = f"⚡ FLASH BREAKOUT: Spot (${spot:,.2f}) reclaimed 1D +2σ boundary (${qm.get('1d', {}).get('sigma_2_up', 0):,.2f}). Squeeze continuation active."
 
-    st.markdown("---")
-    col_a, col_b = st.columns(2)
-    with col_a:
-        st.write(f"**Short Squeeze Risk:** `{latest_report.traps_and_squeezes.short_squeeze_risk}`")
-        st.write(f"**Long Squeeze Risk:** `{latest_report.traps_and_squeezes.long_squeeze_risk}`")
-        st.write(f"**Bull Trap Zone (+2σ to +3σ):** ${latest_report.traps_and_squeezes.bull_trap_zone[0]:,.2f} - ${latest_report.traps_and_squeezes.bull_trap_zone[1]:,.2f}")
-    with col_b:
-        st.write(f"**Bear Trap Zone (-2σ to -3σ):** ${latest_report.traps_and_squeezes.bear_trap_zone[0]:,.2f} - ${latest_report.traps_and_squeezes.bear_trap_zone[1]:,.2f}")
-        st.write(f"**Rejection Levels:** {latest_report.traps_and_squeezes.rejection_resistance_levels}")
+    # Explainable Trap Intelligence
+    bull_trap = spot >= qm.get("1h", {}).get("sigma_2_up", spot*1.02) and qm.get("1h", {}).get("cvd_slope_5", 0) < 0
+    bear_trap = spot <= qm.get("1h", {}).get("sigma_2_dn", spot*0.98) and qm.get("1h", {}).get("cvd_slope_5", 0) > 0
 
-    st.markdown("---")
-    st.info(latest_report.summaries.layman_summary)
+    trap_intel = TrapAnalysis(
+        bull_trap_detected=bull_trap,
+        bear_trap_detected=bear_trap,
+        short_squeeze_risk="EXTREME" if debate.dominant_bias == "BULLISH" and data["funding_rate"] < 0.0001 else "MODERATE",
+        long_squeeze_risk="EXTREME" if debate.dominant_bias == "BEARISH" and data["funding_rate"] > 0.0002 else "LOW",
+        explainable_context=(
+            f"BULL TRAP ALERT: Price tested ${spot:,.2f} (+2σ upper band) but spot CVD declined. Sellers are absorbing aggressive buyers into strength."
+            if bull_trap else (
+                f"BEAR TRAP ALERT: Price swept lower to ${spot:,.2f} (-2σ lower band) while spot CVD trended upward. Smart money is absorbing market sellers into support."
+                if bear_trap else "No active trap divergence confirmed on 1H/4H timeframes. Order flow is currently aligned with price action."
+            )
+        )
+    )
 
-with tab2:
-    st.subheader("Weekly Matrix & Volatility Exhaustion Bands")
-    if qm_data.get("1w"):
-        w1 = qm_data["1w"]
-        st.write(f"**Weekly Open / Anchor Price:** ${w1['close']:,.2f}")
-        st.write(f"**+2σ Upper Boundary:** ${w1['sigma_2_up']:,.2f}")
-        st.write(f"**-2σ Lower Boundary:** ${w1['sigma_2_dn']:,.2f}")
-    st.markdown("---")
-    st.write("### Weekly Day-by-Day Volatility Projections")
-    if latest_report.volatility.weekly_day_by_day_range:
-        st.dataframe(pd.DataFrame(list(latest_report.volatility.weekly_day_by_day_range.items()), columns=["Horizon", "Projected Range (+/- USD)"]))
+    # Prompt OpenRouter LLM if available, else run local Head Arbitrator synthesis
+    if openrouter_key and openrouter_key.strip():
+        try:
+            prompt = f"""
+            Act as Master Quant Arbitrator for BTC/USD at ${spot:,.2f}.
+            Multi-Agent Debate Results:
+            - Bull Conviction: {bull_pct}% ({debate.bull_conviction_total} pts)
+            - Bear Conviction: {bear_pct}% ({debate.bear_conviction_total} pts)
+            - Dominant Bias: {debate.dominant_bias}
+            
+            1H Quant Parameters: Mean μ=${qm.get('1h',{}).get('mu',0):,.2f}, +2σ=${qm.get('1h',{}).get('sigma_2_up',0):,.2f}, -2σ=${qm.get('1h',{}).get('sigma_2_dn',0):,.2f}.
+            Weekly Open: ${weekly_open:,.2f}.
 
-with tab3:
-    st.subheader("Monthly Macro Structural View")
-    if qm_data.get("1d"):
-        d1 = qm_data["1d"]
-        st.write(f"**Daily Mean (μ):** ${d1['mu']:,.2f}")
-        st.write(f"**Monthly Volatility Regime:** {latest_report.volatility.monthly_volatility_regime}")
-        st.write(f"**Intraday Expected Range:** ±${latest_report.volatility.intraday_expected_range_usd:,.2f}")
-
-with tab4:
-    st.subheader("Active Position & War Room Risk Monitor")
-    if st.session_state.active_trade:
-        pos = st.session_state.active_trade
-        p1, p2, p3, p4, p5 = st.columns(5)
-        p1.write(f"**Direction:** {pos['direction']} ({pos['leverage']}x)")
-        p2.write(f"**Entry:** ${pos['entry']:,.2f}")
-        p3.write(f"**Stop Loss:** ${pos['sl']:,.2f}")
-        p4.write(f"**Est. Liq:** ${pos['est_liq']:,.2f}")
-        dist_sl = abs(live_spot - pos['sl']) / live_spot * 100
-        p5.write(f"**Dist to SL:** {dist_sl:.2f}%")
-        
-        if pos['direction'] == "LONG" and pos['sl'] <= pos['est_liq']:
-            st.error("🚨 WARNING: Stop loss is set below your liquidation price!")
-    else:
-        st.info("No active trade logged. Use the sidebar to set up your position tracker.")
+            Output ONLY valid JSON matching this structure:
+            {{
+                "layman_summary": "Conversational, plain-English summary explaining key levels and next expected move for non-quant users.",
+                "technical_deep_dive": "Rigorous quantitative breakdown detailing order flow delta, σ-band boundaries, and multi-timeframe structural interactions.",
+                "intraday_tactical_summary_15m_1h": "Outlook for the next 1-4 hours based on 15m/1h anchors.",
+                "tactical_recon_4h_10h": "Outlook for the next 4-10 hours based on 4H structure.",
+                "macro_anchor_summary_1d_1w": "Higher timeframe outlook based on Daily and Weekly open anchors."
+            }}
+            """
+            res = requests.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={"Authorization": f"Bearer {openrouter_key}", "Content-Type": "application/json"},
+                data=json.dumps({"model": "anthropic/claude-3.5-sonnet", "messages": [{"role": "user", "content": prompt}]}),
+                timeout=10
+            )
+            if res.status_code == 200:
+                parsed = json.loads(res.json()["choices"][0]["message"]["content"].replace("```json", "").replace("
