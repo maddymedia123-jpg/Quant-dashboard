@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 
 import httpx
 
@@ -39,5 +40,10 @@ async def fetch_all(client: httpx.AsyncClient | None = None) -> MarketSnapshot:
 
 
 def load_market() -> MarketSnapshot:
-    """Synchronous entry point for Streamlit (wrapped with st.cache_data in app.py)."""
+    """Synchronous entry point for Streamlit (wrapped with st.cache_data in app.py).
+
+    TI_OFFLINE_FIXTURES=1 serves the recorded fixtures instead (dev only)."""
+    if os.environ.get("TI_OFFLINE_FIXTURES") == "1":
+        from core.data.offline import fixture_market
+        return fixture_market()
     return asyncio.run(fetch_all())
