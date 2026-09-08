@@ -151,7 +151,11 @@ class VLineRenderer {
       ctx.strokeStyle = this._color; ctx.lineWidth = Math.max(1, Math.floor(hr));
       if (this._dash) ctx.setLineDash([4 * hr, 4 * hr]);
       ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, s.bitmapSize.height); ctx.stroke();
-      if (this._label) { ctx.setLineDash([]); ctx.fillStyle = this._color; ctx.font = `${11 * vr}px Inter, sans-serif`; ctx.fillText(this._label, x + 4 * hr, 12 * vr); }
+      if (this._label) {
+        ctx.setLineDash([]); ctx.fillStyle = this._color; ctx.font = `${11 * vr}px Inter, sans-serif`;
+        const y = this._dash ? s.bitmapSize.height - 6 * vr : 12 * vr;  // fib labels at the foot, now-label at the head
+        ctx.fillText(this._label, x + 4 * hr, y);
+      }
       ctx.restore();
     });
   }

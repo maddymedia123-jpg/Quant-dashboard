@@ -32,10 +32,10 @@ dark = st.sidebar.toggle("Dark mode", value=st.session_state["dark"])
 st.session_state["dark"] = dark
 inject_css(dark)
 
-if st.sidebar.button("Refresh data", use_container_width=True):
+if st.sidebar.button("Refresh data", width="stretch"):
     _market.clear()
     st.rerun()
-st.sidebar.button("Run Analysis", use_container_width=True, disabled=True,
+st.sidebar.button("Run Analysis", width="stretch", disabled=True,
                   help="The 13-agent Trap Intelligence report is delivered in Phase 2.")
 
 with st.spinner("Loading market data"):
@@ -108,7 +108,7 @@ with tabs[4]:
         t_lev = c3.number_input("Leverage (x)", min_value=1.0, max_value=125.0, value=10.0, step=1.0)
         t_sl = c4.number_input("Stop loss ($)", value=float(round(spot * 0.98, 2)), step=10.0)
         t_tp = c5.number_input("Take profit ($)", value=float(round(spot * 1.04, 2)), step=10.0)
-        go = st.form_submit_button("Run stress-test", use_container_width=True)
+        go = st.form_submit_button("Run stress-test", width="stretch")
     if go:
         tm = map_trade({"dir": t_dir, "entry": t_entry, "lev": t_lev, "sl": t_sl, "tp": t_tp}, live, intraday, m.futures)
         panels.render(panels.trade_result_html(tm))
@@ -120,9 +120,9 @@ with tabs[5]:
     panels.render("<div class='ti-card'><h4>Trap Intelligence Report</h4><p class='muted'>Phase 2 wires the Director, the Bullish and Bearish desks, "
                   "the volatility agent and the accuracy agent to the Run Analysis button. Section 1 of that report, the raw metric snapshot, is live below.</p></div>")
     rows = panels.raw_metrics_rows(m)
-    st.dataframe(pd.DataFrame(rows, columns=["Metric", "Value", "Source"]), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(rows, columns=["Metric", "Value", "Source"]), width="stretch", hide_index=True)
     with st.expander("Audit ledger — direction changes this session"):
         if st.session_state["audit"]:
-            st.dataframe(pd.DataFrame(st.session_state["audit"]), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(st.session_state["audit"]), width="stretch", hide_index=True)
         else:
             st.caption("No direction changes recorded yet in this session.")
