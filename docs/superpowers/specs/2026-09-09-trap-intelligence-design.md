@@ -164,3 +164,21 @@ Multi-asset support, persistent storage across sessions, background scheduling, 
 - Deribit rate limits on 900-instrument summary; mitigated by 120 s cache.
 - OpenRouter cost per run depends on model choice; defaults must be cheap until the client sets a budget.
 - Python 3.14 locally vs Streamlit Cloud default (3.12/3.13); pin `runtime.txt`/`requirements.txt` accordingly.
+
+## 13. Addendum 2026-09-09 (late) — additional keyless feeds verified for Phase 2
+
+Probed from the public-apis list. All keyless, all returned 200 with usable shapes.
+
+| Feed | Endpoint | Gives us | Fills |
+|---|---|---|---|
+| Gemini exchange (US) | `api.gemini.com/v2/candles/btcusd/{15m,30m,1hr,6hr,1day}` + `/v1/pubticker/btcusd` | ~1 300 bars of 15m, 364 daily; resample 1hr→4h, 1day→1w | **Spot fallback** when Kraken fails (US-safe, unlike Binance) |
+| Hyperliquid | `POST api.hyperliquid.xyz/info {"type":"metaAndAssetCtxs"}` | BTC funding (hourly), open interest, mark/oracle price | Second futures source alongside Binance/Bybit |
+| CoinLobster | `coinlobster.com/api/public/liquidations` | 24h perp liquidations: total/long/short USD + counts, **24 hourly buckets**, per-coin (BTC row), biggest, venues (Binance, OKX, BitMEX, Bybit, Gate, HTX, Bitfinex, Hyperliquid) | **Liquidation data** for B3/R3 without Coinglass (aggregate, not price-level heatmap) |
+| CoinLobster | `coinlobster.com/api/public/crypto-whales` | last 100 whale trades ≥$100K across 15 exchanges with side, size, and `marketConditions` (funding per exchange, OI per exchange) | Whale flow + cross-exchange funding for B4/R4, B2/R2 |
+| CoinLobster | `coinlobster.com/api/public/whale-radar?window={1h,4h,24h}` | per-coin unusual-flow flags vs baseline (magnitude blurred on free tier) | Sentiment / flow anomaly signal |
+| DefiLlama | `stablecoins.llama.fi/stablecoins?includePrices=false` | total stablecoin supply (≈$311B) with prev-day → supply delta | Stablecoin "dry powder" for B5/R5 |
+| CoinGecko | `/coins/bitcoin/ohlc?vs_currency=usd&days=1` | 30-min candles, coarse | last-resort spot |
+
+Dead or keyed now: CryptoCompare (401 without key, includes its news feed), CoinCap v3 (key), btcnode.uk Reddit (403 upstream), CoinLobster hyperliquid-whales (auth). News source remains open; macro calendar stays curated.
+
+Phase 2 plan impact: add `core/data/gemini_spot.py` (fallback in `fetch_spot`), `core/data/hyperliquid.py`, `core/data/coinlobster.py`, `core/data/stablecoins.py`; extend `MarketSnapshot` with `liquidations`, `whales`, `stablecoins`; feed those domains to B2/R2, B3/R3, B4/R4, B5/R5. All are IP-rate-limited: cache 60–120 s and never fan out per agent.
