@@ -75,6 +75,9 @@ header[data-testid="stHeader"] {{ display: none; }}
 .block-container {{ padding-top: 1.1rem; padding-bottom: 2rem; max-width: 1440px; }}
 section[data-testid="stSidebar"] {{ background: {p['panel']}; border-right: 1px solid {p['border']}; }}
 section[data-testid="stSidebar"] * {{ color: {p['text']}; }}
+section[data-testid="stSidebar"] button {{ background: {p['panel']}; color: {p['text']}; border: 1px solid {p['border']}; }}
+section[data-testid="stSidebar"] button:hover:not(:disabled) {{ border-color: {p['accent']}; color: {p['accent']}; }}
+section[data-testid="stSidebar"] button:disabled, section[data-testid="stSidebar"] button:disabled * {{ color: {p['muted']}; opacity: 0.8; }}
 .stTabs [data-baseweb="tab-list"] {{ gap: 2px; border-bottom: 1px solid {p['border']}; }}
 .stTabs [data-baseweb="tab"] {{ padding: 9px 14px; font-weight: 600; color: {p['muted']}; }}
 .stTabs [aria-selected="true"] {{ color: {p['accent']}; border-bottom: 2px solid {p['accent']}; }}
