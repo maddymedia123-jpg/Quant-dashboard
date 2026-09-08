@@ -214,7 +214,6 @@ def execute_stage2_multi_agent_debate(data: Dict) -> MultiAgentDebatePayload:
         target_levels=[spot * 0.98, spot * 0.96]
     )
     
-    sigma_3_up_4h = qm["4h"]["sigma_3_up"] if "4h" in qm else spot * 1.03
     bear_2 = BearishThesis(
         agent_id="BEAR_2",
         agent_name="Upper Exhaustion & Wall Absorption Agent",
@@ -372,4 +371,6 @@ def execute_head_arbitrator_agent(data: Dict, debate: MultiAgentDebatePayload, o
                 timeout=10
             )
             if res.status_code == 200:
-                parsed = json.loads(res.json()["choices"][0]["message"]["content"].replace("```json", "").replace("
+                resp_json = res.json()
+                content = resp_json["choices"][0]["message"]["content"]
+                cleaned_content = content.replace("```json", "").replace("
