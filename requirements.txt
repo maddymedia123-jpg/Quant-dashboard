@@ -1,7 +1,5 @@
-streamlit
-ccxt
-numpy
-pandas
-requests
-plotly
-pydantic
+streamlit>=1.40
+pandas>=2.2
+numpy>=1.26
+httpx>=0.27
+pydantic>=2.7
