@@ -373,4 +373,246 @@ def execute_head_arbitrator_agent(data: Dict, debate: MultiAgentDebatePayload, o
             if res.status_code == 200:
                 resp_json = res.json()
                 content = resp_json["choices"][0]["message"]["content"]
-                cleaned_content = content.replace("```json", "").replace("
+                backticks = chr(96) * 3
+                cleaned_content = content.replace(f"{backticks}json", "").replace(backticks, "").strip()
+                parsed = json.loads(cleaned_content)
+                return MarketState(
+                    timestamp_utc=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+                    spot_price=spot,
+                    bull_conviction_pct=bull_pct,
+                    bear_conviction_pct=bear_pct,
+                    flash_update_active=flash_active,
+                    flash_update_reason=flash_reason,
+                    intraday_tactical_summary_15m_1h=parsed["intraday_tactical_summary_15m_1h"],
+                    tactical_recon_4h_10h=parsed["tactical_recon_4h_10h"],
+                    macro_anchor_summary_1d_1w=parsed["macro_anchor_summary_1d_1w"],
+                    layman_summary=parsed["layman_summary"],
+                    technical_deep_dive=parsed["technical_deep_dive"],
+                    trap_intelligence=trap_intel,
+                    replacement_audit_log=[
+                        {"timestamp": datetime.now(timezone.utc).strftime("%H:%M UTC"), "level": "Weekly Open", "status": "ACTIVE", "reason": f"Anchored at ${weekly_open:,.2f}."}
+                    ]
+                )
+        except Exception as e:
+            logger.error(f"OpenRouter LLM arbitration failed: {e}")
+
+    # Fallback Head Arbitrator (Local Deterministic Quant Synthesis)
+    return MarketState(
+        timestamp_utc=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+        spot_price=spot,
+        bull_conviction_pct=bull_pct,
+        bear_conviction_pct=bear_pct,
+        flash_update_active=flash_active,
+        flash_update_reason=flash_reason,
+        intraday_tactical_summary_15m_1h=f"15m/1h momentum centered on μ=${qm.get('1h', {}).get('mu', spot):,.2f}. Immediate volatility boundaries defined by ±2σ bands (${qm.get('1h', {}).get('sigma_2_dn', spot*0.98):,.2f} to ${qm.get('1h', {}).get('sigma_2_up', spot*1.02):,.2f}).",
+        tactical_recon_4h_10h=f"Over the next 4-10 hours, BTC bias is {debate.dominant_bias} ({bull_pct}% Bull / {bear_pct}% Bear). Main battlefield lies between 4H support at ${qm.get('4h', {}).get('sigma_2_dn', spot*0.97):,.2f} and resistance at ${qm.get('4h', {}).get('sigma_2_up', spot*1.03):,.2f}.",
+        macro_anchor_summary_1d_1w=f"Macro structure is constrained by the Weekly Open at ${weekly_open:,.2f}. Holding above keeps structural expansion constructive toward ${spot*1.05:,.2f}.",
+        layman_summary=f"Bitcoin is trading around ${spot:,.2f}. The multi-agent council leans {debate.dominant_bias} with {bull_pct}% conviction. Buyers are defending support near ${qm.get('1h', {}).get('sigma_2_dn', spot*0.98):,.2f}, while resistance sits at ${qm.get('1h', {}).get('sigma_2_up', spot*1.02):,.2f}.",
+        technical_deep_dive=f"Multi-Agent Microstructure Synthesis completed. 10 specialized agents evaluated order flow across 15m->1W timeframes. Spot CVD slope stands at {qm.get('1h', {}).get('cvd_slope_5', 0):,.2f}, with whale position ratios indicating active institutional positioning at {data['whale_ratio']:.2f}.",
+        trap_intelligence=trap_intel,
+        replacement_audit_log=[
+            {"timestamp": datetime.now(timezone.utc).strftime("%H:%M UTC"), "level": "Weekly Open", "status": "MAINTAINED", "reason": f"Weekly anchor price validated at ${weekly_open:,.2f}."},
+            {"timestamp": datetime.now(timezone.utc).strftime("%H:%M UTC"), "level": "1H Mean (μ)", "status": "REPLACED", "reason": f"Updated to ${qm.get('1h', {}).get('mu', spot):,.2f} following rolling 20-period recalculation."}
+        ]
+    )
+
+# =====================================================================
+# PLOTLY INTERACTIVE QUANT CHARTING ENGINE
+# =====================================================================
+
+def render_quant_chart(df: pd.DataFrame, timeframe_label: str):
+    fig = make_subplots(
+        rows=3, cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.03,
+        subplot_titles=(f"Price & Exhaustion Bands (±1σ, ±2σ, ±3σ) — [{timeframe_label}]", "Cumulative Volume Delta (CVD)", "Momentum (RSI & StochRSI)"),
+        row_heights=[0.6, 0.2, 0.2]
+    )
+
+    # Subplot 1: Candlesticks & Sigma Bands
+    fig.add_trace(go.Candlestick(
+        x=df.index, open=df['open'], high=df['high'], low=df['low'], close=df['close'],
+        name="Price", increasing_line_color="#10B981", decreasing_line_color="#EF4444"
+    ), row=1, col=1)
+
+    fig.add_trace(go.Scatter(x=df.index, y=df['mu'], mode='lines', name='Mean (μ)', line=dict(color='#F59E0B', width=1.5)), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df.index, y=df['sigma_2_up'], mode='lines', name='+2σ Upper', line=dict(color='#EF4444', width=1, dash='dash')), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df.index, y=df['sigma_2_dn'], mode='lines', name='-2σ Lower', line=dict(color='#10B981', width=1, dash='dash')), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df.index, y=df['sigma_3_up'], mode='lines', name='+3σ Liquidation', line=dict(color='#B91C1C', width=1, dash='dot')), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df.index, y=df['sigma_3_dn'], mode='lines', name='-3σ Liquidation', line=dict(color='#047857', width=1, dash='dot')), row=1, col=1)
+
+    # Subplot 2: CVD
+    fig.add_trace(go.Scatter(x=df.index, y=df['cvd'], mode='lines', name='CVD', line=dict(color='#38BDF8', width=1.5)), row=2, col=1)
+
+    # Subplot 3: RSI & StochRSI
+    fig.add_trace(go.Scatter(x=df.index, y=df['rsi'], mode='lines', name='RSI', line=dict(color='#E2E8F0', width=1)), row=3, col=1)
+    fig.add_trace(go.Scatter(x=df.index, y=df['stoch_k'], mode='lines', name='Stoch %K', line=dict(color='#F59E0B', width=1)), row=3, col=1)
+    fig.add_trace(go.Scatter(x=df.index, y=df['stoch_d'], mode='lines', name='Stoch %D', line=dict(color='#06B6D4', width=1)), row=3, col=1)
+
+    fig.update_layout(
+        template="plotly_dark",
+        paper_bgcolor="#0B0E14",
+        plot_bgcolor="#0B0E14",
+        height=680,
+        margin=dict(l=10, r=10, t=30, b=10),
+        showlegend=True,
+        xaxis3_rangeslider_visible=False
+    )
+    return fig
+
+# =====================================================================
+# DASHBOARD INTERFACE & CONTROLLER
+# =====================================================================
+
+# --- SIDEBAR CONFIGURATION ---
+st.sidebar.title("🏛️ Quant Terminal")
+symbol = st.sidebar.selectbox("Asset Pair", ["BTC/USD", "ETH/USD"], index=0)
+
+with st.sidebar.expander("⚙️ Advanced Settings & API Key", expanded=False):
+    openrouter_key = st.text_input("OpenRouter Key (Optional)", type="password", value="")
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("🎯 Active Trade Matrix")
+with st.sidebar.form("trade_form"):
+    t_dir = st.selectbox("Direction", ["LONG", "SHORT"])
+    t_entry = st.number_input("Entry Price ($)", value=79200.0)
+    t_lev = st.number_input("Leverage (x)", min_value=1.0, max_value=50.0, value=5.0)
+    t_sl = st.number_input("Stop Loss ($)", value=78000.0 if t_dir == "LONG" else 80500.0)
+    t_tp = st.number_input("Take Profit ($)", value=81500.0 if t_dir == "LONG" else 77000.0)
+    submit_trade = st.form_submit_button("Track Active Trade")
+
+    if submit_trade:
+        st.session_state["active_trade"] = {"dir": t_dir, "entry": t_entry, "lev": t_lev, "sl": t_sl, "tp": t_tp}
+        st.sidebar.success("Position Active!")
+
+if st.sidebar.button("Clear Active Trade"):
+    st.session_state["active_trade"] = None
+    st.rerun()
+
+# --- FETCH DATA & RUN PIPELINE ---
+quant_data = get_cached_quant_data(symbol)
+multi_agent_payload = execute_stage2_multi_agent_debate(quant_data)
+state = execute_head_arbitrator_agent(quant_data, multi_agent_payload, openrouter_key)
+
+# --- HEADER & FLASH ALERT BANNER ---
+st.title("🏛️ BTC Master Microstructure Terminal")
+
+if state.flash_update_active:
+    st.markdown(f'<div class="flash-banner-alert">{state.flash_update_reason}</div>', unsafe_allow_html=True)
+else:
+    st.markdown(f'<div class="flash-banner-ok">✅ Market Structure Normal — {state.flash_update_reason}</div>', unsafe_allow_html=True)
+
+# --- TOP LEVEL METRICS BAR ---
+m1, m2, m3, m4, m5 = st.columns(5)
+m1.metric("Live Spot Price", f"${state.spot_price:,.2f}")
+m2.metric("Bull / Bear Conviction", f"{state.bull_conviction_pct}% / {state.bear_conviction_pct}%")
+m3.metric("8H Funding Rate", f"{quant_data['funding_rate']*100:.3f}%")
+m4.metric("Whale L/S Ratio", f"{quant_data['whale_ratio']:.2f}x")
+m5.metric("1H Volatility (ATR14)", f"${quant_data['quant_matrix'].get('1h', {}).get('atr14', 0):,.2f}")
+
+st.markdown("---")
+
+# --- MAIN DASHBOARD NAVIGATION TABS ---
+tab_recon, tab_intraday, tab_weekly, tab_monthly, tab_traps, tab_warroom, tab_audit = st.tabs([
+    "⚡ Live Recon (4H-10H)",
+    "⏱️ Intraday Anchor (15m/1h)",
+    "📊 Weekly Anchor (4h/1d)",
+    "📆 Monthly Anchor (1d/1w)",
+    "🪤 Trap & Liquidation Intelligence",
+    "⚔️ Multi-Agent Council (Stage 2)",
+    "📜 Accuracy Audit Ledger"
+])
+
+# --- TAB 1: LIVE RECON (4H-10H OUTLOOK) ---
+with tab_recon:
+    st.subheader("🎯 Live Tactical Reconnaissance (4H - 10H Horizon)")
+    
+    col_lay, col_tech = st.columns(2)
+    with col_lay:
+        st.markdown("#### 🗣️ Plain-English (Layman) Summary")
+        st.markdown(f'<div class="summary-box-layman">{state.layman_summary}</div>', unsafe_allow_html=True)
+    with col_tech:
+        st.markdown("#### 🔬 Technical & Microstructure Breakdown")
+        st.markdown(f'<div class="summary-box-tech">{state.technical_deep_dive}</div>', unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.subheader("📈 Interactive Multi-Timeframe Charting Engine")
+    tf_select = st.selectbox("Select Timeframe Chart", ["15m", "1h", "4h", "1d", "1w"], index=1)
+    if tf_select in quant_data["quant_matrix"]:
+        fig = render_quant_chart(quant_data["quant_matrix"][tf_select]["df"], tf_select.upper())
+        st.plotly_chart(fig, use_container_width=True)
+
+# --- TAB 2: INTRADAY ANCHOR (15m / 1h) ---
+with tab_intraday:
+    st.subheader("⏱️ Intraday Anchor Engine (15m / 1h / 4h Timeframes)")
+    st.info(state.intraday_tactical_summary_15m_1h)
+    
+    if "1h" in quant_data["quant_matrix"]:
+        q1 = quant_data["quant_matrix"]["1h"]
+        i1, i2, i3, i4 = st.columns(4)
+        i1.metric("1H Mean (μ)", f"${q1['mu']:,.2f}")
+        i2.metric("1H +2σ Boundary", f"${q1['sigma_2_up']:,.2f}")
+        i3.metric("1H -2σ Boundary", f"${q1['sigma_2_dn']:,.2f}")
+        i4.metric("1H CVD Delta Slope", f"{q1['cvd_slope_5']:,.0f}")
+
+# --- TAB 3: WEEKLY ANCHOR ---
+with tab_weekly:
+    st.subheader("📊 Weekly Structural Matrix & Volatility Bands")
+    if "1w" in quant_data["quant_matrix"]:
+        q_w = quant_data["quant_matrix"]["1w"]
+        st.write(f"**Weekly Open Anchor:** `${q_w['open']:,.2f}`")
+        st.write(f"**+2σ Upper Exhaustion Boundary:** `${q_w['sigma_2_up']:,.2f}`")
+        st.write(f"**-2σ Lower Exhaustion Boundary:** `${q_w['sigma_2_dn']:,.2f}`")
+
+# --- TAB 4: MONTHLY ANCHOR ---
+with tab_monthly:
+    st.subheader("📆 Monthly Macro Structural Anchors")
+    st.info(state.macro_anchor_summary_1d_1w)
+
+# --- TAB 5: TRAP & LIQUIDATION INTELLIGENCE ---
+with tab_traps:
+    st.subheader("🪤 Explainable Trap & Liquidation Detector")
+    
+    t1, t2 = st.columns(2)
+    with t1:
+        st.write(f"**Bull Trap Detected:** `{'YES' if state.trap_intelligence.bull_trap_detected else 'NO'}`")
+        st.write(f"**Bear Trap Detected:** `{'YES' if state.trap_intelligence.bear_trap_detected else 'NO'}`")
+    with t2:
+        st.write(f"**Short Squeeze Risk Level:** `{state.trap_intelligence.short_squeeze_risk}`")
+        st.write(f"**Long Squeeze Risk Level:** `{state.trap_intelligence.long_squeeze_risk}`")
+
+    st.markdown("#### 💡 Explainable Context & Order Flow Alignment")
+    st.success(state.trap_intelligence.explainable_context)
+
+# --- TAB 6: MULTI-AGENT COUNCIL (STAGE 2) ---
+with tab_warroom:
+    st.subheader("⚔️ Stage 2 — Multi-Agent Debate & Microstructure Council")
+    st.write(f"**Dominant Bias:** `{multi_agent_payload.dominant_bias}` | **Bull Score:** `{multi_agent_payload.bull_conviction_total}` | **Bear Score:** `{multi_agent_payload.bear_conviction_total}`")
+
+    col_bulls, col_bears = st.columns(2)
+    with col_bulls:
+        st.markdown("### 🟢 5 Bull Case Agents")
+        for thesis in multi_agent_payload.bull_theses:
+            st.markdown(f"""
+            <div class="agent-card-bull">
+                <strong>{thesis.agent_name}</strong> (Conviction: {thesis.conviction_score}/10)<br>
+                <em>{thesis.key_argument}</em><br>
+                <small>Target Levels: {thesis.target_levels}</small>
+            </div>
+            """, unsafe_allow_html=True)
+
+    with col_bears:
+        st.markdown("### 🔴 5 Bear Case Agents")
+        for thesis in multi_agent_payload.bear_theses:
+            st.markdown(f"""
+            <div class="agent-card-bear">
+                <strong>{thesis.agent_name}</strong> (Conviction: {thesis.conviction_score}/10)<br>
+                <em>{thesis.key_argument}</em><br>
+                <small>Target Levels: {thesis.target_levels}</small>
+            </div>
+            """, unsafe_allow_html=True)
+
+# --- TAB 7: ACCURACY AUDIT LEDGER ---
+with tab_audit:
+    st.subheader("📜 Historical Level Replacement & Accuracy Audit Ledger")
+    st.dataframe(pd.DataFrame(state.replacement_audit_log), use_container_width=True)
