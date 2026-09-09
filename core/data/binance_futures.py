@@ -9,7 +9,7 @@ import statistics
 import httpx
 
 from core.config import SYMBOLS
-from core.data.types import FuturesSnapshot
+from core.data.types import FuturesSnapshot, HyperliquidSnapshot, WhalesSnapshot
 
 log = logging.getLogger(__name__)
 BN = "https://fapi.binance.com"
@@ -100,3 +100,39 @@ async def fetch_futures(client: httpx.AsyncClient) -> FuturesSnapshot:
             log.warning("futures via %s failed: %s", name, e)
             errors.append(f"{name}: {e}")
     return FuturesSnapshot.unavailable("binance,bybit", " | ".join(errors))
+
+
+PREFERRED_VENUES = ("Binance Futures", "Bybit", "OKX", "Bitget Futures")
+
+
+def compose_futures(whales: WhalesSnapshot | None, hl: HyperliquidSnapshot | None, errors: str = "") -> FuturesSnapshot:
+    """US-safe fallback: build the futures context from CoinLobster's per-exchange market conditions and
+    Hyperliquid. Funding and open interest come through; 7d funding mean, long/short and taker ratios and
+    the 24h OI change are not available on this path and stay None."""
+    w = whales if (whales is not None and whales.available) else None
+    h = hl if (hl is not None and hl.available) else None
+    if w is None and h is None:
+        return FuturesSnapshot.unavailable("binance,bybit", errors or "direct exchanges blocked; no fallback data")
+    funding = None
+    venue = None
+    if w:
+        for v in PREFERRED_VENUES:
+            if v in w.funding_by_exchange:
+                funding, venue = float(w.funding_by_exchange[v]), v
+                break
+    if funding is None and h and h.funding_rate_1h is not None:
+        funding, venue = float(h.funding_rate_1h) * 8.0, "hyperliquid 1h x8"
+    oi_usd = None
+    if w and w.oi_by_exchange_usd:
+        oi_usd = next((float(w.oi_by_exchange_usd[v]) for v in PREFERRED_VENUES if v in w.oi_by_exchange_usd), None)
+        if oi_usd is None:
+            oi_usd = float(max(w.oi_by_exchange_usd.values()))
+    mark = h.mark_price if h else None
+    oi_contracts = (oi_usd / mark) if (oi_usd and mark) else (h.open_interest if h else None)
+    if funding is None and oi_usd is None and oi_contracts is None:
+        return FuturesSnapshot.unavailable("binance,bybit", errors or "direct exchanges blocked; fallback sources carried no funding/OI")
+    base = "coinlobster+hyperliquid" if (w and h) else ("coinlobster" if w else "hyperliquid")
+    src = f"{base} ({venue})" if venue else base
+    return FuturesSnapshot(source=src, funding_rate=funding, funding_7d_mean=None, open_interest=oi_contracts,
+                           open_interest_usd=oi_usd, oi_change_24h_pct=None, long_short_ratio=None, long_account_pct=None,
+                           taker_buy_sell_ratio=None, mark_price=mark, oi_history=[])
