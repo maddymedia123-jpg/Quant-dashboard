@@ -1,7 +1,7 @@
 # Trap Intelligence Dashboard — Design Spec
 
 Date: 2026-09-09
-Status: Approved (design), Phase 1 in progress
+Status: Approved (design) · Phase 1 built (PR1) · Phase 2 built (PR2)
 Repo: `maddymedia123-jpg/Quant-dashboard` · Branch: `feature/trap-intelligence-phase1`
 
 ## 1. Goal

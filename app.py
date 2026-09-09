@@ -6,8 +6,12 @@ from datetime import datetime, timezone
 import pandas as pd
 import streamlit as st
 
+from core.agents.llm import LLMClient
+from core.agents.report import to_markdown
+from core.agents.runner import run_pipeline_sync
+from core.agents.settings import load_settings
 from core.config import CATEGORIES, MACRO_EVENTS, TTL
-from core.data.market import load_market
+from core.data.market import assemble, load_context, load_spot
 from core.indicators.category import analyze_category
 from core.indicators.trade_map import map_trade
 from ui import panels
@@ -18,8 +22,13 @@ st.set_page_config(page_title="Trap Intelligence | BTC", layout="wide", initial_
 
 
 @st.cache_data(ttl=TTL["spot"], show_spinner=False)
-def _market():
-    return load_market()
+def _spot():
+    return load_spot()
+
+
+@st.cache_data(ttl=TTL["context"], show_spinner=False)
+def _context():
+    return load_context()
 
 
 # ---------- sidebar ----------
@@ -33,17 +42,23 @@ st.session_state["dark"] = dark
 inject_css(dark)
 
 if st.sidebar.button("Refresh data", width="stretch"):
-    _market.clear()
+    _spot.clear()
+    _context.clear()
     st.rerun()
-st.sidebar.button("Run Analysis", width="stretch", disabled=True,
-                  help="The 13-agent Trap Intelligence report is delivered in Phase 2.")
+settings = load_settings()
+st.session_state.setdefault("trap_report", None)
+run_clicked = st.sidebar.button(
+    "Run Analysis", width="stretch", disabled=settings is None,
+    help=(f"13-agent Trap Intelligence report via {settings.provider}: specialists on {settings.specialist_model}, Director on {settings.director_model}."
+          if settings else "Add GEMINI_API_KEY or OPENROUTER_API_KEY to .streamlit/secrets.toml (or Streamlit Cloud Secrets) to enable."),
+)
 
 with st.spinner("Loading market data"):
-    m = _market()
+    m = assemble(_spot(), _context())
 
 st.sidebar.markdown("---")
 st.sidebar.markdown(panels.data_status_html(m), unsafe_allow_html=True)
-st.sidebar.caption(f"Updated {m.generated_at.astimezone(timezone.utc):%H:%M:%S} UTC · spot cache {TTL['spot']}s")
+st.sidebar.caption(f"Updated {m.generated_at.astimezone(timezone.utc):%H:%M:%S} UTC · spot {TTL['spot']}s · context {TTL['context']}s")
 
 # ---------- analyses ----------
 analyses = {}
@@ -60,6 +75,27 @@ if m.spot.available:
                     "price": round(a.price, 2), "reason": "; ".join(a.direction.drivers[:2]),
                 })
             st.session_state["last_dir"][key] = a.direction.direction
+
+# ---------- run analysis ----------
+if run_clicked and settings is not None and analyses:
+    with st.status("Running Trap Intelligence pipeline...", expanded=True) as status:
+        lines = st.empty()
+        seen: dict[str, str] = {}
+
+        def _progress(agent_id: str, state: str) -> None:
+            seen[agent_id] = state
+            lines.markdown("  \n".join(f"`{k}` {v}" for k, v in seen.items()))
+
+        try:
+            report = run_pipeline_sync(LLMClient(settings), m, analyses, settings,
+                                       raw_metrics=panels.raw_metrics_rows(m), progress=_progress)
+            st.session_state["trap_report"] = report
+            status.update(label=f"Report {report.report_id} ready in {report.wall_time_s:.0f}s", state="complete", expanded=False)
+        except Exception as e:  # noqa: BLE001 - never crash the page on an LLM failure
+            status.update(label=f"Pipeline failed: {e}", state="error")
+    st.rerun()
+
+report = st.session_state.get("trap_report")
 
 # ---------- header ----------
 st.markdown("<p class='ti-title'>BTC / USD · Trap Intelligence Terminal</p>"
@@ -90,7 +126,7 @@ def category_tab(tab, key):
             panels.render(panels.volatility_html(a))
         with c2:
             panels.render(panels.divergence_html(a))
-            panels.render(panels.agent_placeholder_html(a))
+            panels.render(panels.agent_summary_html(a, report))
         if key in ("weekly", "monthly"):
             panels.render(panels.macro_html(MACRO_EVENTS))
 
@@ -118,8 +154,25 @@ with tabs[4]:
 
 # ---------- war room ----------
 with tabs[5]:
-    panels.render("<div class='ti-card'><h4>Trap Intelligence Report</h4><p class='muted'>Phase 2 wires the Director, the Bullish and Bearish desks, "
-                  "the volatility agent and the accuracy agent to the Run Analysis button. Section 1 of that report, the raw metric snapshot, is live below.</p></div>")
+    if report is not None:
+        panels.render(panels.report_stats_html(report))
+        md = to_markdown(report)
+        st.download_button("Download report (.md)", md, file_name=f"{report.report_id}.md", mime="text/markdown")
+        st.markdown(md)
+        with st.expander("Specialist briefs"):
+            for b in report.briefs:
+                st.markdown(f"**{b.agent_id} · {b.desk} · {b.domain} · conviction {b.conviction:.0f}/10**  \n{b.interpretation}")
+                if b.traps_detected:
+                    st.markdown("Traps: " + "; ".join(b.traps_detected))
+                st.markdown(f"Key risk to thesis: {b.key_risk_to_thesis}")
+                if b.data_gaps:
+                    st.caption("Data gaps: " + ", ".join(b.data_gaps))
+                st.markdown("---")
+    else:
+        hint = ("Click Run Analysis in the sidebar to generate the Director's report." if settings
+                else "Add GEMINI_API_KEY or OPENROUTER_API_KEY to secrets to enable Run Analysis.")
+        panels.render(f"<div class='ti-card'><h4>Trap Intelligence Report</h4><p class='muted'>{hint} "
+                      "Section 1 of that report, the raw metric snapshot, is live below.</p></div>")
     rows = panels.raw_metrics_rows(m)
     st.dataframe(pd.DataFrame(rows, columns=["Metric", "Value", "Source"]), width="stretch", hide_index=True)
     with st.expander("Audit ledger — direction changes this session"):

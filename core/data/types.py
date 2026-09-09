@@ -3,7 +3,7 @@ consumer can mistake a missing feed for a real value."""
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, ClassVar, Optional
 
 import pandas as pd
 from pydantic import BaseModel, ConfigDict, Field
@@ -64,18 +64,62 @@ class SentimentSnapshot(Availability):
     fear_greed_prev: Optional[int] = None
 
 
+class HyperliquidSnapshot(Availability):
+    funding_rate_1h: Optional[float] = None
+    open_interest: Optional[float] = None
+    mark_price: Optional[float] = None
+    oracle_price: Optional[float] = None
+
+
+class LiquidationsSnapshot(Availability):
+    window: str = "24h"
+    total_usd: Optional[float] = None
+    long_usd: Optional[float] = None
+    short_usd: Optional[float] = None
+    long_count: Optional[int] = None
+    short_count: Optional[int] = None
+    last_hour_usd: Optional[float] = None
+    btc_usd: Optional[float] = None
+    btc_long_usd: Optional[float] = None
+    btc_short_usd: Optional[float] = None
+    hourly: list[dict[str, Any]] = Field(default_factory=list)
+    biggest: Optional[dict[str, Any]] = None
+    venues: list[str] = Field(default_factory=list)
+
+
+class WhalesSnapshot(Availability):
+    window_minutes: Optional[float] = None
+    btc_trades: Optional[int] = None
+    btc_buy_usd: Optional[float] = None
+    btc_sell_usd: Optional[float] = None
+    btc_largest: Optional[dict[str, Any]] = None
+    funding_by_exchange: dict[str, float] = Field(default_factory=dict)
+    oi_by_exchange_usd: dict[str, float] = Field(default_factory=dict)
+    radar: list[dict[str, Any]] = Field(default_factory=list)
+    btc_radar: Optional[dict[str, Any]] = None
+
+
+class StablecoinSnapshot(Availability):
+    total_usd: Optional[float] = None
+    prev_day_usd: Optional[float] = None
+    change_24h_pct: Optional[float] = None
+    top: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class MarketSnapshot(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    SOURCES: ClassVar[tuple[str, ...]] = ("spot", "futures", "options", "sentiment", "hyperliquid", "liquidations", "whales", "stablecoins")
 
     spot: SpotSnapshot
     futures: FuturesSnapshot
     options: OptionsSnapshot
     sentiment: SentimentSnapshot
+    hyperliquid: HyperliquidSnapshot = Field(default_factory=lambda: HyperliquidSnapshot.unavailable("hyperliquid", "not fetched"))
+    liquidations: LiquidationsSnapshot = Field(default_factory=lambda: LiquidationsSnapshot.unavailable("coinlobster", "not fetched"))
+    whales: WhalesSnapshot = Field(default_factory=lambda: WhalesSnapshot.unavailable("coinlobster", "not fetched"))
+    stablecoins: StablecoinSnapshot = Field(default_factory=lambda: StablecoinSnapshot.unavailable("defillama", "not fetched"))
     generated_at: datetime = Field(default_factory=_now)
 
     def unavailable(self) -> list[str]:
-        out = []
-        for name in ("spot", "futures", "options", "sentiment"):
-            if not getattr(self, name).available:
-                out.append(name)
-        return out
+        return [n for n in self.SOURCES if not getattr(self, n).available]

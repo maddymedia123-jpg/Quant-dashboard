@@ -26,7 +26,7 @@ TIMEFRAMES: tuple[str, ...] = ("15m", "1h", "4h", "1d", "1w")
 TF_MINUTES: dict[str, int] = {"15m": 15, "1h": 60, "4h": 240, "1d": 1440, "1w": 10080}
 
 # Cache TTLs (seconds)
-TTL = {"spot": 25, "futures": 60, "options": 120, "sentiment": 1800}
+TTL = {"spot": 25, "context": 120, "futures": 60, "options": 120, "sentiment": 1800}
 
 SYMBOLS = {"kraken_pair": "XBTUSD", "binance": "BTCUSDT", "bybit": "BTCUSDT", "deribit": "BTC"}
 
