@@ -134,6 +134,30 @@ def squeeze_banner_html(a: CategoryAnalysis) -> str | None:
     return card_html(f"Early warning: {s.direction.replace('_', ' ')} risk {s.score}/100", _li(s.drivers), "warn")
 
 
+def agent_summary_html(a: CategoryAnalysis, report) -> str:
+    """Director's per-category paragraph when a report exists; otherwise the Phase-1 placeholder."""
+    if report is not None and report.director is not None:
+        text = report.director.category_summaries.get(a.key)
+        if text:
+            tone = {"BULL_TRAP": "down", "BEAR_TRAP": "up", "RANGE_TRAP": "warn"}.get(report.director.trap_classification, "neutral")
+            body = (f"<p>{html.escape(text)}</p><p class='muted'>Director verdict: {report.director.trap_classification.replace('_', ' ')} · "
+                    f"report {html.escape(report.report_id)} · {report.generated_at:%H:%M} UTC</p>")
+            return card_html("Head-agent summary", body, tone)
+    return agent_placeholder_html(a)
+
+
+def report_stats_html(report) -> str:
+    ok = sum(1 for r in report.runs if r.ok)
+    models = sorted({r.model for r in report.runs})
+    cost = f"${report.total_cost_usd:.4f}" if report.total_cost_usd is not None else "not reported (free tier)"
+    bits = [f"provider {report.provider}", f"models {', '.join(models)}", f"agents {ok}/{len(report.runs)} ok",
+            f"tokens {report.total_tokens:,}", f"cost {cost}", f"wall {report.wall_time_s:.0f}s",
+            f"generated {report.generated_at:%Y-%m-%d %H:%M} UTC"]
+    if report.failed_agents:
+        bits.append("failed: " + ", ".join(report.failed_agents))
+    return "".join(chip(b, "down" if b.startswith("failed") else "") for b in bits)
+
+
 def agent_placeholder_html(a: CategoryAnalysis) -> str:
     return card_html("Head-agent summary", "<p class='muted'>Run Analysis (Phase 2) generates the Director's per-category summary here. "
                                             "Until then the deterministic direction, divergence and volatility panels above are the source of truth.</p>")

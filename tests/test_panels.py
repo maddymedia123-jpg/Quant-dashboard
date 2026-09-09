@@ -64,3 +64,22 @@ def test_trade_result_macro_and_status():
     assert any(r[0] == "Max pain" and "80,000" in r[1] for r in rows)
     assert any(r[0] == "Liquidations 24h" and "$204.0M" in r[1] for r in rows)
     assert "hyperliquid" in status and "stablecoins" in status
+
+
+def test_agent_summary_and_report_stats():
+    from datetime import datetime, timezone
+    from core.agents.schemas import AgentRun, DirectorReport, Scenario, TradePlan, TrapReport
+    m = _market()
+    a = analyze_category(CATEGORIES["live"], m.spot.frames, m.futures)
+    assert "Run Analysis" in panels.agent_summary_html(a, None)
+    d = DirectorReport(executive_summary="e", trap_classification="BULL_TRAP", classification_rationale="r",
+                       scenarios=[Scenario(name="a", probability=60, path="p", invalidation="i"), Scenario(name="b", probability=40, path="p", invalidation="i")],
+                       trade_plan=TradePlan(existing_position_management="h", new_entry_conditions="n", position_sizing="s", stop_loss="l", max_leverage="3x"),
+                       category_summaries={"live": "Live paragraph <b>"})
+    r = TrapReport(report_id="TIR-1", generated_at=datetime.now(timezone.utc), window="w", provider="gemini", director=d,
+                   runs=[AgentRun(agent_id="B1", ok=True, model="m", latency_s=1, prompt_tokens=10, completion_tokens=5),
+                         AgentRun(agent_id="B2", ok=False, model="m", latency_s=1, error="x")])
+    h = panels.agent_summary_html(a, r)
+    assert "Live paragraph &lt;b&gt;" in h and "BULL TRAP" in h and "ti-card down" in h
+    st = panels.report_stats_html(r)
+    assert "agents 1/2 ok" in st and "tokens 15" in st and "failed: B2" in st and "free tier" in st
