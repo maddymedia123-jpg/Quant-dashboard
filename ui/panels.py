@@ -248,7 +248,29 @@ def trade_result_html(tm: TradeMap) -> str:
 
 def macro_html(events: list[dict]) -> str:
     rows = [f"{e['date_utc']} · {e['title']} · {e['impact']} impact. {e['note']}" for e in events]
-    return card_html("Macro calendar (curated)", _li(rows) + "<p class='muted'>Manually maintained until a news source is connected.</p>")
+    return card_html("Macro calendar (curated)", _li(rows) + "<p class='muted'>Fallback list; the live calendar feed was unavailable.</p>")
+
+
+def calendar_html(m: MarketSnapshot, now_ms: int, limit: int = 8) -> str:
+    """High-impact USD prints this week from the live calendar; falls back to the curated list."""
+    from datetime import datetime, timezone
+    from core.config import MACRO_EVENTS
+    c = m.calendar
+    if not (c.available and c.events):
+        return macro_html(MACRO_EVENTS)
+    hi = [e for e in c.events if e.get("impact") == "High" and e.get("country") == "USD" and e.get("time_ms")]
+    upcoming = [e for e in hi if e["time_ms"] >= now_ms - 3_600_000][:limit]
+    soon = c.upcoming(now_ms, 86_400_000)
+    rows = []
+    for e in upcoming:
+        t = datetime.fromtimestamp(e["time_ms"] / 1000, tz=timezone.utc).strftime("%a %d %b %H:%M UTC")
+        extra = " · ".join(x for x in (f"forecast {e['forecast']}" if e.get("forecast") else "", f"previous {e['previous']}" if e.get("previous") else "") if x)
+        rows.append(f"{t} · {e['title']}" + (f" ({extra})" if extra else ""))
+    body = _li(rows) if rows else "<p class='muted'>No further USD high-impact releases this week.</p>"
+    if soon:
+        body = f"<p><strong>Inside 24h:</strong> {html.escape(', '.join(e['title'] for e in soon))}. No new leveraged entries into the print.</p>" + body
+    body += f"<p class='muted'>Source: Forex Factory weekly calendar via {html.escape(c.source)}.</p>"
+    return card_html("Macro calendar", body, "warn" if soon else "neutral")
 
 
 def data_status_html(m: MarketSnapshot) -> str:

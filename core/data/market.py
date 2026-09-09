@@ -9,6 +9,7 @@ import os
 import httpx
 
 from core.data.binance_futures import compose_futures, fetch_futures
+from core.data.calendar import fetch_calendar
 from core.data.coinlobster import fetch_coinlobster
 from core.data.deribit_options import fetch_options
 from core.data.hyperliquid import fetch_hyperliquid
@@ -16,7 +17,7 @@ from core.data.sentiment import fetch_sentiment
 from core.data.spot import fetch_spot_chain as fetch_spot
 from core.data.stablecoins import fetch_stablecoins
 from core.data.types import (
-    FuturesSnapshot, HyperliquidSnapshot, LiquidationsSnapshot, MarketSnapshot, OptionsSnapshot,
+    CalendarSnapshot, FuturesSnapshot, HyperliquidSnapshot, LiquidationsSnapshot, MarketSnapshot, OptionsSnapshot,
     SentimentSnapshot, SpotSnapshot, StablecoinSnapshot, WhalesSnapshot,
 )
 
@@ -56,13 +57,14 @@ async def fetch_spot_only(client: httpx.AsyncClient | None = None) -> SpotSnapsh
 async def fetch_context(client: httpx.AsyncClient | None = None) -> dict:
     if client is None:
         return await _with_client(fetch_context)
-    fut, opt, sent, hl, cl, stables = await asyncio.gather(
+    fut, opt, sent, hl, cl, stables, cal = await asyncio.gather(
         _guard(fetch_futures(client), FuturesSnapshot, "binance,bybit"),
         _guard(fetch_options(client), OptionsSnapshot, "deribit"),
         _guard(fetch_sentiment(client), SentimentSnapshot, "alternative.me"),
         _guard(fetch_hyperliquid(client), HyperliquidSnapshot, "hyperliquid"),
         _guard_cl(fetch_coinlobster(client)),
         _guard(fetch_stablecoins(client), StablecoinSnapshot, "defillama"),
+        _guard(fetch_calendar(client), CalendarSnapshot, "forexfactory"),
     )
     liqs, whales = cl
     if not fut.available:
@@ -70,7 +72,7 @@ async def fetch_context(client: httpx.AsyncClient | None = None) -> dict:
         if composed.available:
             fut = composed
     return {"futures": fut, "options": opt, "sentiment": sent, "hyperliquid": hl,
-            "liquidations": liqs, "whales": whales, "stablecoins": stables}
+            "liquidations": liqs, "whales": whales, "stablecoins": stables, "calendar": cal}
 
 
 async def fetch_all(client: httpx.AsyncClient | None = None) -> MarketSnapshot:

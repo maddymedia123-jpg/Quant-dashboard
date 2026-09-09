@@ -23,10 +23,10 @@ def test_fetch_all_isolates_provider_failures(monkeypatch):
     monkeypatch.setattr(market, "fetch_futures", boom)
     monkeypatch.setattr(market, "fetch_options", ok_opts)
     monkeypatch.setattr(market, "fetch_sentiment", ok_sent)
-    for name in ("fetch_hyperliquid", "fetch_coinlobster", "fetch_stablecoins"):
+    for name in ("fetch_hyperliquid", "fetch_coinlobster", "fetch_stablecoins", "fetch_calendar"):
         monkeypatch.setattr(market, name, boom)  # never touch the network in tests
 
     snap = asyncio.run(market.fetch_all())
     assert snap.spot.available
     assert snap.futures.available is False and "network down" in snap.futures.error
-    assert snap.unavailable() == ["futures", "hyperliquid", "liquidations", "whales", "stablecoins"]
+    assert snap.unavailable() == ["futures", "hyperliquid", "liquidations", "whales", "stablecoins", "calendar"]

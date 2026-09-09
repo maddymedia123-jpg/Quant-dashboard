@@ -11,7 +11,7 @@ Phase 2 adds the 13-agent Director / Bullish desk / Bearish desk report via Gemi
 Kraken spot OHLCV (Gemini exchange fallback) · Binance USD-M futures (Bybit fallback) for funding, open
 interest, long/short and taker flow · Hyperliquid funding and OI · CoinLobster 24h liquidations, $100K+
 whale trades and unusual-flow radar · Deribit options for max pain, put/call and IV skew · DefiLlama
-stablecoin supply · alternative.me Fear & Greed.
+stablecoin supply · alternative.me Fear & Greed · Forex Factory weekly economic calendar (high-impact USD prints with forecast/previous; drives the macro-window trigger).
 Every feed reports availability; missing data is shown as `—`, never invented.
 
 ## Run

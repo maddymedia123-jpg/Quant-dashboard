@@ -106,10 +106,22 @@ class StablecoinSnapshot(Availability):
     top: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class CalendarSnapshot(Availability):
+    """Economic calendar events: each {title, country, impact, time_ms, forecast, previous}."""
+    events: list[dict[str, Any]] = Field(default_factory=list)
+
+    def upcoming(self, now_ms: int, within_ms: int, min_impact: str = "High", countries: tuple[str, ...] = ("USD",)) -> list[dict[str, Any]]:
+        rank = {"Low": 1, "Medium": 2, "High": 3, "Holiday": 0}
+        need = rank.get(min_impact, 3)
+        return [e for e in self.events
+                if e.get("time_ms") is not None and now_ms - 3_600_000 <= e["time_ms"] <= now_ms + within_ms
+                and rank.get(e.get("impact"), 0) >= need and (not countries or e.get("country") in countries)]
+
+
 class MarketSnapshot(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    SOURCES: ClassVar[tuple[str, ...]] = ("spot", "futures", "options", "sentiment", "hyperliquid", "liquidations", "whales", "stablecoins")
+    SOURCES: ClassVar[tuple[str, ...]] = ("spot", "futures", "options", "sentiment", "hyperliquid", "liquidations", "whales", "stablecoins", "calendar")
 
     spot: SpotSnapshot
     futures: FuturesSnapshot
@@ -119,6 +131,7 @@ class MarketSnapshot(BaseModel):
     liquidations: LiquidationsSnapshot = Field(default_factory=lambda: LiquidationsSnapshot.unavailable("coinlobster", "not fetched"))
     whales: WhalesSnapshot = Field(default_factory=lambda: WhalesSnapshot.unavailable("coinlobster", "not fetched"))
     stablecoins: StablecoinSnapshot = Field(default_factory=lambda: StablecoinSnapshot.unavailable("defillama", "not fetched"))
+    calendar: CalendarSnapshot = Field(default_factory=lambda: CalendarSnapshot.unavailable("forexfactory", "not fetched"))
     generated_at: datetime = Field(default_factory=_now)
 
     def unavailable(self) -> list[str]:

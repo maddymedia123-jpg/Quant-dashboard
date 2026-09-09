@@ -110,3 +110,15 @@ def test_anchored_direction_early_warning_and_accuracy_panels():
                                  "recent_calls": [{"category": "live", "direction": "BULLISH", "price": 78000.0, "realised_pct": 0.4, "hit": 1}],
                                  "recent_reports": []})
     assert "67%" in full and "small sample" in full and "BULL_TRAP" in full and "hit)" in full
+
+
+def test_calendar_panel_live_and_fallback():
+    import json, pathlib
+    from core.data.calendar import parse_calendar
+    m = _market()
+    assert "Fallback list" in panels.calendar_html(m, now_ms=0)  # calendar unavailable → curated
+    cal = parse_calendar(json.loads((pathlib.Path(__file__).parent / "fixtures" / "ff_calendar_thisweek.json").read_text(encoding="utf-8")))
+    m2 = m.model_copy(update={"calendar": cal})
+    first_high = next(e for e in cal.events if e["impact"] == "High" and e["country"] == "USD")
+    h = panels.calendar_html(m2, now_ms=first_high["time_ms"] - 3_600_000)
+    assert "Inside 24h" in h and first_high["title"] in h and "Forex Factory" in h and "ti-card warn" in h

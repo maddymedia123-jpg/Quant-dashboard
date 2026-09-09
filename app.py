@@ -152,7 +152,7 @@ def category_tab(tab, key):
             panels.render(panels.divergence_html(a))
             panels.render(panels.agent_summary_html(a, report))
         if key in ("weekly", "monthly"):
-            panels.render(panels.macro_html(MACRO_EVENTS))
+            panels.render(panels.calendar_html(m, now_ms))
 
 
 for tab, key in zip(tabs[:4], CATEGORIES.keys()):

@@ -23,7 +23,7 @@ def _j(n):
 def test_market_defaults_new_feeds_to_unavailable():
     m = MarketSnapshot(spot=SpotSnapshot(source="kraken"), futures=FuturesSnapshot(source="binance"),
                        options=OptionsSnapshot(source="deribit"), sentiment=SentimentSnapshot(source="alternative.me"))
-    assert m.unavailable() == ["hyperliquid", "liquidations", "whales", "stablecoins"]
+    assert m.unavailable() == ["hyperliquid", "liquidations", "whales", "stablecoins", "calendar"]
     assert m.liquidations.error == "not fetched"
 
 
@@ -93,13 +93,13 @@ def test_fetch_context_isolates_and_assemble(monkeypatch):
         return (LiquidationsSnapshot(source="coinlobster", total_usd=1.0, long_usd=0.5, short_usd=0.5),
                 WhalesSnapshot(source="coinlobster"))
 
-    for name in ("fetch_futures", "fetch_options", "fetch_sentiment", "fetch_hyperliquid", "fetch_stablecoins"):
+    for name in ("fetch_futures", "fetch_options", "fetch_sentiment", "fetch_hyperliquid", "fetch_stablecoins", "fetch_calendar"):
         monkeypatch.setattr(market, name, boom)
     monkeypatch.setattr(market, "fetch_coinlobster", ok_cl)
     ctx = asyncio.run(market.fetch_context(client=object()))
     m = market.assemble(SpotSnapshot(source="kraken"), ctx)
     assert m.liquidations.available and m.whales.available
-    assert set(m.unavailable()) == {"futures", "options", "sentiment", "hyperliquid", "stablecoins"}
+    assert set(m.unavailable()) == {"futures", "options", "sentiment", "hyperliquid", "stablecoins", "calendar"}
 
 
 def test_offline_fixture_market_has_all_sources():
@@ -142,7 +142,7 @@ def test_fetch_context_composes_when_direct_futures_blocked(monkeypatch):
                 WhalesSnapshot(source="coinlobster", funding_by_exchange={"Binance Futures": 0.0001}, oi_by_exchange_usd={"Binance Futures": 8e9}))
 
     monkeypatch.setattr(market, "fetch_futures", blocked)
-    for name in ("fetch_options", "fetch_sentiment", "fetch_stablecoins"):
+    for name in ("fetch_options", "fetch_sentiment", "fetch_stablecoins", "fetch_calendar"):
         monkeypatch.setattr(market, name, boom)
     monkeypatch.setattr(market, "fetch_hyperliquid", ok_hl)
     monkeypatch.setattr(market, "fetch_coinlobster", ok_cl)

@@ -9,6 +9,7 @@ import json
 import pathlib
 
 from core.data.binance_futures import parse_binance
+from core.data.calendar import parse_calendar
 from core.data.coinlobster import parse_liquidations, parse_whales
 from core.data.deribit_options import parse_book_summary
 from core.data.hyperliquid import parse_meta
@@ -52,6 +53,7 @@ def fixture_context() -> dict:
         "liquidations": liqs,
         "whales": whales,
         "stablecoins": _mark(parse_stablecoins(_load("defillama_stablecoins.json"))),
+        "calendar": _mark(parse_calendar(_load("ff_calendar_thisweek.json"))),
     }
 
 
