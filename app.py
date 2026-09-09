@@ -7,7 +7,7 @@ import pandas as pd
 import streamlit as st
 
 from core.config import CATEGORIES, MACRO_EVENTS, TTL
-from core.data.market import load_market
+from core.data.market import assemble, load_context, load_spot
 from core.indicators.category import analyze_category
 from core.indicators.trade_map import map_trade
 from ui import panels
@@ -18,8 +18,13 @@ st.set_page_config(page_title="Trap Intelligence | BTC", layout="wide", initial_
 
 
 @st.cache_data(ttl=TTL["spot"], show_spinner=False)
-def _market():
-    return load_market()
+def _spot():
+    return load_spot()
+
+
+@st.cache_data(ttl=TTL["context"], show_spinner=False)
+def _context():
+    return load_context()
 
 
 # ---------- sidebar ----------
@@ -33,17 +38,18 @@ st.session_state["dark"] = dark
 inject_css(dark)
 
 if st.sidebar.button("Refresh data", width="stretch"):
-    _market.clear()
+    _spot.clear()
+    _context.clear()
     st.rerun()
 st.sidebar.button("Run Analysis", width="stretch", disabled=True,
                   help="The 13-agent Trap Intelligence report is delivered in Phase 2.")
 
 with st.spinner("Loading market data"):
-    m = _market()
+    m = assemble(_spot(), _context())
 
 st.sidebar.markdown("---")
 st.sidebar.markdown(panels.data_status_html(m), unsafe_allow_html=True)
-st.sidebar.caption(f"Updated {m.generated_at.astimezone(timezone.utc):%H:%M:%S} UTC · spot cache {TTL['spot']}s")
+st.sidebar.caption(f"Updated {m.generated_at.astimezone(timezone.utc):%H:%M:%S} UTC · spot {TTL['spot']}s · context {TTL['context']}s")
 
 # ---------- analyses ----------
 analyses = {}

@@ -19,6 +19,14 @@ def _li(items: list[str]) -> str:
     return "<ul>" + "".join(f"<li>{html.escape(i)}</li>" for i in items) + "</ul>" if items else ""
 
 
+def _liq_kpi(l) -> dict:
+    if not l.available or not l.total_usd:
+        return {"label": "Liq 24h", "value": "—", "delta": None, "tone": None}
+    share = (l.long_usd or 0.0) / l.total_usd * 100.0
+    tone = "down" if share >= 60 else "up" if share <= 40 else None
+    return {"label": "Liq 24h", "value": fmt_num(l.total_usd / 1e6, 0, "$", "M"), "delta": f"{share:.0f}% longs", "tone": tone}
+
+
 def kpis_for(a: CategoryAnalysis, m: MarketSnapshot) -> list[dict]:
     f, s, o = m.futures, m.sentiment, m.options
     rsi_last = float(a.rsi.dropna().iloc[-1]) if a.rsi.notna().any() else None
@@ -34,6 +42,7 @@ def kpis_for(a: CategoryAnalysis, m: MarketSnapshot) -> list[dict]:
         {"label": "OI 24h", "value": fmt_pct(f.oi_change_24h_pct, 1), "delta": (fmt_num(f.open_interest_usd / 1e9, 2, "$", "B") if f.open_interest_usd else None),
          "tone": "up" if (f.oi_change_24h_pct or 0) >= 0 else "down"},
         {"label": "Long/Short", "value": fmt_num(f.long_short_ratio, 2), "delta": (f"taker {fmt_num(f.taker_buy_sell_ratio, 2)}" if f.taker_buy_sell_ratio else None), "tone": None},
+        _liq_kpi(m.liquidations),
         {"label": "Max pain", "value": fmt_num(o.max_pain, 0, "$"), "delta": o.max_pain_expiry, "tone": None},
         {"label": "Fear & Greed", "value": fmt_num(s.fear_greed, 0), "delta": s.classification, "tone": None},
     ]
@@ -153,7 +162,7 @@ def macro_html(events: list[dict]) -> str:
 
 def data_status_html(m: MarketSnapshot) -> str:
     out = []
-    for name in ("spot", "futures", "options", "sentiment"):
+    for name in MarketSnapshot.SOURCES:
         s = getattr(m, name)
         label = f"{name}: {s.source}" + ("" if s.available else " unavailable")
         out.append(chip(label, "up" if s.available else "down"))
@@ -162,6 +171,7 @@ def data_status_html(m: MarketSnapshot) -> str:
 
 def raw_metrics_rows(m: MarketSnapshot) -> list[tuple[str, str, str]]:
     f, o, s = m.futures, m.options, m.sentiment
+    h, l, w, sc = m.hyperliquid, m.liquidations, m.whales, m.stablecoins
     return [
         ("Spot", fmt_num(m.spot.last, 0, "$"), m.spot.source),
         ("Funding (8h)", fmt_pct(f.funding_rate * 100, 4) if f.funding_rate is not None else "—", f.source),
@@ -175,4 +185,10 @@ def raw_metrics_rows(m: MarketSnapshot) -> list[tuple[str, str, str]]:
         ("ATM IV", fmt_num(o.iv_atm, 1, suffix="%"), o.source),
         ("IV skew (put − call)", fmt_num(o.iv_skew, 1, suffix=" pts"), o.source),
         ("Fear & Greed", (fmt_num(s.fear_greed, 0) + (f" {s.classification}" if s.classification else "")), s.source),
+        ("Hyperliquid funding (1h)", fmt_pct(h.funding_rate_1h * 100, 4) if h.funding_rate_1h is not None else "—", h.source),
+        ("Hyperliquid OI", fmt_num(h.open_interest, 0, suffix=" BTC"), h.source),
+        ("Liquidations 24h", (f"{fmt_num(l.total_usd / 1e6, 1, '$', 'M')} (long {fmt_num(l.long_usd / 1e6, 1, '$', 'M')} / short {fmt_num(l.short_usd / 1e6, 1, '$', 'M')})" if l.total_usd else "—"), l.source),
+        ("BTC liquidations 24h", (f"{fmt_num(l.btc_usd / 1e6, 1, '$', 'M')} (long {fmt_num(l.btc_long_usd / 1e6, 1, '$', 'M')})" if l.btc_usd else "—"), l.source),
+        ("Whale BTC buy / sell", (f"{fmt_num(w.btc_buy_usd / 1e6, 1, '$', 'M')} / {fmt_num(w.btc_sell_usd / 1e6, 1, '$', 'M')} over {fmt_num(w.window_minutes, 0)} min" if w.available and w.btc_trades else "—"), w.source),
+        ("Stablecoin supply", (f"{fmt_num(sc.total_usd / 1e9, 1, '$', 'B')} ({fmt_pct(sc.change_24h_pct, 2)} 24h)" if sc.total_usd else "—"), sc.source),
     ]

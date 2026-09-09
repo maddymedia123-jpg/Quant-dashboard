@@ -4,7 +4,7 @@ import pathlib
 
 from core.config import CATEGORIES, MACRO_EVENTS
 from core.data.kraken_spot import parse_ohlc
-from core.data.types import FuturesSnapshot, MarketSnapshot, OptionsSnapshot, SentimentSnapshot, SpotSnapshot
+from core.data.types import FuturesSnapshot, LiquidationsSnapshot, MarketSnapshot, OptionsSnapshot, SentimentSnapshot, SpotSnapshot
 from core.indicators.category import analyze_category
 from core.indicators.trade_map import map_trade
 from ui import panels
@@ -21,6 +21,7 @@ def _market():
                                 oi_change_24h_pct=7.0, long_short_ratio=1.7, taker_buy_sell_ratio=0.9),
         options=OptionsSnapshot(source="deribit", max_pain=80000, max_pain_expiry="2026-09-25", put_call_oi_ratio=0.6, iv_atm=55.0, iv_skew=3.0),
         sentiment=SentimentSnapshot.unavailable("alternative.me", "timeout"),
+        liquidations=LiquidationsSnapshot(source="coinlobster", total_usd=2.04e8, long_usd=1.54e8, short_usd=5.0e7),
     )
 
 
@@ -28,8 +29,10 @@ def test_kpis_cover_required_fields_with_dash_for_missing():
     m = _market()
     a = analyze_category(CATEGORIES["live"], m.spot.frames, m.futures)
     labels = [k["label"] for k in panels.kpis_for(a, m)]
-    for req in ("Price", "Direction", "RSI 14", "ATR %", "Funding", "OI 24h", "Long/Short", "Fear & Greed"):
+    for req in ("Price", "Direction", "RSI 14", "ATR %", "Funding", "OI 24h", "Long/Short", "Liq 24h", "Fear & Greed"):
         assert req in labels
+    liq = next(k for k in panels.kpis_for(a, m) if k["label"] == "Liq 24h")
+    assert liq["value"] == "$204M" and liq["delta"] == "75% longs" and liq["tone"] == "down"
     fg = next(k for k in panels.kpis_for(a, m) if k["label"] == "Fear & Greed")
     assert fg["value"] == "—"
 
@@ -59,3 +62,5 @@ def test_trade_result_macro_and_status():
     assert "unavailable" in status and "kraken" in status
     rows = panels.raw_metrics_rows(m)
     assert any(r[0] == "Max pain" and "80,000" in r[1] for r in rows)
+    assert any(r[0] == "Liquidations 24h" and "$204.0M" in r[1] for r in rows)
+    assert "hyperliquid" in status and "stablecoins" in status
