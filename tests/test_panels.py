@@ -83,3 +83,30 @@ def test_agent_summary_and_report_stats():
     assert "Live paragraph &lt;b&gt;" in h and "BULL TRAP" in h and "ti-card down" in h
     st = panels.report_stats_html(r)
     assert "agents 1/2 ok" in st and "tokens 15" in st and "failed: B2" in st and "free tier" in st
+
+
+def test_anchored_direction_early_warning_and_accuracy_panels():
+    from core.accuracy import HitRate
+    from core.anchors import AnchorContext, AnchoredVerdict
+    from core.indicators.early_warning import EarlyWarning
+    m = _market()
+    a = analyze_category(CATEGORIES["live"], m.spot.frames, m.futures)
+    an = AnchorContext(direction="BULLISH", confidence=0.6, anchor=78000.0, invalidation=77800.0, price=78400.0, ts_ms=0,
+                       funding_sign=1, oi_change_24h_pct=1.0, long_short_ratio=1.1, squeeze_score=20, classification=None,
+                       macro_within_24h=False, sigma_pct=0.5, drivers=["EMA stack bullish"], flips_if="close below 77,800")
+    live = AnchorContext(**{**an.__dict__, "direction": "BEARISH", "confidence": 0.3})
+    v = AnchoredVerdict("live", an, live, since_ms=0, triggers_fired=[], changed=False)
+    h = panels.anchored_direction_html(a, v, now_ms=90 * 60_000)
+    assert "anchored 1h 30m ago" in h and "live read BEARISH" in h and "ti-card up" in h
+    v2 = AnchoredVerdict("live", live, live, since_ms=0, triggers_fired=["funding_flip"], changed=True)
+    assert "Re-anchored now on: funding_flip" in panels.anchored_direction_html(a, v2, now_ms=0)
+    assert panels.early_warning_html([]) is None
+    ew = panels.early_warning_html([EarlyWarning("BULL_TRAP_FORMING", "forming", ["pressing resistance"])])
+    assert "BULL TRAP FORMING" in ew and "ti-card warn" in ew
+    empty = panels.accuracy_html({"total_scored": 0, "open_calls": 3})
+    assert "No scored calls yet" in empty and "waiting: 3" in empty
+    full = panels.accuracy_html({"total_scored": 3, "open_calls": 0, "by_category": {"live": HitRate(3, 2)},
+                                 "by_classification_24h": {"BULL_TRAP": HitRate(1, 1)}, "by_classification_7d": {},
+                                 "recent_calls": [{"category": "live", "direction": "BULLISH", "price": 78000.0, "realised_pct": 0.4, "hit": 1}],
+                                 "recent_reports": []})
+    assert "67%" in full and "small sample" in full and "BULL_TRAP" in full and "hit)" in full
