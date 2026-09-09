@@ -213,3 +213,7 @@ When a trigger fires the verdict re-anchors to the fresh call and an `anchor_log
 - War Room shows hit rate per category and per classification, sample counts, and the last 20 scored items. Small samples are labelled as such; nothing is claimed below 10 samples.
 
 **Out of scope for Phase 3:** cross-viewer auth, Postgres backend (interface-ready only), news-driven triggers (no source yet).
+
+## 15. News source decision (2026-09-10)
+
+Client suggested Forex Factory. Its weekly calendar JSON (`nfs.faireconomy.media/ff_calendar_thisweek.json`, keyless, verified 200) is an economic calendar, not headlines, which matches the original News tab (single high-impact macro focus with consensus forecast and previous value). Adopted as the ninth source (`core/data/calendar.py`, `CalendarSnapshot`, `CalendarSnapshot.upcoming(now, window, min_impact, countries)`). Drives the Weekly/Monthly macro card, the `macro_window` anchor trigger and the agents' macro context. Headline news remains out of scope until a keyless provider exists.

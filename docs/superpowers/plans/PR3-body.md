@@ -8,8 +8,10 @@ Title: Phase 3: anchored verdicts, early-warning setups, persistent accuracy led
 
 - **US-safe futures fallback.** Streamlit Cloud egress is US, and both Binance and Bybit block it (live site showed funding/OI as "—"). When the direct exchanges fail, the futures snapshot is now composed from CoinLobster's per-exchange market conditions (Binance Futures funding and OI) plus Hyperliquid mark price; the source label says so. 7d funding mean, long/short and taker ratios and 24h OI change stay honestly unavailable on that path, and squeeze scoring now runs on the components it has and names what is missing.
 
+- **Live macro calendar.** Forex Factory's keyless weekly JSON feed replaces the hand-curated event list: Weekly/Monthly show this week's USD high-impact prints with forecast/previous, the anchor `macro_window` trigger and the trade-map trigger now fire on real events inside 24h, and the agents receive the same list. Curated list remains as the fallback when the feed is down.
+
 ## Test
-- `pytest`: 99 tests (19 new: store CRUD, each trigger in isolation, anchor hold/re-anchor flow, scoring rules at both horizons, early-warning ingredients, panel HTML).
+- `pytest`: 103 tests (23 new: store CRUD, each trigger in isolation, anchor hold/re-anchor flow, scoring rules at both horizons, early-warning ingredients, panel HTML).
 - Manual: app boots in fixture mode, anchored cards render with "anchored … ago", audit ledger shows the initial anchors, accuracy panel shows the open-call count.
 
 ## Notes

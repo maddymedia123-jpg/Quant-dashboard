@@ -70,6 +70,12 @@ def _sign(v: float | None) -> int | None:
     return 1 if v > 0 else -1 if v < 0 else 0
 
 
+def macro_soon(m: MarketSnapshot, now_ms: int) -> bool:
+    if m.calendar.available and m.calendar.events:
+        return bool(m.calendar.upcoming(now_ms, MACRO_WINDOW_MS))
+    return macro_within(now_ms)
+
+
 def build_context(a: CategoryAnalysis, m: MarketSnapshot, classification: str | None, now_ms: int) -> AnchorContext:
     f = m.futures
     return AnchorContext(
@@ -78,7 +84,7 @@ def build_context(a: CategoryAnalysis, m: MarketSnapshot, classification: str | 
         funding_sign=_sign(f.funding_rate) if f.available else None,
         oi_change_24h_pct=f.oi_change_24h_pct if f.available else None,
         long_short_ratio=f.long_short_ratio if f.available else None,
-        squeeze_score=a.squeeze.score, classification=classification, macro_within_24h=macro_within(now_ms),
+        squeeze_score=a.squeeze.score, classification=classification, macro_within_24h=macro_soon(m, now_ms),
         sigma_pct=a.vol.sigma_pct, drivers=list(a.direction.drivers), flips_if=a.direction.flips_if,
     )
 

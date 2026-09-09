@@ -54,13 +54,22 @@ def category_brief(a: CategoryAnalysis) -> dict:
     })
 
 
+def _calendar_events(m: MarketSnapshot) -> dict:
+    if m.calendar.available and m.calendar.events:
+        hi = [{"title": e["title"], "country": e["country"], "impact": e["impact"], "date": e["date"],
+               "forecast": e["forecast"], "previous": e["previous"]}
+              for e in m.calendar.events if e.get("impact") == "High" and e.get("country") in ("USD",)]
+        return {"source": m.calendar.source, "usd_high_impact_this_week": hi[:12]}
+    return {"source": "curated (calendar unavailable)", "events": MACRO_EVENTS}
+
+
 def common_payload(m: MarketSnapshot, analyses: dict[str, CategoryAnalysis]) -> dict:
     live = analyses.get("live") or next(iter(analyses.values()), None)
     return {
         "asset": "BTC/USD",
         "spot": _round({"price": m.spot.last, "source": m.spot.source, "price_change_24h_pct": live.price_change_24h_pct if live else None}),
         "categories": {k: category_brief(a) for k, a in analyses.items()},
-        "macro_events_curated": MACRO_EVENTS,
+        "macro_calendar": _calendar_events(m),
         "generated_at_utc": m.generated_at.strftime("%Y-%m-%d %H:%M UTC"),
     }
 

@@ -98,7 +98,7 @@ def map_trade(form: dict, live: CategoryAnalysis | None, intraday: CategoryAnaly
     sq = live.squeeze if live else None
     triggers.append(f"Squeeze score reaches 60 (now {sq.score})" if sq and sq.score is not None else "Squeeze score reaches 60")
     triggers.append("Trap classification changes (Director report, Phase 2)")
-    triggers.append("Curated macro event inside 24h")
+    triggers.append("High-impact USD calendar event inside 24h")
 
     return TradeMap(classification, d, entry, lev, sl, tp, liq, dist, risk, rr,
                     [_fmt(s) for s in above], [_fmt(s) for s in below], stop_structural, warnings, triggers)
