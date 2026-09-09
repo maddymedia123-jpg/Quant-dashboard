@@ -25,7 +25,8 @@ SHARED_RULES = """HONESTY RULES (non-negotiable):
 3. Quote the figures you rely on in raw_metrics exactly as given (same units), so the Director can audit you.
 4. Argue your desk's side as hard as the evidence allows, then state the single strongest argument AGAINST your thesis in key_risk_to_thesis.
 5. Conviction is 1-10. If your domain's data is unavailable, conviction is at most 3.
-6. Output must be a single JSON object matching the schema. No prose outside the JSON."""
+6. Output must be a single JSON object matching the schema. No prose outside the JSON.
+7. Quote numbers the way a desk would read them: prices to the nearest dollar (78,056), percentages to two decimals (0.38%), ratios to two decimals (1.68), USD totals in millions or billions ($168.2M). Never paste more digits than the data needs."""
 
 _DOMAINS = {
     "options": {
