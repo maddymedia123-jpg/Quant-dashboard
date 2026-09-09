@@ -182,3 +182,34 @@ Probed from the public-apis list. All keyless, all returned 200 with usable shap
 Dead or keyed now: CryptoCompare (401 without key, includes its news feed), CoinCap v3 (key), btcnode.uk Reddit (403 upstream), CoinLobster hyperliquid-whales (auth). News source remains open; macro calendar stays curated.
 
 Phase 2 plan impact: add `core/data/gemini_spot.py` (fallback in `fetch_spot`), `core/data/hyperliquid.py`, `core/data/coinlobster.py`, `core/data/stablecoins.py`; extend `MarketSnapshot` with `liquidations`, `whales`, `stablecoins`; feed those domains to B2/R2, B3/R3, B4/R4, B5/R5. All are IP-rate-limited: cache 60–120 s and never fan out per agent.
+
+## 14. Phase 3 design — anchored verdicts, early warning, accuracy ledger (2026-09-10)
+
+**Persistence.** A small SQLite store (`core/store.py`) at `TI_DATA_DIR` (default `./data`, gitignored). Standard SQL only so a Postgres backend can be added behind the same interface later. Caveat: Streamlit Cloud's filesystem is wiped on reboot/redeploy, so the ledger there is best-effort until a hosted database (`DATABASE_URL`) is configured; this is stated in the UI.
+
+**Anchored verdicts (`core/anchors.py`).** Per category the store keeps the last *anchored* direction call with its context: direction, confidence, anchor and invalidation levels, price, time, funding sign, OI 24h %, long/short ratio, squeeze score, Director classification (if any), and the next curated macro event. On every refresh the fresh deterministic call is computed but the **displayed** verdict is the anchored one until at least one trigger fires:
+
+| Trigger | Rule |
+|---|---|
+| funding_flip | sign(funding_rate) changed |
+| oi_shift | abs(OI 24h % now − OI 24h % at anchor) ≥ 5 |
+| long_short_cross | long/short ratio crossed 1.0 |
+| squeeze | squeeze score ≥ 60 now and was < 60 at anchor |
+| invalidation | close beyond the anchored invalidation level |
+| trap_change | Director classification differs from the one at anchor (only when a new report exists) |
+| macro_window | a curated macro event is within 24 h and was not at anchor time |
+| stale | anchor older than 4× the category horizon |
+
+When a trigger fires the verdict re-anchors to the fresh call and an `anchor_log` row records category, from, to, price, fired triggers. If the fresh direction differs but no trigger fired, the card shows "live read: X (unconfirmed)" under the anchored verdict.
+
+**Early warning (`core/indicators/early_warning.py`).** Deterministic, per category, shown as banners on Weekly/Monthly (and as a chip elsewhere):
+- BULL_TRAP_FORMING: price within 0.5 ATR below a resistance with ≥2 touches, regular bearish RSI divergence (confirmed or forming), funding above its 7-day mean or long/short > 1.2.
+- BEAR_TRAP_FORMING: mirror (support, bullish divergence, funding below mean or long/short < 0.8).
+- SQUEEZE_FORMING: squeeze score 40–59 and higher than the last stored score for that category; SQUEEZE_WARNING at ≥60.
+
+**Accuracy ledger (`core/accuracy.py`).**
+- Every (re)anchor logs a *call*: category, direction, price, horizon = category `horizon_bars` × timeframe. When the horizon has elapsed the call is scored against the current price: BULLISH hit if move > +0.25σ, BEARISH hit if move < −0.25σ, NEUTRAL hit if |move| ≤ 0.5σ (σ = expected-range sigma at call time).
+- Every Director report logs classification and price; scored at 24 h and 7 d: BULL_TRAP hit if price lower, BEAR_TRAP hit if higher, RANGE_TRAP hit if |move| < 1σ(24h), NO_TRAP hit if the move agrees with the majority category direction at report time.
+- War Room shows hit rate per category and per classification, sample counts, and the last 20 scored items. Small samples are labelled as such; nothing is claimed below 10 samples.
+
+**Out of scope for Phase 3:** cross-viewer auth, Postgres backend (interface-ready only), news-driven triggers (no source yet).
