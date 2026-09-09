@@ -24,3 +24,11 @@ def test_calm_market_none():
 def test_unavailable_futures():
     r = squeeze_risk(FuturesSnapshot.unavailable("binance,bybit", "451"), price_change_24h_pct=1.0)
     assert r.score is None and r.direction == "UNKNOWN"
+
+
+def test_partial_futures_scores_with_missing_components_named():
+    fut = FuturesSnapshot(source="coinlobster (Binance Futures)", funding_rate=0.0006, funding_7d_mean=None,
+                          oi_change_24h_pct=None, long_short_ratio=None, open_interest_usd=8e9)
+    r = squeeze_risk(fut, price_change_24h_pct=0.1)
+    assert r.score is not None and r.direction == "LONG_SQUEEZE"
+    assert any("OI 24h change unavailable" in d for d in r.drivers) and any("long/short" in d for d in r.drivers)

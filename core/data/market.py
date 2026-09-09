@@ -8,7 +8,7 @@ import os
 
 import httpx
 
-from core.data.binance_futures import fetch_futures
+from core.data.binance_futures import compose_futures, fetch_futures
 from core.data.coinlobster import fetch_coinlobster
 from core.data.deribit_options import fetch_options
 from core.data.hyperliquid import fetch_hyperliquid
@@ -65,6 +65,10 @@ async def fetch_context(client: httpx.AsyncClient | None = None) -> dict:
         _guard(fetch_stablecoins(client), StablecoinSnapshot, "defillama"),
     )
     liqs, whales = cl
+    if not fut.available:
+        composed = compose_futures(whales, hl, fut.error or "")
+        if composed.available:
+            fut = composed
     return {"futures": fut, "options": opt, "sentiment": sent, "hyperliquid": hl,
             "liquidations": liqs, "whales": whales, "stablecoins": stables}
 

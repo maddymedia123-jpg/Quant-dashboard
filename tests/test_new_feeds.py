@@ -107,3 +107,44 @@ def test_offline_fixture_market_has_all_sources():
     m = fixture_market()
     assert m.unavailable() == []
     assert all(getattr(m, n).source == "fixture" for n in MarketSnapshot.SOURCES)
+
+
+def test_compose_futures_from_coinlobster_and_hyperliquid():
+    from core.data.binance_futures import compose_futures
+    from core.data.types import HyperliquidSnapshot
+    w = parse_whales(_j("coinlobster_whales.json"), None)
+    h = parse_meta(_j("hyperliquid_meta.json"))
+    f = compose_futures(w, h, "451")
+    assert f.available and f.source == "coinlobster+hyperliquid (Binance Futures)"
+    assert f.funding_rate == w.funding_by_exchange["Binance Futures"] and f.open_interest_usd > 1e8
+    assert f.open_interest > 1000 and f.mark_price == h.mark_price and f.oi_change_24h_pct is None
+    only_hl = compose_futures(None, h, "451")
+    assert only_hl.available and only_hl.source.startswith("hyperliquid") and abs(only_hl.funding_rate - h.funding_rate_1h * 8) < 1e-12
+    none = compose_futures(None, HyperliquidSnapshot.unavailable("hyperliquid", "x"), "451")
+    assert none.available is False
+
+
+def test_fetch_context_composes_when_direct_futures_blocked(monkeypatch):
+    from core.data import market
+    from core.data.types import HyperliquidSnapshot, LiquidationsSnapshot, WhalesSnapshot
+
+    async def blocked(client):
+        return FuturesSnapshot.unavailable("binance,bybit", "451")
+
+    async def boom(client):
+        raise RuntimeError("down")
+
+    async def ok_hl(client):
+        return HyperliquidSnapshot(source="hyperliquid", funding_rate_1h=0.00001, open_interest=30000.0, mark_price=78000.0, oracle_price=78000.0)
+
+    async def ok_cl(client):
+        return (LiquidationsSnapshot(source="coinlobster", total_usd=1.0, long_usd=0.5, short_usd=0.5),
+                WhalesSnapshot(source="coinlobster", funding_by_exchange={"Binance Futures": 0.0001}, oi_by_exchange_usd={"Binance Futures": 8e9}))
+
+    monkeypatch.setattr(market, "fetch_futures", blocked)
+    for name in ("fetch_options", "fetch_sentiment", "fetch_stablecoins"):
+        monkeypatch.setattr(market, name, boom)
+    monkeypatch.setattr(market, "fetch_hyperliquid", ok_hl)
+    monkeypatch.setattr(market, "fetch_coinlobster", ok_cl)
+    ctx = asyncio.run(market.fetch_context(client=object()))
+    assert ctx["futures"].available and ctx["futures"].funding_rate == 0.0001 and "coinlobster" in ctx["futures"].source
