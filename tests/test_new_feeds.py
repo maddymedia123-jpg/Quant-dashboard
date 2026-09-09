@@ -190,3 +190,29 @@ def test_kraken_futures_parse_and_chain(monkeypatch):
     monkeypatch.setattr(market, "fetch_coinlobster", rich_cl)
     ctx = asyncio.run(market.fetch_context(client=object()))
     assert ctx["futures"].source.startswith("coinlobster")
+
+
+def test_gate_futures_parse_full_field_set_and_chain(monkeypatch):
+    from core.data.gate_futures import parse_gate
+    g = parse_gate(_j("gate_contract_stats.json"), _j("gate_tickers.json"), _j("gate_funding.json"), _j("gate_contract.json"))
+    assert g.available and g.source == "gate"
+    assert -0.01 < g.funding_rate < 0.01 and g.funding_7d_mean is not None
+    assert g.open_interest > 1000 and g.open_interest_usd > 1e8 and g.mark_price > 1000
+    assert g.oi_change_24h_pct is not None and 0.2 < g.long_short_ratio < 5 and 0 < g.long_account_pct < 1
+    assert 0.2 < g.taker_buy_sell_ratio < 5 and len(g.oi_history) == 25
+
+    import asyncio
+    from core.data import binance_futures as bf
+    import core.data.gate_futures as gf
+
+    async def boom(client):
+        raise RuntimeError("451")
+
+    async def ok_gate(client):
+        return g
+
+    monkeypatch.setattr(bf, "_binance", boom)
+    monkeypatch.setattr(bf, "_bybit", boom)
+    monkeypatch.setattr(gf, "fetch_gate_futures", ok_gate)
+    out = asyncio.run(bf.fetch_futures(client=object()))
+    assert out.available and out.source == "gate"

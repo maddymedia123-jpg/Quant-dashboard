@@ -92,7 +92,9 @@ async def _bybit(client: httpx.AsyncClient) -> FuturesSnapshot:
 
 
 async def fetch_futures(client: httpx.AsyncClient) -> FuturesSnapshot:
-    """Binance → Bybit. Further fallbacks (CoinLobster relay, Kraken Futures) are applied in market.fetch_context."""
+    """Binance → Bybit → Gate.io (all carry the full field set). Thinner fallbacks (CoinLobster relay,
+    Kraken Futures) are applied in market.fetch_context."""
+    from core.data.gate_futures import fetch_gate_futures  # local import keeps module load light
     errors = []
     for name, fn in (("binance", _binance), ("bybit", _bybit)):
         try:
@@ -100,7 +102,11 @@ async def fetch_futures(client: httpx.AsyncClient) -> FuturesSnapshot:
         except Exception as e:  # noqa: BLE001 - provider boundary
             log.warning("futures via %s failed: %s", name, e)
             errors.append(f"{name}: {e}")
-    return FuturesSnapshot.unavailable("binance,bybit", " | ".join(errors))
+    gate = await fetch_gate_futures(client)
+    if gate.available:
+        return gate
+    errors.append(f"gate: {gate.error}")
+    return FuturesSnapshot.unavailable("binance,bybit,gate", " | ".join(errors))
 
 
 PREFERRED_VENUES = ("Binance Futures", "Bybit", "OKX", "Bitget Futures")
