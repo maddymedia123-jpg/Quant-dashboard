@@ -1,0 +1,1 @@
+[{"universe": [{"szDecimals": 5, "name": "BTC", "maxLeverage": 40, "marginTableId": 56}]}, [{"funding": "0.0000100836", "openInterest": "33997.0627", "prevDayPx": "79073.0", "dayNtlVlm": "2246940338.6532187462", "premium": "-0.0004718124", "oraclePx": "78421.0", "markPx": "78384.0", "midPx": "78383.5", "impactPxs": ["78383.0", "78384.0"], "dayBaseVlm": "28617.83432"}]]
