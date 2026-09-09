@@ -122,3 +122,12 @@ def test_calendar_panel_live_and_fallback():
     first_high = next(e for e in cal.events if e["impact"] == "High" and e["country"] == "USD")
     h = panels.calendar_html(m2, now_ms=first_high["time_ms"] - 3_600_000)
     assert "Inside 24h" in h and first_high["title"] in h and "Forex Factory" in h and "ti-card warn" in h
+
+
+def test_calendar_panel_escapes_feed_text():
+    from core.data.types import CalendarSnapshot
+    m = _market()
+    evil = CalendarSnapshot(source="forexfactory", events=[{"title": "<img src=x onerror=alert(1)>", "country": "USD", "impact": "High",
+                                                              "time_ms": 10_000_000, "date": "x", "forecast": "<b>1</b>", "previous": None}])
+    h = panels.calendar_html(m.model_copy(update={"calendar": evil}), now_ms=10_000_000 - 60_000)
+    assert "<img" not in h and "&lt;img" in h and "<b>1</b>" not in h and "&lt;b&gt;1&lt;/b&gt;" in h
