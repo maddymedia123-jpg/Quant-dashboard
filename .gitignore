@@ -5,3 +5,4 @@ __pycache__/
 .env
 streamlit.log
 .pytest_cache/
+data/

@@ -1,18 +1,23 @@
 """Trap Intelligence - BTC market-surveillance terminal (Phase 1: deterministic layer)."""
 from __future__ import annotations
 
+import time
 from datetime import datetime, timezone
 
 import pandas as pd
 import streamlit as st
 
+from core.accuracy import majority_direction, record_report, score_due_calls, score_reports, summary
 from core.agents.llm import LLMClient
 from core.agents.report import to_markdown
 from core.agents.runner import run_pipeline_sync
 from core.agents.settings import load_settings
+from core.anchors import anchor_step
 from core.config import CATEGORIES, MACRO_EVENTS, TTL
 from core.data.market import assemble, load_context, load_spot
 from core.indicators.category import analyze_category
+from core.indicators.early_warning import early_warnings
+from core.store import Store
 from core.indicators.trade_map import map_trade
 from ui import panels
 from ui.charts import render_chart
@@ -31,10 +36,13 @@ def _context():
     return load_context()
 
 
+@st.cache_resource(show_spinner=False)
+def _store():
+    return Store()
+
+
 # ---------- sidebar ----------
 st.session_state.setdefault("dark", False)
-st.session_state.setdefault("audit", [])
-st.session_state.setdefault("last_dir", {})
 
 st.sidebar.markdown("<p class='ti-title'>Trap Intelligence</p><p class='ti-sub'>BTC market surveillance</p>", unsafe_allow_html=True)
 dark = st.sidebar.toggle("Dark mode", value=st.session_state["dark"])
@@ -67,14 +75,8 @@ if m.spot.available:
         a = analyze_category(cat, m.spot.frames, m.futures)
         if a is not None:
             analyses[key] = a
-            prev = st.session_state["last_dir"].get(key)
-            if prev and prev != a.direction.direction:
-                st.session_state["audit"].append({
-                    "time_utc": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
-                    "category": cat.label, "from": prev, "to": a.direction.direction,
-                    "price": round(a.price, 2), "reason": "; ".join(a.direction.drivers[:2]),
-                })
-            st.session_state["last_dir"][key] = a.direction.direction
+store = _store()
+now_ms = int(time.time() * 1000)
 
 # ---------- run analysis ----------
 if run_clicked and settings is not None and analyses:
@@ -90,12 +92,31 @@ if run_clicked and settings is not None and analyses:
             report = run_pipeline_sync(LLMClient(settings), m, analyses, settings,
                                        raw_metrics=panels.raw_metrics_rows(m), progress=_progress)
             st.session_state["trap_report"] = report
+            intraday_a = analyses.get("intraday")
+            record_report(store, report, m.spot.last or next(iter(analyses.values())).price,
+                          intraday_a.vol.sigma_pct if intraday_a else None, majority_direction(analyses), now_ms)
             status.update(label=f"Report {report.report_id} ready in {report.wall_time_s:.0f}s", state="complete", expanded=False)
         except Exception as e:  # noqa: BLE001 - never crash the page on an LLM failure
             status.update(label=f"Pipeline failed: {e}", state="error")
     st.rerun()
 
 report = st.session_state.get("trap_report")
+
+# ---------- anchoring + accuracy ----------
+verdicts = {}
+classification = report.director.trap_classification if (report is not None and report.director is not None) else None
+try:
+    for key, a in analyses.items():
+        verdicts[key] = anchor_step(store, key, a, m, classification, now_ms)
+    if analyses:
+        _px = m.spot.last or next(iter(analyses.values())).price
+        score_due_calls(store, now_ms, _px)
+        score_reports(store, now_ms, _px)
+except Exception as e:  # noqa: BLE001 - ledger problems must never blank the page
+    st.warning(f"Ledger unavailable this refresh: {e}")
+
+st.sidebar.markdown(f"<span class='ti-chip'>ledger: {store.path}</span>", unsafe_allow_html=True)
+st.sidebar.caption("Anchors and accuracy persist in SQLite. On Streamlit Cloud this resets on reboot until a hosted database is configured.")
 
 # ---------- header ----------
 st.markdown("<p class='ti-title'>BTC / USD · Trap Intelligence Terminal</p>"
@@ -115,14 +136,17 @@ def category_tab(tab, key):
             st.info(f"Not enough {CATEGORIES[key].chart_tf} history to analyse this category.")
             return
         kpi_strip(panels.kpis_for(a, m))
-        banner = panels.squeeze_banner_html(a) if key in ("weekly", "monthly") else None
-        if banner:
-            panels.render(banner)
+        if key in ("weekly", "monthly"):
+            last_sig = store.last_signal(key, before_ms=now_ms)
+            banner = panels.early_warning_html(early_warnings(a, m.futures, last_sig["squeeze_score"] if last_sig else None))
+            if banner:
+                panels.render(banner)
         render_chart(a, dark)
         panels.render(panels.layman_html(a))
         c1, c2 = st.columns(2)
         with c1:
-            panels.render(panels.direction_html(a))
+            v = verdicts.get(key)
+            panels.render(panels.anchored_direction_html(a, v, now_ms) if v else panels.direction_html(a))
             panels.render(panels.volatility_html(a))
         with c2:
             panels.render(panels.divergence_html(a))
@@ -175,8 +199,19 @@ with tabs[5]:
                       "Section 1 of that report, the raw metric snapshot, is live below.</p></div>")
     rows = panels.raw_metrics_rows(m)
     st.dataframe(pd.DataFrame(rows, columns=["Metric", "Value", "Source"]), width="stretch", hide_index=True)
-    with st.expander("Audit ledger — direction changes this session"):
-        if st.session_state["audit"]:
-            st.dataframe(pd.DataFrame(st.session_state["audit"]), width="stretch", hide_index=True)
+    try:
+        panels.render(panels.accuracy_html(summary(store)))
+        log_rows = store.anchor_log(50)
+    except Exception as e:  # noqa: BLE001
+        st.warning(f"Accuracy ledger unavailable: {e}")
+        log_rows = []
+    with st.expander("Audit ledger — anchor changes (persistent)"):
+        if log_rows:
+            df_log = pd.DataFrame([{
+                "time_utc": datetime.fromtimestamp(r["ts_ms"] / 1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M"),
+                "category": r["category"], "from": r["from_dir"] or "—", "to": r["to_dir"],
+                "price": r["price"], "triggers": ", ".join(r["triggers"]),
+            } for r in log_rows])
+            st.dataframe(df_log, width="stretch", hide_index=True)
         else:
-            st.caption("No direction changes recorded yet in this session.")
+            st.caption("No anchor changes recorded yet.")

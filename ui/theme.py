@@ -103,6 +103,9 @@ h1, h2, h3, h4, p, li, label, .stMarkdown {{ color: {p['text']}; }}
 .ti-chip {{ display: inline-block; font-size: 0.7rem; padding: 2px 8px; border-radius: 999px; border: 1px solid {p['border']}; color: {p['muted']}; margin: 0 6px 6px 0; }}
 .ti-chip.up {{ border-color: {p['up']}; }} .ti-chip.down {{ border-color: {p['down']}; }} .ti-chip.warn {{ border-color: {p['warn']}; }}
 .ti-mono {{ font-family: {p['mono']}; }}
+.ti-card table {{ border-collapse: collapse; font-size: 0.84rem; margin: 4px 0 8px 0; }}
+.ti-card th, .ti-card td {{ padding: 3px 10px 3px 0; border-bottom: 1px solid {p['border']}; text-align: left; color: {p['text']}; }}
+.ti-card th {{ color: {p['muted']}; font-weight: 600; }}
 @media (max-width: 768px) {{ .block-container {{ padding-left: 0.6rem; padding-right: 0.6rem; }} .ti-kpis {{ grid-template-columns: repeat(2, 1fr); }} }}
 </style>
 """, unsafe_allow_html=True)

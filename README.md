@@ -48,7 +48,24 @@ numbers in the data block and an explicit list of unavailable sources; they are 
 invent a figure. On the Gemini free tier the Pro models return quota errors, so the Director runs on
 Flash; on OpenRouter without credits only the free Nemotron models are available.
 
+## Anchoring & accuracy (Phase 3)
+
+Each timeframe's displayed direction is **anchored**: it holds until a trigger fires (funding flips
+sign, open interest moves 5 points, long/short crosses 1.0, squeeze score reaches 60, price closes past
+the invalidation level, the Director's trap classification changes, a curated macro event is within 24h,
+or the anchor is stale). When the fresh read disagrees without a trigger, the card shows it as an
+unconfirmed live read. Weekly and Monthly tabs raise early-warning banners for bull/bear traps and
+squeezes as they form.
+
+Every anchor change logs a direction call; every Director report logs its classification. Calls are
+scored once their horizon elapses (Live 1h, Intraday 24h, Weekly 7d, Monthly 30d) and reports at 24h and
+7d, using the rules in the spec (§14). The War Room shows hit rates per category and classification with
+sample sizes; anything under 10 samples is labelled indicative.
+
+Storage is SQLite at `TI_DATA_DIR` (default `./data`, gitignored). On Streamlit Cloud that file resets on
+reboot or redeploy; point `TI_DATA_DIR` at a mounted volume or wait for the hosted-database option.
+
 ## Layout
 
-`core/data` providers → `core/indicators` pure functions → `core/agents` (LLM client, prompts, context, runner, report) → `ui/` renderers → `app.py` shell.
+`core/data` providers → `core/indicators` pure functions → `core/agents` (LLM client, prompts, context, runner, report) → `core/store`, `core/anchors`, `core/accuracy` (persistence, anchoring, scoring) → `ui/` renderers → `app.py` shell.
 Design spec and implementation plans live under `docs/superpowers/`.

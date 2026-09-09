@@ -99,6 +99,73 @@ def layman_html(a: CategoryAnalysis) -> str:
     return card_html("Summary", "<p>" + html.escape(" ".join(parts)) + "</p>", tone_for_direction(d.direction))
 
 
+def _ago(delta_ms: int) -> str:
+    mins = max(0, int(delta_ms // 60_000))
+    if mins < 60:
+        return f"{mins}m"
+    hours, mins = divmod(mins, 60)
+    if hours < 48:
+        return f"{hours}h {mins:02d}m"
+    return f"{hours // 24}d {hours % 24}h"
+
+
+TRIGGERS_WATCHED = ("funding flip · OI ±5% · long/short crosses 1.0 · squeeze ≥ 60 · close past invalidation · "
+                    "Director trap change · macro event within 24h · stale anchor")
+
+
+def anchored_direction_html(a: CategoryAnalysis, v, now_ms: int) -> str:
+    """Anchored verdict card: the displayed direction holds until a trigger fires."""
+    an = v.anchored
+    body = (f"<p><strong>{an.direction}</strong> · confidence {an.confidence:.0%} · anchored {_ago(now_ms - v.since_ms)} ago "
+            f"at {fmt_num(an.price, 0, '$')} · {a.chart_tf} chart</p>")
+    if v.changed and v.triggers_fired and v.triggers_fired != ["initial"]:
+        body += f"<p class='muted'>Re-anchored now on: {html.escape(', '.join(v.triggers_fired))}</p>"
+    body += f"<p>Anchor {fmt_num(an.anchor, 0, '$')} · Invalidation {fmt_num(an.invalidation, 0, '$')}</p>"
+    body += f"<p class='muted'>Flips if: {html.escape(an.flips_if)}</p>"
+    if v.unconfirmed:
+        body += (f"<p><span class='ti-chip warn'>live read {html.escape(v.live.direction)} ({v.live.confidence:.0%})</span> "
+                 f"unconfirmed until a trigger fires</p>")
+    body += _li(an.drivers)
+    body += f"<p class='muted'>Triggers watched: {TRIGGERS_WATCHED}</p>"
+    return card_html("Market direction (anchored)", body, tone_for_direction(an.direction))
+
+
+def early_warning_html(ws) -> str | None:
+    if not ws:
+        return None
+    body = ""
+    for w in ws:
+        body += f"<p><strong>{html.escape(w.kind.replace('_', ' '))}</strong> · {html.escape(w.level)}</p>" + _li(w.drivers)
+    return card_html("Early warning", body, "warn")
+
+
+def _rate_rows(d: dict) -> str:
+    rows = ""
+    for k, h in sorted(d.items()):
+        rate = f"{h.rate:.0%}" if h.rate is not None else "—"
+        flag = " (small sample)" if h.small else ""
+        rows += f"<tr><td>{html.escape(str(k))}</td><td>{rate}</td><td>{h.hits}/{h.n}{html.escape(flag)}</td></tr>"
+    return rows
+
+
+def accuracy_html(s: dict) -> str:
+    if not s.get("total_scored"):
+        body = ("<p class='muted'>No scored calls yet. Direction calls score once their horizon elapses "
+                "(Live 1h, Intraday 24h, Weekly 7d, Monthly 30d); Director reports score at 24h and 7d. "
+                f"Open calls waiting: {s.get('open_calls', 0)}.</p>")
+        return card_html("Accuracy ledger", body)
+    body = "<p>Direction calls by category</p><table><tr><th>Category</th><th>Hit rate</th><th>Hits / n</th></tr>" + _rate_rows(s["by_category"]) + "</table>"
+    if s["by_classification_24h"]:
+        body += "<p>Director classification, 24h</p><table><tr><th>Class</th><th>Hit rate</th><th>Hits / n</th></tr>" + _rate_rows(s["by_classification_24h"]) + "</table>"
+    if s["by_classification_7d"]:
+        body += "<p>Director classification, 7d</p><table><tr><th>Class</th><th>Hit rate</th><th>Hits / n</th></tr>" + _rate_rows(s["by_classification_7d"]) + "</table>"
+    recent = [f"{c['category']} {c['direction']} @ {c['price']:,.0f} → {c['realised_pct']:+.2f}% ({'hit' if c['hit'] else 'miss'})" for c in s["recent_calls"][:10]]
+    if recent:
+        body += "<p>Recent scored calls</p>" + _li(recent)
+    body += f"<p class='muted'>Open calls waiting: {s.get('open_calls', 0)}. Samples under 10 are indicative only.</p>"
+    return card_html("Accuracy ledger", body)
+
+
 def divergence_html(a: CategoryAnalysis) -> str:
     if not a.divergences:
         return card_html("RSI divergence", "<p class='muted'>No RSI divergence in the last 60 bars.</p>")
