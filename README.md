@@ -24,6 +24,12 @@ Every feed reports availability; missing data is shown as `—`, never invented.
 Offline UI check without network: `TI_OFFLINE_FIXTURES=1 .venv/Scripts/python -m streamlit run app.py`
 (serves the recorded fixtures under `tests/fixtures`; sources are labelled "fixture").
 
+## Auto-refresh
+
+The sidebar "Auto-refresh" selector (Off / 30s / 60s / 120s) reruns the whole page on a timer via a
+Streamlit fragment, so the session (including the last Director report) is kept. Data caches still apply,
+so the timer adds no API load; spot refreshes every 25s and context feeds every 120s at most.
+
 ## Agents (Phase 2)
 
 `Run Analysis` in the sidebar runs the Trap Intelligence pipeline on demand: ten specialists

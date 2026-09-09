@@ -16,7 +16,7 @@ DOMAIN_OF = {"B1": "options", "R1": "options", "B2": "leverage", "R2": "leverage
 _EXCLUDE = {"available", "fetched_at", "error", "source"}
 
 
-def _round(v: Any, nd: int = 6) -> Any:
+def _round(v: Any, nd: int = 4) -> Any:
     if isinstance(v, float):
         if math.isnan(v) or math.isinf(v):
             return None
