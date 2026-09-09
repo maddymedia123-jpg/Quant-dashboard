@@ -54,6 +54,27 @@ if st.sidebar.button("Refresh data", width="stretch"):
     _spot.clear()
     _context.clear()
     st.rerun()
+
+AUTO_OPTIONS = (0, 30, 60, 120)
+st.session_state.setdefault("auto_refresh", 0)
+auto_every = st.sidebar.selectbox(
+    "Auto-refresh", AUTO_OPTIONS, index=AUTO_OPTIONS.index(st.session_state["auto_refresh"]),
+    format_func=lambda v: "Off" if v == 0 else f"every {v}s",
+    help="Reruns the page on a timer. Data caches still apply (spot 25s, context 120s), so this adds no API load.",
+)
+st.session_state["auto_refresh"] = auto_every
+st.session_state["last_full_run_ms"] = int(time.time() * 1000)
+
+if auto_every:
+    @st.fragment(run_every=f"{auto_every}s")
+    def _auto_tick():
+        elapsed = int(time.time() * 1000) - st.session_state.get("last_full_run_ms", 0)
+        if elapsed >= auto_every * 1000 - 500:
+            st.rerun(scope="app")
+        st.caption(f"Auto-refresh every {auto_every}s · last full update {elapsed // 1000}s ago")
+
+    with st.sidebar:
+        _auto_tick()
 settings = load_settings()
 st.session_state.setdefault("trap_report", None)
 run_clicked = st.sidebar.button(
