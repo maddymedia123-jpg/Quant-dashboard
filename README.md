@@ -40,7 +40,7 @@ Secrets (`.streamlit/secrets.toml` locally, Streamlit Cloud Secrets in productio
     # optional overrides
     LLM_PROVIDER = "gemini"         # or "openrouter"
     SPECIALIST_MODEL = "gemini-3.5-flash-lite"
-    DIRECTOR_MODEL = "gemini-3.8-flash"
+    DIRECTOR_MODEL = "gemini-3.7-flash"
     LLM_MAX_CONCURRENCY = "4"
 
 One run is 15 LLM calls (plus at most one JSON-repair retry per call). Agents only ever see the

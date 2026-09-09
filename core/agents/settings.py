@@ -5,7 +5,7 @@ import os
 from dataclasses import dataclass
 
 DEFAULTS = {
-    "gemini": {"specialist": "gemini-3.5-flash-lite", "director": "gemini-3.8-flash"},
+    "gemini": {"specialist": "gemini-3.5-flash-lite", "director": "gemini-3.7-flash"},
     "openrouter": {"specialist": "nvidia/nemotron-3.5-lightning:free", "director": "nvidia/nemotron-3.5-lightning:free"},
 }
 
