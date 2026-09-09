@@ -92,6 +92,7 @@ async def _bybit(client: httpx.AsyncClient) -> FuturesSnapshot:
 
 
 async def fetch_futures(client: httpx.AsyncClient) -> FuturesSnapshot:
+    """Binance → Bybit. Further fallbacks (CoinLobster relay, Kraken Futures) are applied in market.fetch_context."""
     errors = []
     for name, fn in (("binance", _binance), ("bybit", _bybit)):
         try:
