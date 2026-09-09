@@ -114,8 +114,15 @@ async def run_pipeline(client: LLMClient, m: MarketSnapshot, analyses: dict[str,
     # Phase 3: Director
     director = None
     if desks:
-        director, drun = await _call(client, "DIRECTOR", dir_model, context.director_payload(m, analyses, desks, volatility, accuracy, raw_metrics, failed_ids), progress, MAX_TOKENS["director"])
+        dpayload = context.director_payload(m, analyses, desks, volatility, accuracy, raw_metrics, failed_ids)
+        director, drun = await _call(client, "DIRECTOR", dir_model, dpayload, progress, MAX_TOKENS["director"])
         runs.append(drun)
+        if director is None and dir_model != spec_model:
+            # primary Director model unavailable (5xx / timeout / quota): retry once on the specialist model
+            progress("DIRECTOR", f"retrying on {spec_model}")
+            director, drun2 = await _call(client, "DIRECTOR", spec_model, dpayload, progress, MAX_TOKENS["director"])
+            drun2.agent_id = "DIRECTOR (fallback model)"
+            runs.append(drun2)
     else:
         runs.append(AgentRun(agent_id="DIRECTOR", ok=False, model=dir_model, latency_s=0.0, error="skipped: no desk reports"))
 

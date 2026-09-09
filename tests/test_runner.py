@@ -28,14 +28,15 @@ _DIR = {"executive_summary": "e", "trap_classification": "RANGE_TRAP", "classifi
 
 
 class FakeClient:
-    def __init__(self, fail=("B4",)):
+    def __init__(self, fail=("B4",), fail_models=()):
         self.fail = set(fail)
+        self.fail_models = set(fail_models)
         self.calls = []
 
     async def complete_json(self, system, user, model, max_tokens=2048, temperature=0.2):
         aid = system.splitlines()[0].split(":", 1)[1].strip()
         self.calls.append(aid)
-        if aid in self.fail:
+        if aid in self.fail or model in self.fail_models:
             return LLMResult("", None, 5, 0, None, 0.1, model, "fake", error="simulated failure")
         if aid.startswith(("B", "R")) and aid[1:].isdigit():
             data = dict(_SPEC, agent_id=aid, desk="bullish" if aid[0] == "B" else "bearish")
@@ -96,3 +97,13 @@ def test_markdown_has_all_sections_and_failure_note(ctx):
         assert f"## SECTION {n}:" in md
     assert "| Spot | $1 | fixture |" in md and "RANGE TRAP" in md and "B4 | failed: simulated failure" in md
     assert "PRIMARY — 52%" in md or "PRIMARY — 55%" in md
+
+
+def test_director_falls_back_to_specialist_model(ctx):
+    m, analyses = ctx
+    settings = LLMSettings(provider="fake", api_key="k", specialist_model="spec", director_model="dir")
+    r = run_pipeline_sync(FakeClient(fail=(), fail_models=("dir",)), m, analyses, settings)
+    ids = [x.agent_id for x in r.runs]
+    assert "DIRECTOR" in ids and "DIRECTOR (fallback model)" in ids and len(r.runs) == 16
+    assert r.director is not None and next(x for x in r.runs if x.agent_id == "DIRECTOR (fallback model)").model == "spec"
+    assert r.failed_agents == ["DIRECTOR"]
