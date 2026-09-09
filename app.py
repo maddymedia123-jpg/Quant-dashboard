@@ -15,6 +15,7 @@ from core.agents.settings import load_settings
 from core.anchors import anchor_step
 from core.config import CATEGORIES, MACRO_EVENTS, TTL
 from core.data.market import assemble, load_context, load_spot
+from core.derived import enrich_futures, record_sample
 from core.indicators.category import analyze_category
 from core.indicators.early_warning import early_warnings
 from core.store import Store
@@ -63,6 +64,13 @@ run_clicked = st.sidebar.button(
 
 with st.spinner("Loading market data"):
     m = assemble(_spot(), _context())
+try:
+    _store_early = _store()
+    _now_early = int(time.time() * 1000)
+    record_sample(_store_early, m.futures, _now_early)
+    m = m.model_copy(update={"futures": enrich_futures(_store_early, m.futures, _now_early)})
+except Exception as e:  # noqa: BLE001 - derived fields are optional
+    st.sidebar.caption(f"Derived futures fields unavailable: {e}")
 
 st.sidebar.markdown("---")
 st.sidebar.markdown(panels.data_status_html(m), unsafe_allow_html=True)

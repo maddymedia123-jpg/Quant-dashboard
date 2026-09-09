@@ -27,6 +27,9 @@ CREATE TABLE IF NOT EXISTS reports (
 CREATE TABLE IF NOT EXISTS signals (
     id INTEGER PRIMARY KEY AUTOINCREMENT, ts_ms INTEGER NOT NULL, category TEXT NOT NULL,
     squeeze_score INTEGER, price REAL);
+CREATE TABLE IF NOT EXISTS futures_samples (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, ts_ms INTEGER NOT NULL, funding_rate REAL, open_interest_usd REAL);
+CREATE INDEX IF NOT EXISTS idx_futures_samples_ts ON futures_samples (ts_ms);
 CREATE INDEX IF NOT EXISTS idx_calls_open ON calls (scored_ms, ts_ms);
 CREATE INDEX IF NOT EXISTS idx_signals_cat ON signals (category, ts_ms);
 """
@@ -136,6 +139,31 @@ class Store:
         with self._lock:
             r = self._conn.execute(q, args).fetchone()
         return dict(r) if r else None
+
+    # ---- futures samples (for derived OI change / funding mean) ----
+    def add_futures_sample(self, ts_ms: int, funding_rate: float | None, open_interest_usd: float | None) -> None:
+        with self._lock:
+            last = self._conn.execute("SELECT ts_ms FROM futures_samples ORDER BY ts_ms DESC LIMIT 1").fetchone()
+            if last and int(ts_ms) - int(last["ts_ms"]) < 60_000:
+                return  # at most one sample per minute
+            self._conn.execute("INSERT INTO futures_samples (ts_ms, funding_rate, open_interest_usd) VALUES (?,?,?)",
+                               (int(ts_ms), funding_rate, open_interest_usd))
+            self._conn.execute("DELETE FROM futures_samples WHERE ts_ms < ?", (int(ts_ms) - 8 * 86_400_000,))
+            self._conn.commit()
+
+    def futures_sample_at_or_before(self, ts_ms: int) -> dict | None:
+        with self._lock:
+            r = self._conn.execute("SELECT * FROM futures_samples WHERE ts_ms <= ? ORDER BY ts_ms DESC LIMIT 1", (int(ts_ms),)).fetchone()
+        return dict(r) if r else None
+
+    def oldest_futures_sample(self) -> dict | None:
+        with self._lock:
+            r = self._conn.execute("SELECT * FROM futures_samples ORDER BY ts_ms ASC LIMIT 1").fetchone()
+        return dict(r) if r else None
+
+    def futures_samples_since(self, ts_ms: int) -> list[dict]:
+        with self._lock:
+            return _rows(self._conn.execute("SELECT * FROM futures_samples WHERE ts_ms >= ? ORDER BY ts_ms ASC", (int(ts_ms),)))
 
     def close(self) -> None:
         with self._lock:

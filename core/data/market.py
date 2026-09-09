@@ -13,6 +13,7 @@ from core.data.calendar import fetch_calendar
 from core.data.coinlobster import fetch_coinlobster
 from core.data.deribit_options import fetch_options
 from core.data.hyperliquid import fetch_hyperliquid
+from core.data.kraken_futures import fetch_kraken_futures
 from core.data.sentiment import fetch_sentiment
 from core.data.spot import fetch_spot_chain as fetch_spot
 from core.data.stablecoins import fetch_stablecoins
@@ -68,9 +69,15 @@ async def fetch_context(client: httpx.AsyncClient | None = None) -> dict:
     )
     liqs, whales = cl
     if not fut.available:
+        # 1) Binance-relayed composite (CoinLobster per-exchange funding/OI + Hyperliquid mark)
         composed = compose_futures(whales, hl, fut.error or "")
         if composed.available:
             fut = composed
+        else:
+            # 2) Kraken Futures: US-safe, Kraken's own funding + OI (small venue, no long/short)
+            kf = await _guard(fetch_kraken_futures(client), FuturesSnapshot, "kraken-futures")
+            if kf.available:
+                fut = kf
     return {"futures": fut, "options": opt, "sentiment": sent, "hyperliquid": hl,
             "liquidations": liqs, "whales": whales, "stablecoins": stables, "calendar": cal}
 

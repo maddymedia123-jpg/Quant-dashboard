@@ -148,3 +148,71 @@ def test_fetch_context_composes_when_direct_futures_blocked(monkeypatch):
     monkeypatch.setattr(market, "fetch_coinlobster", ok_cl)
     ctx = asyncio.run(market.fetch_context(client=object()))
     assert ctx["futures"].available and ctx["futures"].funding_rate == 0.0001 and "coinlobster" in ctx["futures"].source
+
+
+def test_kraken_futures_parse_and_chain(monkeypatch):
+    from core.data.kraken_futures import parse_tickers
+    kf = parse_tickers(_j("kraken_futures_tickers.json"))
+    assert kf.available and kf.source.startswith("kraken-futures (PF_XBTUSD)")
+    assert kf.open_interest > 100 and kf.open_interest_usd > 1e7 and kf.mark_price > 1000
+    assert kf.funding_rate is not None and abs(kf.funding_rate) < 0.01
+    assert kf.long_short_ratio is None and kf.taker_buy_sell_ratio is None
+
+    import asyncio
+    from core.data import market
+    from core.data.types import HyperliquidSnapshot, LiquidationsSnapshot, WhalesSnapshot
+
+    async def blocked(client):
+        return FuturesSnapshot.unavailable("binance,bybit", "451")
+
+    async def boom(client):
+        raise RuntimeError("down")
+
+    async def empty_cl(client):
+        return LiquidationsSnapshot.unavailable("coinlobster", "x"), WhalesSnapshot.unavailable("coinlobster", "x")
+
+    async def ok_kf(client):
+        return kf
+
+    monkeypatch.setattr(market, "fetch_futures", blocked)
+    for name in ("fetch_options", "fetch_sentiment", "fetch_stablecoins", "fetch_calendar", "fetch_hyperliquid"):
+        monkeypatch.setattr(market, name, boom)
+    monkeypatch.setattr(market, "fetch_coinlobster", empty_cl)
+    monkeypatch.setattr(market, "fetch_kraken_futures", ok_kf)
+    ctx = asyncio.run(market.fetch_context(client=object()))
+    assert ctx["futures"].available and ctx["futures"].source.startswith("kraken-futures")
+
+    # when the Binance-relayed composite is possible it wins over Kraken Futures
+    async def rich_cl(client):
+        return (LiquidationsSnapshot(source="coinlobster", total_usd=1.0, long_usd=0.5, short_usd=0.5),
+                WhalesSnapshot(source="coinlobster", funding_by_exchange={"Binance Futures": 0.0001}, oi_by_exchange_usd={"Binance Futures": 8e9}))
+
+    monkeypatch.setattr(market, "fetch_coinlobster", rich_cl)
+    ctx = asyncio.run(market.fetch_context(client=object()))
+    assert ctx["futures"].source.startswith("coinlobster")
+
+
+def test_gate_futures_parse_full_field_set_and_chain(monkeypatch):
+    from core.data.gate_futures import parse_gate
+    g = parse_gate(_j("gate_contract_stats.json"), _j("gate_tickers.json"), _j("gate_funding.json"), _j("gate_contract.json"))
+    assert g.available and g.source == "gate"
+    assert -0.01 < g.funding_rate < 0.01 and g.funding_7d_mean is not None
+    assert g.open_interest > 1000 and g.open_interest_usd > 1e8 and g.mark_price > 1000
+    assert g.oi_change_24h_pct is not None and 0.2 < g.long_short_ratio < 5 and 0 < g.long_account_pct < 1
+    assert 0.2 < g.taker_buy_sell_ratio < 5 and len(g.oi_history) == 25
+
+    import asyncio
+    from core.data import binance_futures as bf
+    import core.data.gate_futures as gf
+
+    async def boom(client):
+        raise RuntimeError("451")
+
+    async def ok_gate(client):
+        return g
+
+    monkeypatch.setattr(bf, "_binance", boom)
+    monkeypatch.setattr(bf, "_bybit", boom)
+    monkeypatch.setattr(gf, "fetch_gate_futures", ok_gate)
+    out = asyncio.run(bf.fetch_futures(client=object()))
+    assert out.available and out.source == "gate"
