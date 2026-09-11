@@ -47,6 +47,10 @@ def early_warnings(a: CategoryAnalysis, futures: FuturesSnapshot, last_squeeze: 
             drivers.append(f"Long/short {f.long_short_ratio:.2f} short-crowded")
         out.append(EarlyWarning("BEAR_TRAP_FORMING", "forming", drivers))
 
+    rw = getattr(a, "reversal", None)
+    if rw is not None and rw.status == "ACTIVE":
+        out.append(EarlyWarning("REVERSAL_WINDOW", "warning", [f"Fibonacci zone F{rw.zone_k} with {rw.bias} confluence"] + rw.confluence))
+
     sc = a.squeeze.score
     if sc is not None:
         if sc >= SQUEEZE_WARNING:

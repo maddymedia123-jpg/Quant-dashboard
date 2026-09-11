@@ -90,6 +90,15 @@ def layman_html(a: CategoryAnalysis) -> str:
         parts.append(f"RSI is {rsi_last:.0f}, {zone}.")
     if a.divergences:
         parts.append("Divergence watch: " + "; ".join(x.label for x in a.divergences) + ".")
+    if a.patterns:
+        p0 = a.patterns[0]
+        extra = f", breaking {fmt_num(p0.breakout, 0, '$')} targets {fmt_num(p0.target, 0, '$')}" if (p0.breakout and p0.target) else ""
+        parts.append(f"Pattern: {p0.name.lower()} {p0.status} ({p0.bias}){extra}.")
+    rw = a.reversal
+    if rw is not None and rw.status == "ACTIVE":
+        parts.append(f"A Fibonacci reversal window is open now with a {rw.bias} lean: {'; '.join(rw.confluence[:3])}.")
+    elif rw is not None and rw.status == "UPCOMING" and rw.bars_away is not None:
+        parts.append(f"The next Fibonacci time zone arrives {_bars(rw.bars_away)} ({_utc(rw.zone_ms)}).")
     if s.score is not None and s.score >= 40:
         parts.append(f"Positioning shows {s.direction.replace('_', ' ').lower()} risk at {s.score}/100.")
     if d.anchor is not None:
@@ -164,6 +173,68 @@ def accuracy_html(s: dict) -> str:
         body += "<p>Recent scored calls</p>" + _li(recent)
     body += f"<p class='muted'>Open calls waiting: {s.get('open_calls', 0)}. Samples under 10 are indicative only.</p>"
     return card_html("Accuracy ledger", body)
+
+
+def _utc(ms: int | None) -> str:
+    from datetime import datetime, timezone
+    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).strftime("%a %d %b %H:%M UTC") if ms else "—"
+
+
+def _bars(n: int | None) -> str:
+    if n is None:
+        return ""
+    if n == 0:
+        return "this bar"
+    return f"in {n} bar{'s' if n != 1 else ''}" if n > 0 else f"{-n} bar{'s' if n != -1 else ''} ago"
+
+
+def fib_html(a: CategoryAnalysis) -> str:
+    """Fibonacci time zones (two-point), the reversal window, and retracement levels."""
+    f, rw, fr = a.fib, a.reversal, a.fib_retr
+    if f is None:
+        return card_html("Fibonacci time & reversal window", "<p class='muted'>Not enough history for Fibonacci time zones.</p>")
+    body = (f"<p>Anchors: {f.anchor_kind} {fmt_num(f.anchor_price, 0, '$')} ({_utc(f.anchor_ms)}) → "
+            f"{f.anchor2_kind} {fmt_num(f.anchor2_price, 0, '$')} ({_utc(f.anchor2_ms)}) · unit {f.unit_bars} bars</p>")
+    if f.upcoming:
+        body += "<p>Next zones</p>" + _li([f"F{z.k} · {_utc(z.timestamp_ms)} ({_bars(z.bars_from_now)})" for z in f.upcoming])
+    tone = "neutral"
+    if rw is not None:
+        if rw.status == "ACTIVE":
+            tone = "warn"
+            body += (f"<p><strong>Reversal window open</strong> · F{rw.zone_k} {_bars(rw.bars_away)} (±{rw.window_bars} bar) · "
+                     f"bias <strong>{html.escape(rw.bias)}</strong></p>") + _li(rw.confluence)
+        elif rw.status == "TIME_ONLY":
+            body += (f"<p>Fib time zone F{rw.zone_k} {_bars(rw.bars_away)}, but price has no confluence "
+                     "(no level, divergence, retracement or pattern), so no reversal signal.</p>")
+        elif rw.status == "UPCOMING":
+            body += f"<p>Next reversal window: F{rw.zone_k} {_bars(rw.bars_away)}.</p>"
+            if rw.confluence:
+                body += "<p class='muted'>Confluence building now</p>" + _li(rw.confluence)
+    if fr is not None:
+        lv = " · ".join(f"{r} {fmt_num(fr.levels[r], 0, '$')}" for r in (0.382, 0.5, 0.618))
+        body += (f"<p class='muted'>Retracement of the {fr.leg} leg {fmt_num(fr.low, 0, '$')} – {fmt_num(fr.high, 0, '$')}: {lv}</p>")
+    return card_html("Fibonacci time & reversal window", body, tone)
+
+
+def patterns_html(a: CategoryAnalysis) -> str:
+    if not a.patterns:
+        return card_html("Chart patterns", "<p class='muted'>No clean pattern in the last 120 bars.</p>")
+    body = ""
+    tone = "neutral"
+    for p in a.patterns:
+        head = (f"<p><strong>{html.escape(p.name)}</strong> · {p.status} · {p.bias} · confidence {p.confidence:.0%}"
+                + (f" · apex {_bars(p.apex_bars)}" if p.apex_bars else "") + "</p>")
+        keys = []
+        if p.breakout is not None:
+            keys.append(f"breakout {fmt_num(p.breakout, 0, '$')}")
+        if p.target is not None:
+            keys.append(f"target {fmt_num(p.target, 0, '$')}")
+        if p.invalidation is not None:
+            keys.append(f"invalidation {fmt_num(p.invalidation, 0, '$')}")
+        body += head + (f"<p>{' · '.join(keys)}</p>" if keys else "") + (f"<p class='muted'>{html.escape(p.note)}</p>" if p.note else "")
+        if tone == "neutral":
+            tone = tone_for_direction({"bullish": "BULLISH", "bearish": "BEARISH"}.get(p.bias, ""))
+    return card_html("Chart patterns", body, tone)
 
 
 def divergence_html(a: CategoryAnalysis) -> str:

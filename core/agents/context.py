@@ -4,6 +4,8 @@ Nothing here invents a number: unavailable snapshots are omitted and listed unde
 from __future__ import annotations
 
 import math
+from dataclasses import asdict
+from datetime import datetime, timezone
 from typing import Any
 
 from core.config import MACRO_EVENTS
@@ -33,6 +35,17 @@ def _dump(snapshot, drop: tuple[str, ...] = ()) -> dict:
     return _round(d)
 
 
+def _fib_brief(a: CategoryAnalysis) -> dict | None:
+    f = a.fib
+    if f is None:
+        return None
+    iso = lambda ms: datetime.fromtimestamp(ms / 1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")  # noqa: E731
+    return {"anchor_1": {"kind": f.anchor_kind, "price": f.anchor_price, "time": iso(f.anchor_ms)},
+            "anchor_2": {"kind": f.anchor2_kind, "price": f.anchor2_price, "time": iso(f.anchor2_ms)},
+            "unit_bars": f.unit_bars,
+            "upcoming": [{"zone": f"F{z.k}", "time": iso(z.timestamp_ms), "bars_away": z.bars_from_now} for z in f.upcoming]}
+
+
 def category_brief(a: CategoryAnalysis) -> dict:
     rsi_last = float(a.rsi.dropna().iloc[-1]) if a.rsi.notna().any() else None
     return _round({
@@ -45,9 +58,15 @@ def category_brief(a: CategoryAnalysis) -> dict:
         "regime": a.vol.regime, "atr": a.vol.atr, "atr_pct": a.vol.atr_pct,
         "expected_range": {"horizon": a.vol.horizon_label, "low": a.vol.exp_low, "high": a.vol.exp_high, "sigma_pct": a.vol.sigma_pct},
         "sigma2_band": {"low": a.vol.sigma2_dn, "high": a.vol.sigma2_up, "mean20": a.vol.mean20},
-        "levels": [{"price": l.price, "kind": l.kind, "touches": l.touches} for l in a.levels],
+        "levels": [{"price": l.price, "kind": l.kind, "touches": l.touches, "reactions": "distinct wick tests over the chart window"} for l in a.levels][:6],
         "trendlines": [{"kind": t.kind, "slope_per_bar": t.slope, "value_now": t.value_now, "r2": t.r2} for t in a.trendlines],
-        "fib_upcoming_zones": len(a.fib.upcoming) if a.fib else 0,
+        "fib_time": _fib_brief(a),
+        "fib_retracement": ({"leg": a.fib_retr.leg, "low": a.fib_retr.low, "high": a.fib_retr.high,
+                             "levels": {str(k): v for k, v in a.fib_retr.levels.items()}} if a.fib_retr else None),
+        "reversal_window": (asdict(a.reversal) if a.reversal is not None else None),
+        "patterns": [{"name": p.name, "bias": p.bias, "status": p.status, "confidence": p.confidence,
+                      "breakout": p.breakout, "target": p.target, "invalidation": p.invalidation,
+                      "apex_bars": p.apex_bars, "note": p.note} for p in a.patterns],
         "squeeze": {"score": a.squeeze.score, "direction": a.squeeze.direction, "drivers": a.squeeze.drivers},
         "cvd_slope_5bars": cvd_slope(a.chart_df),
         "price_change_24h_pct": a.price_change_24h_pct,
