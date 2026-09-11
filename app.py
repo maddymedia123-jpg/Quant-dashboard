@@ -176,8 +176,10 @@ def category_tab(tab, key):
         with c1:
             v = verdicts.get(key)
             panels.render(panels.anchored_direction_html(a, v, now_ms) if v else panels.direction_html(a))
+            panels.render(panels.patterns_html(a))
             panels.render(panels.volatility_html(a))
         with c2:
+            panels.render(panels.fib_html(a))
             panels.render(panels.divergence_html(a))
             panels.render(panels.agent_summary_html(a, report))
         if key in ("weekly", "monthly"):

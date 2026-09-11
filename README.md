@@ -24,6 +24,12 @@ Every feed reports availability; missing data is shown as `—`, never invented.
 Offline UI check without network: `TI_OFFLINE_FIXTURES=1 .venv/Scripts/python -m streamlit run app.py`
 (serves the recorded fixtures under `tests/fixtures`; sources are labelled "fixture").
 
+## Levels, Fibonacci and patterns
+
+- Support/resistance labels ("R 6x") count distinct reactions visible on the chart: wicks within ±0.35 ATR of the line over the 300 drawn bars, including the current bar.
+- Fibonacci time zones follow TradingView's two-point tool: the major swing and the end of the next leg set the unit. A reversal window opens when a zone lines up with price confluence (level, divergence, RSI extreme, retracement, trendline or forming pattern). Retracement levels 0.382/0.5/0.618 are drawn too.
+- Chart patterns forming or freshly confirmed: double top/bottom, head and shoulders (and inverse), triangles, wedges, channels and ranges, each with breakout, target and invalidation.
+
 ## Auto-refresh
 
 The sidebar "Auto-refresh" selector (Off / 30s / 60s / 120s) reruns the whole page on a timer via a

@@ -40,3 +40,17 @@ def test_html_embeds_pinned_library_and_payload():
     payload = json.loads(m.group(1))
     assert payload["theme"]["panel"].startswith("#")
     assert "createChart" in h and "attachPrimitive" in h and "createSeriesMarkers" in h
+
+
+def test_payload_carries_retracements_and_pattern_lines():
+    from core.indicators.patterns import Pattern
+    a = _analysis()
+    t0 = int(a.chart_df["timestamp"].iloc[-40])
+    t1 = int(a.chart_df["timestamp"].iloc[-10])
+    a.patterns = [Pattern("Double top", "bearish", "forming", 0.8, 1.0, 0.5, 2.0, [[(t0, a.price), (t1, a.price * 1.01)]], t0)]
+    p = chart_payload(a, dark=False)
+    assert [r["title"] for r in p["retracements"]] == ["Fib 0.382", "Fib 0.5", "Fib 0.618"]
+    assert p["patterns"][0]["name"] == "Double top (forming)" and len(p["patterns"][0]["lines"][0]) == 2
+    assert p["patterns"][0]["lines"][0][0]["time"] == t0 // 1000
+    h = build_chart_html(a, dark=False)
+    assert "SparseDotted" in h and "LargeDashed" in h

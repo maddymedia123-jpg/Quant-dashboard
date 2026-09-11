@@ -38,6 +38,10 @@ def chart_payload(a: CategoryAnalysis, dark: bool) -> dict:
         future_targets += [z.timestamp_ms // 1000 for z in a.fib.upcoming]
     for tl in a.trendlines:
         future_targets.append(tl.points[1][0] // 1000)
+    for pat in a.patterns:
+        for ln in pat.lines:
+            if ln:
+                future_targets.append(ln[-1][0] // 1000)
     future_n = min(90, max(12, math.ceil((max(future_targets) - last_t) / interval)))
     whitespace = [{"time": last_t + k * interval} for k in range(1, future_n + 1)]
 
@@ -62,6 +66,23 @@ def chart_payload(a: CategoryAnalysis, dark: bool) -> dict:
             zt = z.timestamp_ms // 1000
             if zt >= first_t:
                 fibs.append({"time": int(zt), "label": f"F{z.k}", "future": z.is_future})
+
+    retracements = []
+    if a.fib_retr is not None:
+        for ratio in (0.382, 0.5, 0.618):
+            retracements.append({"price": _f(a.fib_retr.levels[ratio]), "title": f"Fib {ratio}"})
+
+    pattern_color = {"bullish": p["up"], "bearish": p["down"], "neutral": p["accent"]}
+    max_t = last_t + future_n * interval
+    patterns = []
+    for pat in a.patterns:
+        lines = []
+        for ln in pat.lines:
+            pts = [{"time": int(ms // 1000), "value": _f(v)} for ms, v in ln if ms // 1000 <= max_t and _f(v) is not None]
+            if len(pts) >= 2:
+                lines.append(pts)
+        if lines:
+            patterns.append({"name": f"{pat.name} ({pat.status})", "color": pattern_color.get(pat.bias, p["accent"]), "lines": lines})
 
     price = a.price
     proj_end = last_t + min(future_n, max(horizon, 1)) * interval
@@ -91,6 +112,7 @@ def chart_payload(a: CategoryAnalysis, dark: bool) -> dict:
         "title": f"{a.label} · {a.chart_tf}",
         "candles": candles, "whitespace": whitespace, "emas": emas, "levels": levels,
         "trendlines": trendlines, "fibs": fibs, "now": last_t, "projection": projection,
+        "retracements": retracements, "patterns": patterns,
         "rsi": {"data": rsi_data, "markers": markers},
         "visibleBars": 140,
     }
@@ -125,6 +147,14 @@ P.emas.forEach(e => {
   const tag = document.createElement('span'); tag.style.setProperty('--c', e.color); tag.textContent = 'EMA' + e.period; legend.appendChild(tag);
 });
 P.levels.forEach(l => candles.createPriceLine({ price: l.price, color: l.color, lineWidth: 1, lineStyle: LW.LineStyle.Dashed, axisLabelVisible: true, title: l.title }));
+(P.retracements || []).forEach(r => candles.createPriceLine({ price: r.price, color: T.fib, lineWidth: 1, lineStyle: LW.LineStyle.SparseDotted, axisLabelVisible: true, title: r.title }));
+(P.patterns || []).forEach(pt => {
+  pt.lines.forEach((ln, j) => {
+    const s = chart.addSeries(LW.LineSeries, { color: pt.color, lineWidth: 2, lineStyle: LW.LineStyle.LargeDashed, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+    s.setData(ln);
+    if (j === 0) LW.createSeriesMarkers(s, [{ time: ln[ln.length - 1].time, position: 'aboveBar', color: pt.color, shape: 'square', text: pt.name }]);
+  });
+});
 P.trendlines.forEach(t => {
   const s = chart.addSeries(LW.LineSeries, { color: t.color, lineWidth: 1, lineStyle: LW.LineStyle.Dotted, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
   s.setData(t.data);

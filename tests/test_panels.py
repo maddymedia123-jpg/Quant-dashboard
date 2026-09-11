@@ -131,3 +131,22 @@ def test_calendar_panel_escapes_feed_text():
                                                               "time_ms": 10_000_000, "date": "x", "forecast": "<b>1</b>", "previous": None}])
     h = panels.calendar_html(m.model_copy(update={"calendar": evil}), now_ms=10_000_000 - 60_000)
     assert "<img" not in h and "&lt;img" in h and "<b>1</b>" not in h and "&lt;b&gt;1&lt;/b&gt;" in h
+
+
+def test_fib_and_pattern_cards_render_and_escape():
+    from core.indicators.patterns import Pattern
+    from core.indicators.reversal import ReversalWindow
+    m = _market()
+    a = analyze_category(CATEGORIES["intraday"], m.spot.frames, m.futures)
+    h = panels.fib_html(a)
+    assert "Fibonacci time" in h and "Anchors:" in h and "Retracement of the" in h
+    a.reversal = ReversalWindow("ACTIVE", "bearish", 5, a.fib.upcoming[0].timestamp_ms, 0, 2, ["at resistance 78,600 (4 touches)"])
+    h = panels.fib_html(a)
+    assert "Reversal window open" in h and "bearish" in h and "ti-card warn" in h
+    a.patterns = [Pattern("<b>Double top</b>", "bearish", "forming", 0.8, 77000.0, 75000.0, 79000.0, [], 0, note="second top being tested now")]
+    p = panels.patterns_html(a)
+    assert "&lt;b&gt;Double top" in p and "breakout $77,000" in p and "target $75,000" in p and "invalidation $79,000" in p
+    lay = panels.layman_html(a)
+    assert "Pattern:" in lay and "reversal window is open" in lay
+    a.patterns = []
+    assert "No clean pattern" in panels.patterns_html(a)
