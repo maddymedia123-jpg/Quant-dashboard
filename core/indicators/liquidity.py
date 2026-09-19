@@ -184,21 +184,20 @@ def volume_profile(df: pd.DataFrame, bins: int = 48, lookback: int = 200) -> Vol
 def oi_changes(history: list[tuple[int, float]], now_ms: int) -> dict[str, float | None]:
     """Percent change in open interest over each Live Recon window.
 
-    A window with no sample old enough returns None: unknown is not the same as unchanged."""
+    A window with no sample near its start returns None: unknown is not the same as unchanged, and a
+    reading from the wrong window is not an approximation of the right one."""
     out: dict[str, float | None] = {}
     latest = history[-1][1] if history else None
     for name, span in WINDOWS_MS.items():
         if not history or not latest:
             out[name] = None
             continue
-        cutoff = now_ms - span
-        older = [v for ts, v in history if ts <= cutoff]
-        base = older[-1] if older else None
-        if base is None:
-            # no sample that old: accept the oldest one if it still covers half the window, so a
-            # 10-minute-old reading can answer "the last 15 minutes" instead of reporting nothing.
-            first_ts, first_v = history[0]
-            base = first_v if now_ms - first_ts >= span / 2 else None
+        # The sample used must actually sit near the start of the window. Sampling is sparse, and
+        # taking the newest reading older than the cutoff would report a three-hour move as a
+        # fifteen-minute one - a real number against the wrong label, which is worse than no number.
+        lo, hi = span / 2, span * 2
+        candidates = [(ts, v) for ts, v in history[:-1] if v and lo <= now_ms - ts <= hi]
+        base = min(candidates, key=lambda tv: abs((now_ms - tv[0]) - span))[1] if candidates else None
         out[name] = None if not base else (latest / base - 1.0) * 100.0
     return out
 
