@@ -125,3 +125,21 @@ def test_the_summary_is_json_safe_and_marks_missing_pieces():
     assert out["volume_profile"]["available"] is True
     assert out["open_interest"] == {"15m": None, "1h": None, "4h": None}
     assert "pools" in out and isinstance(out["pools"]["buyside"], (dict, type(None)))
+
+
+def test_a_far_older_sample_cannot_answer_a_short_window():
+    """Sparse sampling must not let a 3-hour-old reading be reported as a 15-minute change."""
+    now = 1_700_000_000_000
+    stale = [(now - 3 * 3_600_000, 100.0), (now, 130.0)]
+    oi = lq.oi_changes(stale, now_ms=now)
+    assert oi["15m"] is None and oi["1h"] is None, "no sample near those windows"
+    assert oi["4h"] == pytest.approx(30.0, abs=0.01), "3h old is close enough to answer 4h"
+
+
+def test_the_sample_used_must_bracket_the_window():
+    now = 1_700_000_000_000
+    # 50 minutes old: too old for 15m, close enough for 1h, too recent to call 4h
+    hist = [(now - 50 * 60_000, 100.0), (now, 110.0)]
+    oi = lq.oi_changes(hist, now_ms=now)
+    assert oi["15m"] is None and oi["4h"] is None
+    assert oi["1h"] == pytest.approx(10.0, abs=0.01)
