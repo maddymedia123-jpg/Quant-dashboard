@@ -51,7 +51,7 @@ def _clamp(v) -> float | None:
 def parse_typesafe(payload: dict) -> dict[str, float]:
     """Read the noul probability for each question id."""
     out: dict[str, float] = {}
-    nouls = payload.get("nouls") or payload.get("answers") or {}
+    nouls = payload.get("answers") or payload.get("nouls") or {}
     for qid, ans in nouls.items():
         value = ans.get("noul") if isinstance(ans, dict) else ans
         p = _clamp(value)
@@ -76,6 +76,7 @@ def parse_gemini_probabilities(data: dict) -> dict[str, float]:
 class ChoiceResult:
     choice: str | None = None
     probabilities: dict[str, float] = field(default_factory=dict)
+    confidence: float | None = None    # how concentrated the distribution is, per the API
     provider: str = ""
     error: str | None = None
 
@@ -85,9 +86,12 @@ class ChoiceResult:
 
 
 def parse_typesafe_choice(payload: dict, qid: str) -> ChoiceResult:
-    block = (payload.get("choices") or {}).get(qid, {})
+    """Both primitives answer under "answers"; "choices" is accepted too, harmlessly."""
+    answers = payload.get("answers") or payload.get("choices") or {}
+    block = answers.get(qid) or {}
     probs = {k: _clamp(v) for k, v in (block.get("probabilities") or {}).items()}
-    return ChoiceResult(choice=block.get("choice"), probabilities={k: v for k, v in probs.items() if v is not None})
+    return ChoiceResult(choice=block.get("choice"), confidence=_clamp(block.get("confidence")),
+                        probabilities={k: v for k, v in probs.items() if v is not None})
 
 
 class Judge:
@@ -160,7 +164,9 @@ class Judge:
     async def _typesafe(self, state: dict, side: str, items) -> tuple[dict[str, float], int, int]:
         questions = {
             i.id: {"type": "noul",
-                   "instructions": f"Judging the {side} case for BTC over the next four hours: {i.question(side)}"}
+                   "instructions": f"Judging the {side} case for BTC over the next four hours: {i.question(side)}",
+                   "criteria": {"true": "The data shows this condition holding right now.",
+                                "false": "The data does not show it, or cannot answer it."}}
             for i in items
         }
         body = {"state": state, "model": TYPESAFE_MODEL, "questions": questions}

@@ -119,11 +119,13 @@ def test_run_live_recon_makes_three_calls_on_one_shared_state(market_and_analyse
         body = json.loads(request.content)
         seen.append(body)
         if "trap" in body["questions"]:
-            return httpx.Response(200, json={"choices": {"trap": {"choice": "BULL_TRAP", "probabilities": {
-                "BULL_TRAP": 0.7, "BEAR_TRAP": 0.1, "GENUINE_MOVE": 0.15, "NO_TRAP": 0.05}}}})
+            return httpx.Response(200, json={"model": "jev-latest", "answers": {"trap": {
+                "type": "choice", "choice": "BULL_TRAP", "confidence": 0.78, "probabilities": {
+                    "BULL_TRAP": 0.7, "BEAR_TRAP": 0.1, "GENUINE_MOVE": 0.15, "NO_TRAP": 0.05}}}})
         side = body["questions"]["smc_bos"]["instructions"]
         p = 0.9 if "bullish" in side else 0.2
-        return httpx.Response(200, json={"nouls": {q: {"noul": p} for q in body["questions"]},
+        return httpx.Response(200, json={"model": "jev-latest",
+                                         "answers": {q: {"type": "noul", "noul": p} for q in body["questions"]},
                                          "usage": {"input_tokens": 1000, "output_tokens": 50}})
 
     j = Judge(SETTINGS, typesafe_key="ts", client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
@@ -134,7 +136,7 @@ def test_run_live_recon_makes_three_calls_on_one_shared_state(market_and_analyse
     assert len(set(states)) == 1, "all eleven agents must judge the same state"
     assert res.bull.points == pytest.approx(90.0) and res.bear.points == pytest.approx(20.0)
     assert res.bias == "BULL TRAP RISK" and res.consulted is False and res.override
-    assert res.trap.choice == "BULL_TRAP" and res.leader is res.bull
+    assert res.trap.choice == "BULL_TRAP" and res.trap.confidence == 0.78 and res.leader is res.bull
     assert res.prompt_tokens == 2000 and res.completion_tokens == 100
     assert not res.degraded and res.generated_at.tzinfo is not None
 
