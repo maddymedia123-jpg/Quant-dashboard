@@ -376,3 +376,89 @@ def raw_metrics_rows(m: MarketSnapshot) -> list[tuple[str, str, str]]:
         ("Whale BTC buy / sell", (f"{fmt_num(w.btc_buy_usd / 1e6, 1, '$', 'M')} / {fmt_num(w.btc_sell_usd / 1e6, 1, '$', 'M')} over {fmt_num(w.window_minutes, 0)} min" if w.available and w.btc_trades else "—"), w.source),
         ("Stablecoin supply", (f"{fmt_num(sc.total_usd / 1e9, 1, '$', 'B')} ({fmt_pct(sc.change_24h_pct, 2)} 24h)" if sc.total_usd else "—"), sc.source),
     ]
+
+
+# ---------- Live Recon war room ----------
+TRAP_LABELS = {"BULL_TRAP": "bull trap", "BEAR_TRAP": "bear trap",
+               "GENUINE_MOVE": "genuine move", "NO_TRAP": "no trap"}
+
+
+def _team_rows(team) -> str:
+    rows = ""
+    for d in team.domains:
+        rows += (f"<tr><td>{d.agent_no}. {html.escape(d.title)}</td>"
+                 f"<td>{d.points:.1f} / {d.max_points}</td><td>{d.pct:.0f}%</td></tr>")
+    return rows
+
+
+def team_html(team) -> str:
+    """One team's scorecard: five domain agents, twenty points each."""
+    if not team.ok:
+        body = f"<p class='muted'>Did not score: {html.escape(team.error or 'unknown error')}. "
+        body += "This is a failure, not a reading of zero.</p>"
+        return card_html(f"{team.side.title()} team", body, "warn")
+    tone = "up" if team.side == "bullish" else "down"
+    body = (f"<p><strong>{team.points:.0f} / 100</strong> · {html.escape(team.verdict)}"
+            f"<span class='muted'> · {html.escape(team.provider or 'n/a')}"
+            + (f" · {team.latency_s:.1f}s" if team.latency_s else "") + "</span></p>")
+    body += ("<table><thead><tr><th>Domain agent</th><th>Points</th><th>Share</th></tr></thead>"
+             f"<tbody>{_team_rows(team)}</tbody></table>")
+    if team.missing:
+        body += f"<p class='muted'>{len(team.missing)} checklist items unanswered and scored 0.</p>"
+    return card_html(f"{team.side.title()} team", body, tone)
+
+
+def war_room_html(res) -> str:
+    """The trap agent's read, and whether the head had to consult it."""
+    t = res.trap
+    if not t.ok:
+        return card_html("War room · trap audit",
+                         f"<p class='muted'>No answer: {html.escape(t.error or 'unknown error')}. "
+                         "No trap override was applied.</p>", "warn")
+    label = TRAP_LABELS.get(t.choice or "", t.choice or "—")
+    rows = "".join(f"<tr><td>{html.escape(TRAP_LABELS.get(k, k))}</td><td>{v:.0%}</td></tr>"
+                   for k, v in sorted(t.probabilities.items(), key=lambda kv: -kv[1]))
+    tone = "warn" if t.choice in ("BULL_TRAP", "BEAR_TRAP") else "neutral"
+    body = f"<p><strong>{html.escape(label.title())}</strong></p>"
+    body += f"<table><tbody>{rows}</tbody></table>"
+    body += (f"<p class='muted'>Head consulted the war room: {'yes' if res.consulted else 'not required'} "
+             "(consulted when both teams score above 60 or neither leads by 10).</p>")
+    if res.override:
+        body += f"<p><span class='ti-chip warn'>override</span> {html.escape(res.override)}</p>"
+    return card_html("War room · trap audit", body, tone)
+
+
+def anchored_summary_html(anchor: dict, window_close_ms: int, now_ms: int, anchored_now: bool) -> str:
+    """The pinned 4h summary. It does not change until the next UTC 4h candle close."""
+    mins = max(0, (window_close_ms - now_ms) // 60000)
+    bias = str(anchor.get("bias", "—"))
+    body = (f"<p><strong>{html.escape(bias)}</strong> · confidence {float(anchor.get('confidence') or 0):.0%} "
+            f"· margin {float(anchor.get('margin') or 0):+.0f} points</p>")
+    body += (f"<p>Bullish {float(anchor.get('bull_points') or 0):.0f} / 100 · "
+             f"Bearish {float(anchor.get('bear_points') or 0):.0f} / 100 · "
+             f"trap read {html.escape(TRAP_LABELS.get(anchor.get('trap') or '', anchor.get('trap') or '—'))}</p>")
+    body += (f"<p class='muted'>Anchored {html.escape(str(anchor.get('published_at_utc', '')))} "
+             + (f"at {fmt_num(anchor.get('price'), 0, '$')} " if anchor.get("price") else "")
+             + f"· pinned for {mins // 60}h {mins % 60:02d}m more, until the 4h candle closes.</p>")
+    body += ("<p class='muted'>" + ("Published by this run." if anchored_now else
+             "Re-runs during this candle append side notes; they never rewrite this summary.") + "</p>")
+    if anchor.get("degraded"):
+        body += "<p><span class='ti-chip warn'>degraded</span> part of the checklist did not score.</p>"
+    return card_html("4-hour anchored summary", body, tone_for_direction(bias.split()[0]))
+
+
+def side_notes_html(rows: list[dict]) -> str:
+    """Interim invalidations, appended alongside the anchor and never replacing it."""
+    if not rows:
+        return card_html("Interim side notes", "<p class='muted'>Nothing substantial has changed since the "
+                                               "summary was anchored.</p>", "neutral")
+    body = ""
+    for r in rows:
+        body += (f"<p><span class='ti-chip warn'>{html.escape(str(r['kind']).replace('_', ' ').lower())}</span> "
+                 f"<strong>{html.escape(str(r['headline']))}</strong>")
+        if r.get("price"):
+            body += f" <span class='muted'>at {fmt_num(r['price'], 0, '$')}</span>"
+        body += "</p>"
+        if r.get("detail"):
+            body += f"<p class='muted'>{html.escape(str(r['detail']))}</p>"
+    return card_html(f"Interim side notes ({len(rows)})", body, "warn")

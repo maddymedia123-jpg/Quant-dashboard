@@ -1,6 +1,7 @@
 """Trap Intelligence - BTC market-surveillance terminal (Phase 1: deterministic layer)."""
 from __future__ import annotations
 
+import asyncio
 import time
 from datetime import datetime, timezone
 
@@ -12,7 +13,10 @@ from core.agents.llm import LLMClient
 from core.agents.report import to_markdown
 from core.agents.runner import run_pipeline_sync
 from core.agents.settings import load_settings
+from core.agents.judge import Judge
+from core.agents.live_recon import run_live_recon
 from core.anchors import anchor_step
+from core import live_anchor
 from core.config import CATEGORIES, MACRO_EVENTS, TTL
 from core.data.market import assemble, load_context, load_spot
 from core.derived import enrich_futures, record_sample
@@ -83,6 +87,13 @@ run_clicked = st.sidebar.button(
           if settings else "Add GEMINI_API_KEY or OPENROUTER_API_KEY to .streamlit/secrets.toml (or Streamlit Cloud Secrets) to enable."),
 )
 
+recon_clicked = st.sidebar.button(
+    "Run Live Recon war room", width="stretch", disabled=settings is None,
+    help=("Eleven Live Recon agents: five bullish and five bearish domain agents scored on the 100-point "
+          "checklist, plus the war room trap audit. The 4h summary stays pinned; re-runs add side notes."
+          if settings else "Add an API key to enable."),
+)
+
 with st.spinner("Loading market data"):
     m = assemble(_spot(), _context())
 try:
@@ -107,6 +118,14 @@ if m.spot.available:
 store = _store()
 now_ms = int(time.time() * 1000)
 
+def _macro_event_now(m, now_ms: int) -> str | None:
+    """A high-impact USD release landing inside this 4h candle, for the side-note check."""
+    if not m.calendar.available:
+        return None
+    due = m.calendar.upcoming(now_ms, live_anchor.window_close(now_ms) - now_ms)
+    return due[0].get("title") if due else None
+
+
 # ---------- run analysis ----------
 if run_clicked and settings is not None and analyses:
     with st.status("Running Trap Intelligence pipeline...", expanded=True) as status:
@@ -127,6 +146,24 @@ if run_clicked and settings is not None and analyses:
             status.update(label=f"Report {report.report_id} ready in {report.wall_time_s:.0f}s", state="complete", expanded=False)
         except Exception as e:  # noqa: BLE001 - never crash the page on an LLM failure
             status.update(label=f"Pipeline failed: {e}", state="error")
+    st.rerun()
+
+# ---------- Live Recon war room ----------
+st.session_state.setdefault("recon", None)
+if recon_clicked and settings is not None and analyses:
+    with st.status("Live Recon war room: both teams and the trap audit...", expanded=False) as status:
+        try:
+            judge = Judge(settings, typesafe_key=settings.typesafe_key, llm=LLMClient(settings))
+            recon = asyncio.run(run_live_recon(judge, m, analyses))
+            run_ms = int(time.time() * 1000)
+            published = live_anchor.publish(store, recon, run_ms, price=m.spot.last,
+                                            macro_event=_macro_event_now(m, run_ms))
+            st.session_state["recon"] = (recon, published)
+            label = ("Anchored the 4h summary" if published.anchored else
+                     f"Summary held; {len(published.appended)} side note(s) appended")
+            status.update(label=f"{label} - {recon.bias} via {judge.provider}", state="complete")
+        except Exception as e:  # noqa: BLE001 - never crash the page on a judge failure
+            status.update(label=f"War room failed: {e}", state="error")
     st.rerun()
 
 report = st.session_state.get("trap_report")
@@ -158,6 +195,42 @@ tab_labels = [c.label for c in CATEGORIES.values()] + ["Active Trade", "War Room
 tabs = st.tabs(tab_labels)
 
 
+def render_war_room() -> None:
+    """Live Recon's anchored summary, the side notes appended during this candle, and the scorecards."""
+    st.markdown("---")
+    w_open, w_close = live_anchor.window_open(now_ms), live_anchor.window_close(now_ms)
+    try:
+        row = store.get_live_anchor(w_open)
+        notes = store.side_notes(w_open) if row else []
+    except Exception as e:  # noqa: BLE001 - the ledger must never blank the tab
+        st.warning(f"Anchor ledger unavailable: {e}")
+        return
+
+    pair = st.session_state.get("recon")
+    anchored_now = bool(pair and pair[1].anchored and pair[1].window_open_ms == w_open)
+    if row is None:
+        panels.render(panels.card_html(
+            "4-hour anchored summary",
+            "<p class='muted'>Nothing anchored for the current 4h candle yet. Run the Live Recon war room "
+            f"to publish the summary for the window closing {datetime.fromtimestamp(w_close / 1000, timezone.utc):%H:%M} UTC. "
+            "It then stays pinned until that close; re-runs only add side notes.</p>"))
+    else:
+        panels.render(panels.anchored_summary_html(row["payload"], w_close, now_ms, anchored_now))
+        panels.render(panels.side_notes_html(notes))
+
+    if not pair:
+        return
+    recon = pair[0]
+    c1, c2 = st.columns(2)
+    with c1:
+        panels.render(panels.team_html(recon.bull))
+    with c2:
+        panels.render(panels.team_html(recon.bear))
+    panels.render(panels.war_room_html(recon))
+    st.caption(f"Last war-room run {recon.generated_at:%H:%M:%S} UTC · {recon.bull.provider or 'n/a'} · "
+               f"{recon.prompt_tokens + recon.completion_tokens:,} tokens")
+
+
 def category_tab(tab, key):
     with tab:
         a = analyses.get(key)
@@ -182,6 +255,8 @@ def category_tab(tab, key):
             panels.render(panels.fib_html(a))
             panels.render(panels.divergence_html(a))
             panels.render(panels.agent_summary_html(a, report))
+        if key == "live":
+            render_war_room()
         if key in ("weekly", "monthly"):
             panels.render(panels.calendar_html(m, now_ms))
 

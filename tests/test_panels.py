@@ -150,3 +150,77 @@ def test_fib_and_pattern_cards_render_and_escape():
     assert "Pattern:" in lay and "reversal window is open" in lay
     a.patterns = []
     assert "No clean pattern" in panels.patterns_html(a)
+
+
+# ---------- Live Recon war room panels ----------
+def _recon(bull_p=0.8, bear_p=0.3, trap=None):
+    from datetime import datetime, timezone
+
+    from core.agents.judge import ChoiceResult, JudgeResult
+    from core.agents.live_recon import LiveReconResult, resolve, score_team
+    from core.agents.rubric import ALL_ITEMS, BEARISH, BULLISH
+
+    trap = trap or ChoiceResult(choice="BULL_TRAP", probabilities={"BULL_TRAP": 0.7, "NO_TRAP": 0.3},
+                                provider="typesafe")
+    bull = score_team(BULLISH, JudgeResult(probabilities={i.id: bull_p for i in ALL_ITEMS},
+                                          provider="typesafe", latency_s=1.4))
+    bear = score_team(BEARISH, JudgeResult(probabilities={i.id: bear_p for i in ALL_ITEMS}, provider="typesafe"))
+    bias, margin, conf, consulted, override, notes = resolve(bull, bear, trap)
+    return LiveReconResult(generated_at=datetime(2026, 9, 19, 13, 5, tzinfo=timezone.utc), bull=bull, bear=bear,
+                           trap=trap, bias=bias, margin=margin, confidence=conf, consulted=consulted,
+                           override=override, notes=notes)
+
+
+def test_team_scorecard_shows_five_domain_agents_and_their_points():
+    res = _recon()
+    h = panels.team_html(res.bull)
+    assert "80 / 100" in h and "high confluence" in h and "typesafe" in h and "1.4s" in h
+    for n, title in ((1, "Market Structure &amp; SMC"), (2, "Liquidity &amp; Order Flow"),
+                     (3, "Multi-Timeframe Alignment"), (4, "Quantitative Volatility"),
+                     (5, "Macro &amp; Financial News")):
+        assert f"{n}. {title}" in h
+    assert "16.0 / 20" in h and "ti-card up" in h
+    assert "ti-card down" in panels.team_html(res.bear)
+
+
+def test_a_failed_team_says_it_failed_rather_than_showing_zero():
+    from core.agents.judge import JudgeResult
+    from core.agents.live_recon import score_team
+
+    h = panels.team_html(score_team("bullish", JudgeResult(probabilities={}, error="503 upstream")))
+    assert "Did not score: 503 upstream" in h and "failure, not a reading of zero" in h
+    assert "0 / 100" not in h
+
+
+def test_war_room_panel_shows_the_trap_distribution_and_any_override():
+    h = panels.war_room_html(_recon())
+    assert "Bull Trap" in h and "70%" in h and "30%" in h and "ti-card warn" in h
+    assert "override" in h and "overrides the long bias" in h
+    assert "not required" in h  # a 50-point margin needs no consult
+
+    from core.agents.judge import ChoiceResult
+    silent = panels.war_room_html(_recon(trap=ChoiceResult(error="timeout")))
+    assert "No answer: timeout" in silent and "No trap override was applied" in silent
+
+
+def test_anchored_summary_panel_states_how_long_it_stays_pinned():
+    from core import live_anchor
+
+    res = _recon()
+    payload = live_anchor.anchor_payload(res, price=78_000.0)
+    now = 1_726_750_000_000
+    h = panels.anchored_summary_html(payload, now + 95 * 60_000, now, anchored_now=True)
+    assert "BULL TRAP RISK" in h and "margin +50" in h
+    assert "Bullish 80 / 100" in h and "Bearish 30 / 100" in h and "bull trap" in h
+    assert "$78,000" in h and "pinned for 1h 35m more" in h and "Published by this run." in h
+    held = panels.anchored_summary_html(payload, now + 60_000, now, anchored_now=False)
+    assert "never rewrite this summary" in held
+
+
+def test_side_note_panel_lists_appended_notes_and_says_when_there_are_none():
+    assert "Nothing substantial has changed" in panels.side_notes_html([])
+    rows = [{"kind": "BIAS_FLIP", "headline": "Bias has changed from BULL to BEAR since the anchored summary.",
+             "detail": "Bullish team 20/100, bearish team 90/100.", "price": 76_500.0}]
+    h = panels.side_notes_html(rows)
+    assert "Interim side notes (1)" in h and "bias flip" in h and "changed from BULL to BEAR" in h
+    assert "$76,500" in h and "bearish team 90/100" in h
