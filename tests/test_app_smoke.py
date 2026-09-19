@@ -44,3 +44,10 @@ def test_the_live_recon_ledger_is_reachable(app):
     markdown = " ".join(m.value for m in app.markdown)
     assert "4-hour anchored summary" in markdown
     assert "Nothing anchored for the current 4h candle" in markdown
+
+
+def test_the_live_recon_tab_shows_the_smc_and_liquidity_protocols(app):
+    markdown = " ".join(m.value for m in app.markdown)
+    assert "Market structure (SMC)" in markdown and "Liquidity &amp; order flow" in markdown
+    assert "candle close-position proxy" in markdown, "delta must be labelled, not passed off as tape"
+    assert not any("Protocols unavailable" in w.value for w in app.warning)

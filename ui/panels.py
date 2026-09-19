@@ -462,3 +462,68 @@ def side_notes_html(rows: list[dict]) -> str:
         if r.get("detail"):
             body += f"<p class='muted'>{html.escape(str(r['detail']))}</p>"
     return card_html(f"Interim side notes ({len(rows)})", body, "warn")
+
+
+# ---------- SMC and liquidity protocols ----------
+def _dash(v, digits=0, prefix="") -> str:
+    return "—" if v is None else fmt_num(v, digits, prefix)
+
+
+def smc_html(by_tf: dict) -> str:
+    """Structure, order blocks, gaps and premium/discount per timeframe."""
+    rows = ""
+    for tf, d in by_tf.items():
+        st = (d or {}).get("structure", {})
+        if not st.get("available"):
+            rows += f"<tr><td>{html.escape(tf)}</td><td colspan='4' class='muted'>— not enough candles</td></tr>"
+            continue
+        ev = st.get("last_event") or {}
+        event = ("—" if not ev else
+                 f"{html.escape(str(ev['type']))} {html.escape(str(ev['direction']))[:4]} @ {_dash(ev.get('level'), 0, '$')}"
+                 f" <span class='muted'>({ev.get('bars_ago')} bars)</span>")
+        ob = (d.get("order_blocks") or {}).get("nearest_demand") or (d.get("order_blocks") or {}).get("nearest_supply")
+        gap = (d.get("fair_value_gaps") or {}).get("unfilled_below") or (d.get("fair_value_gaps") or {}).get("unfilled_above")
+        pdz = (d.get("premium_discount") or {}).get("zone", "—")
+        rows += (f"<tr><td>{html.escape(tf)}</td><td>{html.escape(str(st.get('bias', '—')))}</td>"
+                 f"<td>{event}</td>"
+                 f"<td>{'—' if not ob else _dash(ob['low'], 0, '$') + '–' + _dash(ob['high'], 0, '$')}</td>"
+                 f"<td>{'—' if not gap else _dash(gap['low'], 0, '$') + '–' + _dash(gap['high'], 0, '$')}</td>"
+                 f"<td>{html.escape(str(pdz))}</td></tr>")
+    body = ("<table><thead><tr><th>TF</th><th>Bias</th><th>Last break</th><th>Nearest block</th>"
+            f"<th>Unfilled gap</th><th>Range</th></tr></thead><tbody>{rows}</tbody></table>")
+    body += ("<p class='muted'>Break of structure and change of character are taken from confirmed swings; "
+             "blocks and gaps are dropped once price mitigates or fills them.</p>")
+    return card_html("Market structure (SMC)", body)
+
+
+def liquidity_html(by_tf: dict) -> str:
+    """Pools, delta, volume profile and open interest per timeframe."""
+    rows = ""
+    for tf, d in by_tf.items():
+        pools = (d or {}).get("pools") or {}
+        cvd = (d or {}).get("cumulative_delta") or {}
+        vp = (d or {}).get("volume_profile") or {}
+        if not cvd.get("available"):
+            rows += f"<tr><td>{html.escape(tf)}</td><td colspan='4' class='muted'>— not enough candles</td></tr>"
+            continue
+
+        def pool_cell(side: str) -> str:
+            p = pools.get(side)
+            if not p:
+                return "—"
+            state = "swept" if p.get("swept") else "broken" if p.get("broken") else "intact"
+            return (f"{_dash(p.get('price'), 0, '$')} <span class='muted'>{p.get('touches')} touches · "
+                    f"{state}</span>")
+
+        oi = (d or {}).get("open_interest") or {}
+        oi_cell = " / ".join("—" if oi.get(k) is None else f"{oi[k]:+.1f}%" for k in ("15m", "1h", "4h"))
+        rows += (f"<tr><td>{html.escape(tf)}</td><td>{pool_cell('buyside')}</td><td>{pool_cell('sellside')}</td>"
+                 f"<td>{html.escape(str(cvd.get('state', '—')))}</td>"
+                 f"<td>{'—' if not vp.get('available') else _dash(vp.get('point_of_control'), 0, '$')}</td>"
+                 f"<td>{oi_cell}</td></tr>")
+    body = ("<table><thead><tr><th>TF</th><th>Buyside pool</th><th>Sellside pool</th><th>Delta</th>"
+            f"<th>POC</th><th>OI 15m/1h/4h</th></tr></thead><tbody>{rows}</tbody></table>")
+    body += ("<p class='muted'>Delta is a candle close-position proxy, not tick tape; treat it as a lean, "
+             "not a measurement. A pool is swept when price wicks through and closes back inside, and "
+             "broken when it closes beyond.</p>")
+    return card_html("Liquidity & order flow", body)

@@ -224,3 +224,42 @@ def test_side_note_panel_lists_appended_notes_and_says_when_there_are_none():
     h = panels.side_notes_html(rows)
     assert "Interim side notes (1)" in h and "bias flip" in h and "changed from BULL to BEAR" in h
     assert "$76,500" in h and "bearish team 90/100" in h
+
+
+# ---------- SMC and liquidity panels ----------
+def _evidence():
+    import os
+    os.environ["TI_OFFLINE_FIXTURES"] = "1"
+    from core.agents.live_recon import build_state
+    from core.config import CATEGORIES
+    from core.data.offline import fixture_market
+    from core.indicators.category import analyze_category
+
+    m = fixture_market()
+    a = {k: an for k, c in CATEGORIES.items() if (an := analyze_category(c, m.spot.frames, m.futures))}
+    st = build_state(m, a)
+    return st["smc"], st["liquidity"]
+
+
+def test_smc_panel_names_the_structure_event_and_the_nearest_zones():
+    smc_by_tf, _ = _evidence()
+    h = panels.smc_html(smc_by_tf)
+    assert "Market structure (SMC)" in h
+    for tf in ("15m", "1h", "4h"):
+        assert f"<td>{tf}</td>" in h
+    assert "CHOCH" in h or "BOS" in h
+    assert "premium" in h or "discount" in h or "equilibrium" in h
+
+
+def test_liquidity_panel_labels_delta_as_a_proxy_and_shows_pools():
+    _, liq_by_tf = _evidence()
+    h = panels.liquidity_html(liq_by_tf)
+    assert "Liquidity &amp; order flow" in h
+    assert "proxy" in h, "delta must never be presented as real tape"
+    assert "touches" in h and ("swept" in h or "intact" in h)
+
+
+def test_the_panels_say_unavailable_instead_of_inventing_numbers():
+    blank = {tf: {"available": False, "note": "no candles"} for tf in ("15m", "1h", "4h")}
+    assert "—" in panels.smc_html(blank) or "unavailable" in panels.smc_html(blank).lower()
+    assert "—" in panels.liquidity_html(blank) or "unavailable" in panels.liquidity_html(blank).lower()

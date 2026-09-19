@@ -153,3 +153,32 @@ def test_run_live_recon_survives_a_dead_provider(market_and_analyses):
 
 def test_the_rubric_covers_every_domain_exactly_once():
     assert len(DOMAINS) == 5 and sum(d.max_points for d in DOMAINS) == 100
+
+
+# ---- the SMC and liquidity evidence the rubric asks about ----
+def test_state_carries_smc_and_liquidity_per_timeframe(market_and_analyses):
+    m, analyses = market_and_analyses
+    state = lr.build_state(m, analyses)
+    json.dumps(state)
+
+    for tf in ("15m", "1h", "4h"):
+        smc = state["smc"][tf]
+        assert set(smc) >= {"structure", "fair_value_gaps", "order_blocks", "premium_discount"}
+        assert smc["structure"]["available"] is True
+        assert smc["premium_discount"]["zone"] in ("premium", "discount", "equilibrium")
+
+        liq = state["liquidity"][tf]
+        assert liq["cumulative_delta"]["available"] is True
+        assert "proxy" in liq["cumulative_delta"]["method"]
+        assert set(liq["open_interest"]) == {"15m", "1h", "4h"}
+        assert set(liq) >= {"pools", "volume_profile"}
+
+
+def test_every_rubric_domain_now_has_evidence_in_the_state(market_and_analyses):
+    """The gap that capped both teams: SMC and liquidity questions had nothing to read."""
+    m, analyses = market_and_analyses
+    blob = json.dumps(lr.build_state(m, analyses))
+    for token in ("structure", "order_blocks", "fair_value_gaps", "premium_discount",
+                  "pools", "cumulative_delta", "volume_profile", "open_interest",
+                  "categories", "macro_calendar"):
+        assert token in blob, f"rubric asks about {token} but the state does not carry it"

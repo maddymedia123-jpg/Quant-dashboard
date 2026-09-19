@@ -21,6 +21,7 @@ from core.config import CATEGORIES, MACRO_EVENTS, TTL
 from core.data.market import assemble, load_context, load_spot
 from core.derived import enrich_futures, record_sample
 from core.indicators.category import analyze_category
+from core.indicators import liquidity, smc
 from core.indicators.early_warning import early_warnings
 from core.store import Store
 from core.indicators.trade_map import map_trade
@@ -210,6 +211,32 @@ tab_labels = [c.label for c in CATEGORIES.values()] + ["Active Trade", "War Room
 tabs = st.tabs(tab_labels)
 
 
+@st.cache_data(ttl=TTL["spot"], show_spinner=False)
+def _evidence(_frames_key: str, now_bucket: int) -> tuple[dict, dict]:
+    """SMC and liquidity per timeframe: the same evidence the rubric judges read."""
+    oi = list(getattr(m.futures, "oi_history", []) or [])
+    smc_by_tf, liq_by_tf = {}, {}
+    for tf in ("15m", "1h", "4h"):
+        df = m.spot.frames.get(tf)
+        if df is None or df.empty:
+            smc_by_tf[tf] = liq_by_tf[tf] = {"available": False, "note": f"no {tf} candles"}
+            continue
+        smc_by_tf[tf] = smc.summarise(df)
+        liq_by_tf[tf] = liquidity.summarise(df, oi, now_ms)
+    return smc_by_tf, liq_by_tf
+
+
+def render_protocols() -> None:
+    """The deterministic SMC and liquidity reads, shown rather than left inside the agent prompt."""
+    try:
+        smc_by_tf, liq_by_tf = _evidence(m.spot.source, now_ms // 60000)
+    except Exception as e:  # noqa: BLE001 - a protocol failure must not blank the tab
+        st.warning(f"Protocols unavailable this refresh: {e}")
+        return
+    panels.render(panels.smc_html(smc_by_tf))
+    panels.render(panels.liquidity_html(liq_by_tf))
+
+
 def render_war_room() -> None:
     """Live Recon's anchored summary, the side notes appended during this candle, and the scorecards."""
     st.markdown("---")
@@ -271,6 +298,7 @@ def category_tab(tab, key):
             panels.render(panels.divergence_html(a))
             panels.render(panels.agent_summary_html(a, report))
         if key == "live":
+            render_protocols()
             render_war_room()
         if key in ("weekly", "monthly"):
             panels.render(panels.calendar_html(m, now_ms))
