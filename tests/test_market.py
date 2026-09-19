@@ -23,7 +23,10 @@ def test_fetch_all_isolates_provider_failures(monkeypatch):
     monkeypatch.setattr(market, "fetch_futures", boom)
     monkeypatch.setattr(market, "fetch_options", ok_opts)
     monkeypatch.setattr(market, "fetch_sentiment", ok_sent)
-    for name in ("fetch_hyperliquid", "fetch_coinlobster", "fetch_stablecoins", "fetch_calendar"):
+    # fetch_kraken_futures is the last futures fallback: without it patched this test reached the real
+    # exchange and only passed while the network happened to be unreachable.
+    for name in ("fetch_hyperliquid", "fetch_coinlobster", "fetch_stablecoins", "fetch_calendar",
+                 "fetch_kraken_futures"):
         monkeypatch.setattr(market, name, boom)  # never touch the network in tests
 
     snap = asyncio.run(market.fetch_all())

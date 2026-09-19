@@ -80,3 +80,50 @@ def test_failures_return_an_empty_result_instead_of_raising():
     res = asyncio.run(j.score(STATE, BULLISH))
     assert not res.ok and res.error and res.probabilities == {}
     assert not asyncio.run(Judge(SETTINGS, typesafe_key=None, llm=None).score(STATE, BULLISH)).ok
+
+
+# The exact request/response shapes from https://docs.typesafe.ai/api.md, so a mock cannot drift
+# from the live contract without this failing.
+DOCUMENTED_RESPONSE = {
+    "model": "jev-latest",
+    "answers": {
+        "is_urgent": {"type": "noul", "noul": 0.92},
+        "department": {"type": "choice", "choice": "technical",
+                       "probabilities": {"billing": 0.08, "technical": 0.85, "sales": 0.07},
+                       "confidence": 0.82},
+    },
+    "usage": {"input_tokens": 312, "output_tokens": 48},
+}
+
+
+def test_parsers_read_the_documented_answers_envelope():
+    from core.agents.judge import parse_typesafe_choice
+
+    assert parse_typesafe(DOCUMENTED_RESPONSE) == {"is_urgent": 0.92}, "nouls live under answers"
+    c = parse_typesafe_choice(DOCUMENTED_RESPONSE, "department")
+    assert c.choice == "technical" and c.confidence == 0.82
+    assert c.probabilities == {"billing": 0.08, "technical": 0.85, "sales": 0.07}
+    assert parse_typesafe_choice(DOCUMENTED_RESPONSE, "absent").choice is None
+
+
+def test_questions_are_built_the_way_the_api_documents_them():
+    seen = {}
+
+    def handler(request: httpx.Request):
+        body = json.loads(request.content)
+        seen.update(body)
+        qid = next(iter(body["questions"]))
+        return httpx.Response(200, json={"model": "jev-latest", "answers": {
+            q: ({"type": "choice", "choice": "BULL_TRAP", "probabilities": {"BULL_TRAP": 0.7}, "confidence": 0.6}
+                if body["questions"][q]["type"] == "choice" else {"type": "noul", "noul": 0.6})
+            for q in body["questions"]}, "usage": {"input_tokens": 10, "output_tokens": 2}})
+
+    j = Judge(SETTINGS, typesafe_key="k", client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    res = asyncio.run(j.score(STATE, BULLISH))
+    q = seen["questions"]["smc_bos"]
+    assert q["type"] == "noul" and set(q["criteria"]) == {"true", "false"} and q["instructions"]
+    assert res.ok and res.probabilities["smc_bos"] == 0.6
+
+    c = asyncio.run(j.classify(STATE, "trap", "Is this a trap?", {"BULL_TRAP": "up is fake", "NO_TRAP": "no trap"}))
+    assert c.ok and c.choice == "BULL_TRAP" and c.confidence == 0.6 and c.provider == "typesafe"
+    assert seen["questions"]["trap"]["criteria"] == {"BULL_TRAP": "up is fake", "NO_TRAP": "no trap"}
