@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from core.agents.context import common_payload
+from core.indicators import liquidity as lq
+from core.indicators import smc
 from core.agents.judge import ChoiceResult, Judge, JudgeResult
 from core.agents.rubric import (
     BEARISH, BULLISH, DOMAINS, MAX_TEAM_POINTS, Domain,
@@ -109,16 +111,35 @@ class LiveReconResult:
         return not (self.bull.ok and self.bear.ok) or bool(self.bull.missing or self.bear.missing)
 
 
-def build_state(m, analyses: dict) -> dict:
+LIVE_TIMEFRAMES = ("15m", "1h", "4h")
+
+
+def build_state(m, analyses: dict, now_ms: int | None = None) -> dict:
     """The shared state both teams and the trap agent judge.
 
     Live Recon reads 15m, 1h and 4h, which are the live, intraday and weekly analyses. The rest of the
     snapshot (spot, derivatives, calendar) comes along in the common payload, availability flags and
-    all, so an agent can see that a field is missing instead of guessing at it."""
+    all, so an agent can see that a field is missing instead of guessing at it.
+
+    The SMC and liquidity blocks matter most: without them the structure, order block, gap, sweep,
+    delta and volume-profile questions in the rubric have nothing to read, and a judge that cannot see
+    the evidence correctly scores near zero. Every one of them is computed here from candles."""
     state = common_payload(m, analyses)
     wanted = ("live", "intraday", "weekly")
     state["categories"] = {k: v for k, v in state.get("categories", {}).items() if k in wanted}
     state["timeframes_read"] = {"live": "15m", "intraday": "1h", "weekly": "4h"}
+
+    now = now_ms if now_ms is not None else int(m.generated_at.timestamp() * 1000)
+    oi_history = list(getattr(m.futures, "oi_history", []) or [])
+    state["smc"], state["liquidity"] = {}, {}
+    for tf in LIVE_TIMEFRAMES:
+        df = m.spot.frames.get(tf)
+        if df is None or df.empty:
+            state["smc"][tf] = {"available": False, "note": f"no {tf} candles"}
+            state["liquidity"][tf] = {"available": False, "note": f"no {tf} candles"}
+            continue
+        state["smc"][tf] = smc.summarise(df)
+        state["liquidity"][tf] = lq.summarise(df, oi_history, now)
     return state
 
 
