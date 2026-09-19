@@ -18,6 +18,11 @@ class LLMSettings:
     director_model: str
     max_concurrency: int = 4
     timeout_s: float = 90.0
+    typesafe_key: str | None = None   # when set, rubric judgments go to TypeSafe System One
+
+    @property
+    def judge_provider(self) -> str:
+        return "typesafe" if self.typesafe_key else self.provider
 
 
 def _secret(name: str) -> str | None:
@@ -43,4 +48,5 @@ def load_settings() -> LLMSettings | None:
         specialist_model=_secret("SPECIALIST_MODEL") or d["specialist"],
         director_model=_secret("DIRECTOR_MODEL") or d["director"],
         max_concurrency=int(_secret("LLM_MAX_CONCURRENCY") or 4),
+        typesafe_key=_secret("TYPESAFE_API_KEY"),
     )

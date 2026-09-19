@@ -1,4 +1,5 @@
-"""SQLite persistence for anchored verdicts, the anchor log, accuracy calls/reports and signal history.
+"""SQLite persistence for anchored verdicts, the Live Recon 4h anchor and its side notes, the anchor log,
+accuracy calls/reports and signal history.
 
 Standard SQL only so a Postgres backend can sit behind the same interface later.
 Path comes from TI_DATA_DIR (default ./data). ":memory:" is supported for tests."""
@@ -24,6 +25,13 @@ CREATE TABLE IF NOT EXISTS reports (
     id INTEGER PRIMARY KEY AUTOINCREMENT, report_id TEXT UNIQUE NOT NULL, ts_ms INTEGER NOT NULL,
     classification TEXT NOT NULL, price REAL NOT NULL, sigma24_pct REAL, majority_dir TEXT,
     move_24h_pct REAL, hit_24h INTEGER, move_7d_pct REAL, hit_7d INTEGER);
+CREATE TABLE IF NOT EXISTS live_anchors (
+    window_open_ms INTEGER PRIMARY KEY, window_close_ms INTEGER NOT NULL, published_ms INTEGER NOT NULL,
+    bias TEXT NOT NULL, margin REAL, confidence REAL, trap TEXT, price REAL, payload TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS live_side_notes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, window_open_ms INTEGER NOT NULL, ts_ms INTEGER NOT NULL,
+    kind TEXT NOT NULL, dedup_key TEXT NOT NULL, headline TEXT NOT NULL, detail TEXT, price REAL);
+CREATE INDEX IF NOT EXISTS idx_side_notes_window ON live_side_notes (window_open_ms, ts_ms);
 CREATE TABLE IF NOT EXISTS signals (
     id INTEGER PRIMARY KEY AUTOINCREMENT, ts_ms INTEGER NOT NULL, category TEXT NOT NULL,
     squeeze_score INTEGER, price REAL);
@@ -164,6 +172,65 @@ class Store:
     def futures_samples_since(self, ts_ms: int) -> list[dict]:
         with self._lock:
             return _rows(self._conn.execute("SELECT * FROM futures_samples WHERE ts_ms >= ? ORDER BY ts_ms ASC", (int(ts_ms),)))
+
+    # ---- Live Recon: the 4h anchored summary is insert-once, never updated ----
+    def put_live_anchor(self, window_open_ms: int, window_close_ms: int, published_ms: int, bias: str,
+                        margin: float | None, confidence: float | None, trap: str | None, price: float | None,
+                        payload: dict) -> bool:
+        """Publish the anchor for a 4h window. Returns False when one already exists: the client's rule
+        that a summary must never be overwritten mid-candle is enforced here, not in the caller."""
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO live_anchors (window_open_ms, window_close_ms, published_ms, bias, margin, "
+                "confidence, trap, price, payload) VALUES (?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(window_open_ms) DO NOTHING",
+                (window_open_ms, window_close_ms, published_ms, bias, margin, confidence, trap, price,
+                 json.dumps(payload)))
+            self._conn.commit()
+        return cur.rowcount > 0
+
+    def get_live_anchor(self, window_open_ms: int | None = None) -> dict | None:
+        sql = "SELECT * FROM live_anchors "
+        args: tuple = ()
+        if window_open_ms is None:
+            sql += "ORDER BY window_open_ms DESC LIMIT 1"
+        else:
+            sql += "WHERE window_open_ms=?"
+            args = (window_open_ms,)
+        with self._lock:
+            r = self._conn.execute(sql, args).fetchone()
+        if not r:
+            return None
+        d = dict(r)
+        d["payload"] = json.loads(d["payload"])
+        return d
+
+    def live_anchors(self, limit: int = 20) -> list[dict]:
+        with self._lock:
+            rows = _rows(self._conn.execute(
+                "SELECT window_open_ms, window_close_ms, published_ms, bias, margin, confidence, trap, price "
+                "FROM live_anchors ORDER BY window_open_ms DESC LIMIT ?", (limit,)))
+        return rows
+
+    def add_side_note(self, window_open_ms: int, ts_ms: int, kind: str, dedup_key: str, headline: str,
+                      detail: str | None = None, price: float | None = None) -> bool:
+        """Append-only. Returns False when the same change was already noted in this window."""
+        with self._lock:
+            seen = self._conn.execute(
+                "SELECT 1 FROM live_side_notes WHERE window_open_ms=? AND dedup_key=?",
+                (window_open_ms, dedup_key)).fetchone()
+            if seen:
+                return False
+            self._conn.execute(
+                "INSERT INTO live_side_notes (window_open_ms, ts_ms, kind, dedup_key, headline, detail, price) "
+                "VALUES (?,?,?,?,?,?,?)", (window_open_ms, ts_ms, kind, dedup_key, headline, detail, price))
+            self._conn.commit()
+        return True
+
+    def side_notes(self, window_open_ms: int) -> list[dict]:
+        with self._lock:
+            return _rows(self._conn.execute(
+                "SELECT * FROM live_side_notes WHERE window_open_ms=? ORDER BY ts_ms, id", (window_open_ms,)))
 
     def close(self) -> None:
         with self._lock:
