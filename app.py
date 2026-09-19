@@ -41,9 +41,24 @@ def _context():
     return load_context()
 
 
+# Streamlit Cloud reloads the script on deploy but keeps cached resources, so a Store built from the
+# previous revision survives and is missing whatever that revision did not have. Keying the cache on a
+# version makes a deploy that changes core.store hand back a fresh Store instead of a stale one.
+STORE_VERSION = 2   # bump whenever core.store gains tables or methods
+
+
 @st.cache_resource(show_spinner=False)
-def _store():
+def _store(version: int = STORE_VERSION):
     return Store()
+
+
+def _live_store():
+    """A Store that definitely understands the current schema, even behind a stale cache."""
+    s = _store()
+    if not hasattr(s, "get_live_anchor"):       # cached from an older revision
+        _store.clear()
+        s = _store()
+    return s
 
 
 # ---------- sidebar ----------
@@ -97,7 +112,7 @@ recon_clicked = st.sidebar.button(
 with st.spinner("Loading market data"):
     m = assemble(_spot(), _context())
 try:
-    _store_early = _store()
+    _store_early = _live_store()
     _now_early = int(time.time() * 1000)
     record_sample(_store_early, m.futures, _now_early)
     m = m.model_copy(update={"futures": enrich_futures(_store_early, m.futures, _now_early)})
@@ -115,7 +130,7 @@ if m.spot.available:
         a = analyze_category(cat, m.spot.frames, m.futures)
         if a is not None:
             analyses[key] = a
-store = _store()
+store = _live_store()
 now_ms = int(time.time() * 1000)
 
 def _macro_event_now(m, now_ms: int) -> str | None:
