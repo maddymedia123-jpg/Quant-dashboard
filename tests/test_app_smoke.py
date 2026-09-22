@@ -16,6 +16,7 @@ REQUIRED_STORE_METHODS = (
     "score_call", "calls", "add_report", "reports", "score_report", "add_signal", "last_signal",
     "add_futures_sample", "futures_sample_at_or_before", "oldest_futures_sample", "futures_samples_since",
     "put_live_anchor", "get_live_anchor", "live_anchors", "add_side_note", "side_notes",
+    "put_recon_score", "recon_scores", "anchors_due", "scored_windows",
 )
 
 
@@ -70,3 +71,11 @@ def test_every_category_tab_shows_protocols_for_its_own_timeframes(app):
     markdown = " ".join(m.value for m in app.markdown)
     assert markdown.count("Market structure (SMC)") == 4, "one SMC panel per category tab"
     assert "<td>1w</td>" in markdown, "weekly and monthly read the weekly candle"
+
+
+def test_every_category_tab_shows_its_accuracy_report(app):
+    markdown = " ".join(m.value for m in app.markdown)
+    assert markdown.count("Accuracy report") >= 4
+    for window in ("4h windows scored", "daily windows scored", "weekly windows scored", "monthly windows scored"):
+        assert window in markdown
+    assert not any("Accuracy audit unavailable" in w.value for w in app.warning)

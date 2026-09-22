@@ -263,3 +263,33 @@ def test_the_panels_say_unavailable_instead_of_inventing_numbers():
     blank = {tf: {"available": False, "note": "no candles"} for tf in ("15m", "1h", "4h")}
     assert "—" in panels.smc_html(blank) or "unavailable" in panels.smc_html(blank).lower()
     assert "—" in panels.liquidity_html(blank) or "unavailable" in panels.liquidity_html(blank).lower()
+
+
+# ---------- accuracy report ----------
+def test_accuracy_panel_says_it_is_collecting_before_ten_windows():
+    from core.live_accuracy import AccuracyReport
+
+    h = panels.accuracy_report_html(AccuracyReport("live", "collecting", 3, "3 of 10 4h windows scored"))
+    assert "Accuracy report" in h and "3 of 10" in h and "ti-card warn" not in h
+
+
+def test_accuracy_panel_shows_the_team_grades_when_healthy():
+    from core.live_accuracy import AccuracyReport
+
+    rep = AccuracyReport("live", "healthy", 12, "No calibration needed.", 0.75, 0.6, 0.12, 0.18)
+    h = panels.accuracy_report_html(rep)
+    assert "75%" in h and "0.12" in h and "0.18" in h and "No calibration needed" in h
+    assert "coin flip" in h, "the Brier scale must be explained, not just printed"
+
+
+def test_accuracy_panel_lists_each_protocol_finding_with_its_fix():
+    from core.live_accuracy import AccuracyReport, Issue
+
+    rep = AccuracyReport("live", "calibration needed", 12, "Direction right in 25% of 12 windows", 0.25, 0.0,
+                         0.41, 0.2, [Issue("misread liquidity", "The bullish team gave <b>sweeps</b> 95%",
+                                           "Count a sweep only after a reclaim close.", 12, "bullish",
+                                           "liq_sweep", 0.95, 0.0)])
+    h = panels.accuracy_report_html(rep)
+    assert "Accuracy report \u00b7 calibration needed" in h and "ti-card warn" in h
+    assert "misread liquidity" in h and "reclaim close" in h and "12 windows" in h
+    assert "&lt;b&gt;sweeps" in h, "findings quote model-facing text, so they are escaped"

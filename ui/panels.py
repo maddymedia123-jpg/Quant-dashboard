@@ -536,3 +536,37 @@ def liquidity_html(by_tf: dict) -> str:
              "not a measurement. A pool is swept when price wicks through and closes back inside, and "
              "broken when it closes beyond.</p>")
     return card_html("Liquidity & order flow", body)
+
+
+# ---------- war-room accuracy report ----------
+def accuracy_report_html(rep) -> str:
+    """The head agent's grade of both teams, and the protocols to correct when it is not optimal."""
+    def pct(v):
+        return "—" if v is None else f"{v:.0%}"
+
+    def brier(v):
+        return "—" if v is None else f"{v:.2f}"
+
+    if rep.status == "collecting":
+        body = (f"<p class='muted'>{html.escape(rep.headline)} Each pinned summary is scored once its candle "
+                "closes, against the price at that close.</p>")
+        return card_html("Accuracy report", body)
+
+    body = f"<p>{html.escape(rep.headline)}</p>"
+    body += ("<table><thead><tr><th>Direction right</th><th>Trap call right</th><th>Bullish team</th>"
+             "<th>Bearish team</th></tr></thead>"
+             f"<tbody><tr><td>{pct(rep.hit_rate)}</td><td>{pct(rep.trap_hit_rate)}</td>"
+             f"<td>{brier(rep.bull_brier)}</td><td>{brier(rep.bear_brier)}</td></tr></tbody></table>")
+    body += ("<p class='muted'>Team columns are Brier scores: 0 is perfect, 0.25 is a coin flip, higher is "
+             f"worse. Over the last {rep.n} scored windows.</p>")
+    if rep.status == "healthy":
+        return card_html("Accuracy report", body, "up")
+
+    for i in rep.issues:
+        body += (f"<p><span class='ti-chip warn'>{html.escape(i.kind)}</span> "
+                 f"{html.escape(i.finding)} <span class='muted'>({i.windows} windows)</span></p>"
+                 f"<p class='muted'>Suggested change: {html.escape(i.suggestion)}</p>")
+    if not rep.issues:
+        body += "<p class='muted'>Accuracy is below the floor but no single protocol stands out yet.</p>"
+    body += "<p class='muted'>These are suggestions for a person to review; nothing is changed automatically.</p>"
+    return card_html("Accuracy report · calibration needed", body, "warn")
