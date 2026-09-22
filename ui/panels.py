@@ -65,7 +65,7 @@ def _touches(n: int) -> str:
 
 
 def layman_html(a: CategoryAnalysis) -> str:
-    """Plain-English summary built only from the deterministic analysis (Phase 2 replaces it with the head agent)."""
+    """Plain-English summary built only from the deterministic analysis."""
     d, v, s = a.direction, a.vol, a.squeeze
     sup = [l for l in a.levels if l.kind == "support"]
     res = [l for l in a.levels if l.kind == "resistance"]
@@ -297,7 +297,7 @@ def report_stats_html(report) -> str:
 
 
 def agent_placeholder_html(a: CategoryAnalysis) -> str:
-    return card_html("Head-agent summary", "<p class='muted'>Run Analysis (Phase 2) generates the Director's per-category summary here. "
+    return card_html("Head-agent summary", "<p class='muted'>Run Analysis generates the Director's per-category summary here. "
                                             "Until then the deterministic direction, divergence and volatility panels above are the source of truth.</p>")
 
 

@@ -1,4 +1,4 @@
-"""Trap Intelligence - BTC market-surveillance terminal (Phase 1: deterministic layer)."""
+"""Trap Intelligence - BTC market-surveillance terminal."""
 from __future__ import annotations
 
 import asyncio
@@ -28,9 +28,9 @@ from core.store import Store
 from core.indicators.trade_map import map_trade
 from ui import panels
 from ui.charts import render_chart
-from ui.theme import inject_css, kpi_strip
+from ui.theme import inject_css, kpi_strip, md_safe
 
-st.set_page_config(page_title="Trap Intelligence | BTC", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Trap Intelligence | BTC", layout="wide", initial_sidebar_state="auto")
 
 
 @st.cache_data(ttl=TTL["spot"], show_spinner=False)
@@ -216,7 +216,8 @@ st.sidebar.caption("Anchors and accuracy persist in SQLite. On Streamlit Cloud t
 
 # ---------- header ----------
 st.markdown("<p class='ti-title'>BTC / USD · Trap Intelligence Terminal</p>"
-            "<p class='ti-sub'>Deterministic market structure per timeframe. Director report and desk briefs arrive with Run Analysis (Phase 2).</p>",
+            "<p class='ti-sub'>Deterministic market structure, SMC and liquidity per timeframe, with a war room per category. "
+            "Run Analysis adds the Director report and desk briefs.</p>",
             unsafe_allow_html=True)
 if not m.spot.available:
     st.error(f"Spot data unavailable from {m.spot.source}: {m.spot.error}. Nothing to analyse.")
@@ -359,13 +360,13 @@ with tabs[5]:
         panels.render(panels.report_stats_html(report))
         md = to_markdown(report)
         st.download_button("Download report (.md)", md, file_name=f"{report.report_id}.md", mime="text/markdown")
-        st.markdown(md)
+        st.markdown(md_safe(md))
         with st.expander("Specialist briefs"):
             for b in report.briefs:
-                st.markdown(f"**{b.agent_id} · {b.desk} · {b.domain} · conviction {b.conviction:.0f}/10**  \n{b.interpretation}")
+                st.markdown(f"**{b.agent_id} · {b.desk} · {b.domain} · conviction {b.conviction:.0f}/10**  \n{md_safe(b.interpretation)}")
                 if b.traps_detected:
-                    st.markdown("Traps: " + "; ".join(b.traps_detected))
-                st.markdown(f"Key risk to thesis: {b.key_risk_to_thesis}")
+                    st.markdown("Traps: " + "; ".join(md_safe(t) for t in b.traps_detected))
+                st.markdown(f"Key risk to thesis: {md_safe(b.key_risk_to_thesis)}")
                 if b.data_gaps:
                     st.caption("Data gaps: " + ", ".join(b.data_gaps))
                 st.markdown("---")

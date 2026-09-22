@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import html
+import re
 
 import streamlit as st
 
@@ -62,15 +63,26 @@ def card(title: str, body_html: str, tone: str = "neutral") -> None:
     st.markdown(card_html(title, body_html, tone), unsafe_allow_html=True)
 
 
+def md_safe(text: str) -> str:
+    """Escape dollar signs for Markdown. Streamlit reads $...$ as LaTeX, so a sentence holding two prices
+    ("support $81,500 and resistance $82,300") would otherwise render as a garbled math expression."""
+    return re.sub(r"(?<!\\)\$", r"\\$", text)
+
+
 def inject_css(dark: bool) -> None:
+    st.markdown(css_text(dark), unsafe_allow_html=True)
+
+
+def css_text(dark: bool) -> str:
     p = palette(dark)
-    st.markdown(f"""
+    return f"""
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
 <style>
 html, body, .stApp, [data-testid="stAppViewContainer"] {{ font-family: 'Inter', system-ui, -apple-system, sans-serif; }}
 .stApp, [data-testid="stAppViewContainer"] {{ background: {p['bg']}; color: {p['text']}; }}
-header[data-testid="stHeader"] {{ display: none; }}
+header[data-testid="stHeader"] {{ background: transparent; }}
+[data-testid="stExpandSidebarButton"] {{ visibility: visible !important; }}
 #MainMenu, footer {{ visibility: hidden; }}
 .block-container {{ padding-top: 1.1rem; padding-bottom: 2rem; max-width: 1440px; }}
 section[data-testid="stSidebar"] {{ background: {p['panel']}; border-right: 1px solid {p['border']}; }}
@@ -78,7 +90,7 @@ section[data-testid="stSidebar"] * {{ color: {p['text']}; }}
 section[data-testid="stSidebar"] button {{ background: {p['panel']}; color: {p['text']}; border: 1px solid {p['border']}; }}
 section[data-testid="stSidebar"] button:hover:not(:disabled) {{ border-color: {p['accent']}; color: {p['accent']}; }}
 section[data-testid="stSidebar"] button:disabled, section[data-testid="stSidebar"] button:disabled * {{ color: {p['muted']}; opacity: 0.8; }}
-.stTabs [data-baseweb="tab-list"] {{ gap: 2px; border-bottom: 1px solid {p['border']}; }}
+.stTabs [data-baseweb="tab-list"] {{ gap: 2px; border-bottom: 1px solid {p['border']}; overflow-x: auto; flex-wrap: nowrap; scrollbar-width: thin; }}
 .stTabs [data-baseweb="tab"] {{ padding: 9px 14px; font-weight: 600; color: {p['muted']}; }}
 .stTabs [aria-selected="true"] {{ color: {p['accent']}; border-bottom: 2px solid {p['accent']}; }}
 h1, h2, h3, h4, p, li, label, .stMarkdown {{ color: {p['text']}; }}
@@ -86,9 +98,9 @@ h1, h2, h3, h4, p, li, label, .stMarkdown {{ color: {p['text']}; }}
 .ti-sub {{ color: {p['muted']}; font-size: 0.84rem; margin: 2px 0 10px 0; }}
 .ti-kpis {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin: 0 0 12px 0; }}
 .ti-kpi {{ background: {p['panel']}; border: 1px solid {p['border']}; border-radius: 10px; padding: 10px 12px; }}
-.ti-kpi .l {{ font-size: 0.7rem; color: {p['muted']}; text-transform: uppercase; letter-spacing: 0.05em; }}
+.ti-kpi .l {{ font-size: 0.75rem; color: {p['muted']}; text-transform: uppercase; letter-spacing: 0.05em; }}
 .ti-kpi .v {{ font-family: {p['mono']}; font-size: 1.02rem; font-weight: 600; margin-top: 2px; color: {p['text']}; }}
-.ti-kpi .d {{ font-size: 0.74rem; margin-top: 2px; color: {p['muted']}; }}
+.ti-kpi .d {{ font-size: 0.75rem; margin-top: 2px; color: {p['muted']}; }}
 .ti-kpi .d.up, .ti-chip.up {{ color: {p['up']}; }}
 .ti-kpi .d.down, .ti-chip.down {{ color: {p['down']}; }}
 .ti-kpi .d.warn, .ti-chip.warn {{ color: {p['warn']}; }}
@@ -100,12 +112,20 @@ h1, h2, h3, h4, p, li, label, .stMarkdown {{ color: {p['text']}; }}
 .ti-card.up {{ border-left-color: {p['up']}; }}
 .ti-card.down {{ border-left-color: {p['down']}; }}
 .ti-card.warn {{ border-left-color: {p['warn']}; }}
-.ti-chip {{ display: inline-block; font-size: 0.7rem; padding: 2px 8px; border-radius: 999px; border: 1px solid {p['border']}; color: {p['muted']}; margin: 0 6px 6px 0; }}
+.ti-chip {{ display: inline-block; font-size: 0.75rem; padding: 2px 8px; border-radius: 999px; border: 1px solid {p['border']}; color: {p['muted']}; margin: 0 6px 6px 0; }}
 .ti-chip.up {{ border-color: {p['up']}; }} .ti-chip.down {{ border-color: {p['down']}; }} .ti-chip.warn {{ border-color: {p['warn']}; }}
 .ti-mono {{ font-family: {p['mono']}; }}
-.ti-card table {{ border-collapse: collapse; font-size: 0.84rem; margin: 4px 0 8px 0; }}
+.ti-card table {{ display: block; overflow-x: auto; max-width: 100%; border-collapse: collapse; font-size: 0.84rem; margin: 4px 0 8px 0; }}
+[data-testid="stMarkdownContainer"] table {{ display: block; overflow-x: auto; max-width: 100%; }}
 .ti-card th, .ti-card td {{ padding: 3px 10px 3px 0; border-bottom: 1px solid {p['border']}; text-align: left; color: {p['text']}; }}
 .ti-card th {{ color: {p['muted']}; font-weight: 600; }}
-@media (max-width: 768px) {{ .block-container {{ padding-left: 0.6rem; padding-right: 0.6rem; }} .ti-kpis {{ grid-template-columns: repeat(2, 1fr); }} }}
+@media (max-width: 768px) {{
+  .block-container {{ padding-left: 0.6rem; padding-right: 0.6rem; }}
+  .ti-kpis {{ grid-template-columns: repeat(2, 1fr); }}
+  .stTabs [data-baseweb="tab"] {{ padding: 8px 10px; white-space: nowrap; }}
+  .ti-card p, .ti-card li {{ font-size: 0.92rem; }}
+  .stButton button, [data-testid="stDownloadButton"] button, [data-testid="stFormSubmitButton"] button {{ min-height: 44px; }}
+  [data-testid="stExpandSidebarButton"], [data-testid="stExpandSidebarButton"] button {{ min-width: 44px; min-height: 44px; }}
+}}
 </style>
-""", unsafe_allow_html=True)
+"""
