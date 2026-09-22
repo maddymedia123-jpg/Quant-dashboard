@@ -15,6 +15,7 @@ from core.agents.runner import run_pipeline_sync
 from core.agents.settings import load_settings
 from core.agents.judge import Judge
 from core.agents.live_recon import run_live_recon
+from core.agents.recon_profiles import LIVE, PROFILES
 from core.anchors import anchor_step
 from core import live_anchor
 from core.config import CATEGORIES, MACRO_EVENTS, TTL
@@ -45,7 +46,7 @@ def _context():
 # Streamlit Cloud reloads the script on deploy but keeps cached resources, so a Store built from the
 # previous revision survives and is missing whatever that revision did not have. Keying the cache on a
 # version makes a deploy that changes core.store hand back a fresh Store instead of a stale one.
-STORE_VERSION = 2   # bump whenever core.store gains tables or methods
+STORE_VERSION = 3   # bump whenever core.store gains tables or methods
 
 
 @st.cache_resource(show_spinner=False)
@@ -134,12 +135,29 @@ if m.spot.available:
 store = _live_store()
 now_ms = int(time.time() * 1000)
 
-def _macro_event_now(m, now_ms: int) -> str | None:
-    """A high-impact USD release landing inside this 4h candle, for the side-note check."""
+def _macro_event_now(m, now_ms: int, profile=LIVE) -> str | None:
+    """A high-impact USD release landing inside this category's candle, for the side-note check."""
     if not m.calendar.available:
         return None
-    due = m.calendar.upcoming(now_ms, live_anchor.window_close(now_ms) - now_ms)
+    due = m.calendar.upcoming(now_ms, profile.window_close(now_ms) - now_ms)
     return due[0].get("title") if due else None
+
+
+def run_war_room(profile) -> None:
+    """Both teams and the trap audit for one category, then anchor or append side notes."""
+    with st.status(f"{profile.label} war room: both teams and the trap audit...", expanded=False) as status:
+        try:
+            judge = Judge(settings, typesafe_key=settings.typesafe_key, llm=LLMClient(settings))
+            recon = asyncio.run(run_live_recon(judge, m, analyses, profile=profile))
+            run_ms = int(time.time() * 1000)
+            published = live_anchor.publish(store, recon, run_ms, price=m.spot.last,
+                                            macro_event=_macro_event_now(m, run_ms, profile), profile=profile)
+            st.session_state["recon"][profile.category] = (recon, published)
+            label = (f"Anchored the {profile.window_label} summary" if published.anchored else
+                     f"Summary held; {len(published.appended)} side note(s) appended")
+            status.update(label=f"{label} - {recon.bias} via {judge.provider}", state="complete")
+        except Exception as e:  # noqa: BLE001 - never crash the page on a judge failure
+            status.update(label=f"War room failed: {e}", state="error")
 
 
 # ---------- run analysis ----------
@@ -164,22 +182,11 @@ if run_clicked and settings is not None and analyses:
             status.update(label=f"Pipeline failed: {e}", state="error")
     st.rerun()
 
-# ---------- Live Recon war room ----------
-st.session_state.setdefault("recon", None)
+# ---------- war rooms: the sidebar button is the Live Recon shortcut ----------
+if not isinstance(st.session_state.get("recon"), dict):
+    st.session_state["recon"] = {}
 if recon_clicked and settings is not None and analyses:
-    with st.status("Live Recon war room: both teams and the trap audit...", expanded=False) as status:
-        try:
-            judge = Judge(settings, typesafe_key=settings.typesafe_key, llm=LLMClient(settings))
-            recon = asyncio.run(run_live_recon(judge, m, analyses))
-            run_ms = int(time.time() * 1000)
-            published = live_anchor.publish(store, recon, run_ms, price=m.spot.last,
-                                            macro_event=_macro_event_now(m, run_ms))
-            st.session_state["recon"] = (recon, published)
-            label = ("Anchored the 4h summary" if published.anchored else
-                     f"Summary held; {len(published.appended)} side note(s) appended")
-            status.update(label=f"{label} - {recon.bias} via {judge.provider}", state="complete")
-        except Exception as e:  # noqa: BLE001 - never crash the page on a judge failure
-            status.update(label=f"War room failed: {e}", state="error")
+    run_war_room(LIVE)
     st.rerun()
 
 report = st.session_state.get("trap_report")
@@ -212,24 +219,24 @@ tabs = st.tabs(tab_labels)
 
 
 @st.cache_data(ttl=TTL["spot"], show_spinner=False)
-def _evidence(_frames_key: str, now_bucket: int) -> tuple[dict, dict]:
+def _evidence(timeframes: tuple[str, ...], now_bucket: int) -> tuple[dict, dict]:
     """SMC and liquidity per timeframe: the same evidence the rubric judges read."""
     oi = list(getattr(m.futures, "oi_history", []) or [])
     smc_by_tf, liq_by_tf = {}, {}
-    for tf in ("15m", "1h", "4h"):
+    for tf in timeframes:
         df = m.spot.frames.get(tf)
         if df is None or df.empty:
             smc_by_tf[tf] = liq_by_tf[tf] = {"available": False, "note": f"no {tf} candles"}
             continue
         smc_by_tf[tf] = smc.summarise(df)
-        liq_by_tf[tf] = liquidity.summarise(df, oi, now_ms)
+        liq_by_tf[tf] = liquidity.summarise(df, oi, now_ms, windows=timeframes)
     return smc_by_tf, liq_by_tf
 
 
-def render_protocols() -> None:
+def render_protocols(profile) -> None:
     """The deterministic SMC and liquidity reads, shown rather than left inside the agent prompt."""
     try:
-        smc_by_tf, liq_by_tf = _evidence(m.spot.source, now_ms // 60000)
+        smc_by_tf, liq_by_tf = _evidence(profile.timeframes, now_ms // 60000)
     except Exception as e:  # noqa: BLE001 - a protocol failure must not blank the tab
         st.warning(f"Protocols unavailable this refresh: {e}")
         return
@@ -237,27 +244,35 @@ def render_protocols() -> None:
     panels.render(panels.liquidity_html(liq_by_tf))
 
 
-def render_war_room() -> None:
-    """Live Recon's anchored summary, the side notes appended during this candle, and the scorecards."""
+def render_war_room(profile) -> None:
+    """A category's anchored summary, the side notes appended during its candle, and the scorecards."""
     st.markdown("---")
-    w_open, w_close = live_anchor.window_open(now_ms), live_anchor.window_close(now_ms)
+    cat = profile.category
+    if st.button(f"Run {profile.label} war room", key=f"war_room_{cat}", disabled=settings is None,
+                 help=f"Eleven agents on {', '.join(profile.timeframes)} over the next {profile.horizon}."):
+        run_war_room(profile)
+        st.rerun()
+
+    w_open, w_close = profile.window_open(now_ms), profile.window_close(now_ms)
     try:
-        row = store.get_live_anchor(w_open)
-        notes = store.side_notes(w_open) if row else []
+        row = store.get_live_anchor(w_open, category=cat)
+        notes = store.side_notes(w_open, category=cat) if row else []
     except Exception as e:  # noqa: BLE001 - the ledger must never blank the tab
         st.warning(f"Anchor ledger unavailable: {e}")
         return
 
-    pair = st.session_state.get("recon")
+    pair = st.session_state["recon"].get(cat)
     anchored_now = bool(pair and pair[1].anchored and pair[1].window_open_ms == w_open)
+    closes = datetime.fromtimestamp(w_close / 1000, timezone.utc)
+    closes_txt = f"{closes:%H:%M} UTC" if profile.window == "4h" else f"{closes:%a %d %b %H:%M} UTC"
     if row is None:
         panels.render(panels.card_html(
-            "4-hour anchored summary",
-            "<p class='muted'>Nothing anchored for the current 4h candle yet. Run the Live Recon war room "
-            f"to publish the summary for the window closing {datetime.fromtimestamp(w_close / 1000, timezone.utc):%H:%M} UTC. "
+            f"{profile.window_title} anchored summary",
+            f"<p class='muted'>Nothing anchored for the current {profile.window_label} candle yet. Run the "
+            f"{profile.label} war room to publish the summary for the window closing {closes_txt}. "
             "It then stays pinned until that close; re-runs only add side notes.</p>"))
     else:
-        panels.render(panels.anchored_summary_html(row["payload"], w_close, now_ms, anchored_now))
+        panels.render(panels.anchored_summary_html(row["payload"], w_close, now_ms, anchored_now, profile))
         panels.render(panels.side_notes_html(notes))
 
     if not pair:
@@ -297,9 +312,10 @@ def category_tab(tab, key):
             panels.render(panels.fib_html(a))
             panels.render(panels.divergence_html(a))
             panels.render(panels.agent_summary_html(a, report))
-        if key == "live":
-            render_protocols()
-            render_war_room()
+        profile = PROFILES.get(key)
+        if profile is not None:
+            render_protocols(profile)
+            render_war_room(profile)
         if key in ("weekly", "monthly"):
             panels.render(panels.calendar_html(m, now_ms))
 

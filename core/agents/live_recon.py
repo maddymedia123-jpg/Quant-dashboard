@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from core.agents.context import common_payload
+from core.agents.recon_profiles import LIVE, ReconProfile
 from core.indicators import liquidity as lq
 from core.indicators import smc
 from core.agents.judge import ChoiceResult, Judge, JudgeResult
@@ -42,11 +43,14 @@ TRAP_OPTIONS: dict[str, str] = {
                     "rather than a liquidity raid.",
     "NO_TRAP": "There is no trap and no decisive move: the market is ranging or waiting on a catalyst.",
 }
-TRAP_INSTRUCTIONS = (
-    "Both a bullish and a bearish team have argued their case on this BTC market state. Judge what the "
-    "current four-hour setup actually is, paying attention to liquidity sweeps, CVD absorption, open "
-    "interest and whether structure confirms the move or only price does."
-)
+def trap_instructions(profile: ReconProfile | None = None) -> str:
+    p = profile or LIVE
+    return ("Both a bullish and a bearish team have argued their case on this BTC market state. Judge what "
+            f"the setup over the next {p.horizon} actually is, paying attention to liquidity sweeps, CVD "
+            "absorption, open interest and whether structure confirms the move or only price does.")
+
+
+TRAP_INSTRUCTIONS = trap_instructions(LIVE)
 
 
 @dataclass
@@ -97,6 +101,7 @@ class LiveReconResult:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     unavailable: tuple[str, ...] = field(default_factory=tuple)
+    category: str = "live"
 
     @property
     def leader(self) -> TeamScore | None:
@@ -111,10 +116,10 @@ class LiveReconResult:
         return not (self.bull.ok and self.bear.ok) or bool(self.bull.missing or self.bear.missing)
 
 
-LIVE_TIMEFRAMES = ("15m", "1h", "4h")
+LIVE_TIMEFRAMES = LIVE.timeframes
 
 
-def build_state(m, analyses: dict, now_ms: int | None = None) -> dict:
+def build_state(m, analyses: dict, now_ms: int | None = None, profile: ReconProfile | None = None) -> dict:
     """The shared state both teams and the trap agent judge.
 
     Live Recon reads 15m, 1h and 4h, which are the live, intraday and weekly analyses. The rest of the
@@ -124,22 +129,25 @@ def build_state(m, analyses: dict, now_ms: int | None = None) -> dict:
     The SMC and liquidity blocks matter most: without them the structure, order block, gap, sweep,
     delta and volume-profile questions in the rubric have nothing to read, and a judge that cannot see
     the evidence correctly scores near zero. Every one of them is computed here from candles."""
+    profile = profile or LIVE
     state = common_payload(m, analyses)
-    wanted = ("live", "intraday", "weekly")
+    wanted = profile.analysis_keys
     state["categories"] = {k: v for k, v in state.get("categories", {}).items() if k in wanted}
-    state["timeframes_read"] = {"live": "15m", "intraday": "1h", "weekly": "4h"}
+    state["timeframes_read"] = dict(wanted)
+    state["war_room"] = profile.label
+    state["horizon"] = profile.horizon
 
     now = now_ms if now_ms is not None else int(m.generated_at.timestamp() * 1000)
     oi_history = list(getattr(m.futures, "oi_history", []) or [])
     state["smc"], state["liquidity"] = {}, {}
-    for tf in LIVE_TIMEFRAMES:
+    for tf in profile.timeframes:
         df = m.spot.frames.get(tf)
         if df is None or df.empty:
             state["smc"][tf] = {"available": False, "note": f"no {tf} candles"}
             state["liquidity"][tf] = {"available": False, "note": f"no {tf} candles"}
             continue
         state["smc"][tf] = smc.summarise(df)
-        state["liquidity"][tf] = lq.summarise(df, oi_history, now)
+        state["liquidity"][tf] = lq.summarise(df, oi_history, now, windows=profile.timeframes)
     return state
 
 
@@ -218,13 +226,17 @@ def resolve(bull: TeamScore, bear: TeamScore, trap: ChoiceResult) -> tuple[str, 
     return bias, margin, confidence, consulted, override, tuple(notes)
 
 
-async def run_live_recon(judge: Judge, m, analyses: dict, now: datetime | None = None) -> LiveReconResult:
-    """One Live Recon pass: both teams and the trap consult, in parallel, on one shared state."""
-    state = build_state(m, analyses)
+async def run_live_recon(judge: Judge, m, analyses: dict, now: datetime | None = None,
+                         profile: ReconProfile | None = None) -> LiveReconResult:
+    """One war-room pass: both teams and the trap consult, in parallel, on one shared state.
+
+    Live Recon by default; any category's profile runs the same eleven agents on its own timeframes."""
+    profile = profile or LIVE
+    state = build_state(m, analyses, profile=profile)
     bull_res, bear_res, trap = await asyncio.gather(
-        judge.score(state, BULLISH),
-        judge.score(state, BEARISH),
-        judge.classify(state, "trap", TRAP_INSTRUCTIONS, TRAP_OPTIONS),
+        judge.score(state, BULLISH, profile=profile),
+        judge.score(state, BEARISH, profile=profile),
+        judge.classify(state, "trap", trap_instructions(profile), TRAP_OPTIONS),
     )
     bull, bear = score_team(BULLISH, bull_res), score_team(BEARISH, bear_res)
     bias, margin, confidence, consulted, override, notes = resolve(bull, bear, trap)
@@ -234,4 +246,5 @@ async def run_live_recon(judge: Judge, m, analyses: dict, now: datetime | None =
         bias=bias, margin=margin, confidence=confidence, consulted=consulted, override=override, notes=notes,
         prompt_tokens=bull_res.prompt_tokens + bear_res.prompt_tokens,
         completion_tokens=bull_res.completion_tokens + bear_res.completion_tokens,
+        category=profile.category,
     )

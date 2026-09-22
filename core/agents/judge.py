@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 
 import httpx
 
+from core.agents.recon_profiles import LIVE, ReconProfile
 from core.agents.rubric import ALL_ITEMS, RubricItem
 from core.agents.settings import LLMSettings
 
@@ -109,13 +110,15 @@ class Judge:
     def provider(self) -> str:
         return "typesafe" if self.typesafe_key else self.s.provider
 
-    async def score(self, state: dict, side: str, items: tuple[RubricItem, ...] = ALL_ITEMS) -> JudgeResult:
+    async def score(self, state: dict, side: str, items: tuple[RubricItem, ...] = ALL_ITEMS,
+                    profile: ReconProfile | None = None) -> JudgeResult:
         t0 = time.perf_counter()
+        profile = profile or LIVE
         try:
             if self.typesafe_key:
-                probs, pt, ct = await self._typesafe(state, side, items)
+                probs, pt, ct = await self._typesafe(state, side, items, profile)
             else:
-                probs, pt, ct = await self._fallback(state, side, items)
+                probs, pt, ct = await self._fallback(state, side, items, profile)
             return JudgeResult(probabilities=probs, provider=self.provider, latency_s=time.perf_counter() - t0,
                                prompt_tokens=pt, completion_tokens=ct)
         except Exception as e:  # noqa: BLE001 - judge boundary: a failure must not stop the run
@@ -161,10 +164,11 @@ class Judge:
             return ChoiceResult(provider=self.provider, error=str(e)[:300])
 
     # ---- backends ----
-    async def _typesafe(self, state: dict, side: str, items) -> tuple[dict[str, float], int, int]:
+    async def _typesafe(self, state: dict, side: str, items, profile: ReconProfile) -> tuple[dict[str, float], int, int]:
         questions = {
             i.id: {"type": "noul",
-                   "instructions": f"Judging the {side} case for BTC over the next four hours: {i.question(side)}",
+                   "instructions": (f"Judging the {side} case for BTC over the next {profile.horizon}: "
+                                    f"{i.question(side, profile)}"),
                    "criteria": {"true": "The data shows this condition holding right now.",
                                 "false": "The data does not show it, or cannot answer it."}}
             for i in items
@@ -181,14 +185,14 @@ class Judge:
         usage = payload.get("usage", {}) if isinstance(payload, dict) else {}
         return parse_typesafe(payload), int(usage.get("input_tokens", 0) or 0), int(usage.get("output_tokens", 0) or 0)
 
-    async def _fallback(self, state: dict, side: str, items) -> tuple[dict[str, float], int, int]:
+    async def _fallback(self, state: dict, side: str, items, profile: ReconProfile) -> tuple[dict[str, float], int, int]:
         if self._llm is None:
             raise RuntimeError("no TypeSafe key and no LLM client for the fallback judge")
-        listing = "\n".join(f'- "{i.id}": {i.question(side)}' for i in items)
+        listing = "\n".join(f'- "{i.id}": {i.question(side, profile)}' for i in items)
         system = (
             "You are a calibrated market judge. For each condition, return the probability from 0 to 1 that the "
-            f"condition currently holds for BTC on the stated data, judged for the {side} case over the next four "
-            "hours. Use only the data given; when the data cannot answer a condition, return 0.5. Do not explain. "
+            f"condition currently holds for BTC on the stated data, judged for the {side} case over the next "
+            f"{profile.horizon}. Use only the data given; when the data cannot answer a condition, return 0.5. Do not explain. "
             'Return JSON exactly as {"probabilities": {"<id>": <0-1 number>, ...}} with one entry per condition id.'
         )
         user = f"DATA (JSON):\n{json.dumps(state, separators=(',', ':'), default=str)}\n\nCONDITIONS\n{listing}\n\nReturn JSON only."

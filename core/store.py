@@ -11,6 +11,20 @@ import pathlib
 import sqlite3
 import threading
 
+# Live Recon anchors were pinned before every category had a war room. They carry over as "live",
+# and re-running this on every open is harmless: both statements skip rows already copied.
+MIGRATE = """
+INSERT OR IGNORE INTO recon_anchors (category, window_open_ms, window_close_ms, published_ms, bias, margin,
+    confidence, trap, price, payload)
+SELECT 'live', window_open_ms, window_close_ms, published_ms, bias, margin, confidence, trap, price, payload
+FROM live_anchors;
+INSERT INTO recon_side_notes (category, window_open_ms, ts_ms, kind, dedup_key, headline, detail, price)
+SELECT 'live', l.window_open_ms, l.ts_ms, l.kind, l.dedup_key, l.headline, l.detail, l.price
+FROM live_side_notes l
+WHERE NOT EXISTS (SELECT 1 FROM recon_side_notes r WHERE r.category = 'live'
+                  AND r.window_open_ms = l.window_open_ms AND r.dedup_key = l.dedup_key);
+"""
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS anchors (
     category TEXT PRIMARY KEY, payload TEXT NOT NULL, since_ms INTEGER NOT NULL);
@@ -32,6 +46,15 @@ CREATE TABLE IF NOT EXISTS live_side_notes (
     id INTEGER PRIMARY KEY AUTOINCREMENT, window_open_ms INTEGER NOT NULL, ts_ms INTEGER NOT NULL,
     kind TEXT NOT NULL, dedup_key TEXT NOT NULL, headline TEXT NOT NULL, detail TEXT, price REAL);
 CREATE INDEX IF NOT EXISTS idx_side_notes_window ON live_side_notes (window_open_ms, ts_ms);
+CREATE TABLE IF NOT EXISTS recon_anchors (
+    category TEXT NOT NULL, window_open_ms INTEGER NOT NULL, window_close_ms INTEGER NOT NULL,
+    published_ms INTEGER NOT NULL, bias TEXT NOT NULL, margin REAL, confidence REAL, trap TEXT, price REAL,
+    payload TEXT NOT NULL, PRIMARY KEY (category, window_open_ms));
+CREATE TABLE IF NOT EXISTS recon_side_notes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, category TEXT NOT NULL, window_open_ms INTEGER NOT NULL,
+    ts_ms INTEGER NOT NULL, kind TEXT NOT NULL, dedup_key TEXT NOT NULL, headline TEXT NOT NULL,
+    detail TEXT, price REAL);
+CREATE INDEX IF NOT EXISTS idx_recon_notes ON recon_side_notes (category, window_open_ms, ts_ms);
 CREATE TABLE IF NOT EXISTS signals (
     id INTEGER PRIMARY KEY AUTOINCREMENT, ts_ms INTEGER NOT NULL, category TEXT NOT NULL,
     squeeze_score INTEGER, price REAL);
@@ -64,6 +87,7 @@ class Store:
         self._lock = threading.Lock()
         with self._lock:
             self._conn.executescript(SCHEMA)
+            self._conn.executescript(MIGRATE)
             self._conn.commit()
 
     # ---- anchors ----
@@ -173,30 +197,30 @@ class Store:
         with self._lock:
             return _rows(self._conn.execute("SELECT * FROM futures_samples WHERE ts_ms >= ? ORDER BY ts_ms ASC", (int(ts_ms),)))
 
-    # ---- Live Recon: the 4h anchored summary is insert-once, never updated ----
+    # ---- war rooms: one anchored summary per category per window, insert-once, never updated ----
     def put_live_anchor(self, window_open_ms: int, window_close_ms: int, published_ms: int, bias: str,
                         margin: float | None, confidence: float | None, trap: str | None, price: float | None,
-                        payload: dict) -> bool:
-        """Publish the anchor for a 4h window. Returns False when one already exists: the client's rule
+                        payload: dict, category: str = "live") -> bool:
+        """Publish the anchor for a window. Returns False when one already exists: the client's rule
         that a summary must never be overwritten mid-candle is enforced here, not in the caller."""
         with self._lock:
             cur = self._conn.execute(
-                "INSERT INTO live_anchors (window_open_ms, window_close_ms, published_ms, bias, margin, "
-                "confidence, trap, price, payload) VALUES (?,?,?,?,?,?,?,?,?) "
-                "ON CONFLICT(window_open_ms) DO NOTHING",
-                (window_open_ms, window_close_ms, published_ms, bias, margin, confidence, trap, price,
-                 json.dumps(payload)))
+                "INSERT INTO recon_anchors (category, window_open_ms, window_close_ms, published_ms, bias, "
+                "margin, confidence, trap, price, payload) VALUES (?,?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(category, window_open_ms) DO NOTHING",
+                (category, window_open_ms, window_close_ms, published_ms, bias, margin, confidence, trap,
+                 price, json.dumps(payload)))
             self._conn.commit()
         return cur.rowcount > 0
 
-    def get_live_anchor(self, window_open_ms: int | None = None) -> dict | None:
-        sql = "SELECT * FROM live_anchors "
-        args: tuple = ()
+    def get_live_anchor(self, window_open_ms: int | None = None, category: str = "live") -> dict | None:
+        sql = "SELECT * FROM recon_anchors WHERE category=? "
+        args: tuple = (category,)
         if window_open_ms is None:
             sql += "ORDER BY window_open_ms DESC LIMIT 1"
         else:
-            sql += "WHERE window_open_ms=?"
-            args = (window_open_ms,)
+            sql += "AND window_open_ms=?"
+            args = (category, window_open_ms)
         with self._lock:
             r = self._conn.execute(sql, args).fetchone()
         if not r:
@@ -205,32 +229,34 @@ class Store:
         d["payload"] = json.loads(d["payload"])
         return d
 
-    def live_anchors(self, limit: int = 20) -> list[dict]:
+    def live_anchors(self, limit: int = 20, category: str = "live") -> list[dict]:
         with self._lock:
-            rows = _rows(self._conn.execute(
-                "SELECT window_open_ms, window_close_ms, published_ms, bias, margin, confidence, trap, price "
-                "FROM live_anchors ORDER BY window_open_ms DESC LIMIT ?", (limit,)))
-        return rows
+            return _rows(self._conn.execute(
+                "SELECT category, window_open_ms, window_close_ms, published_ms, bias, margin, confidence, "
+                "trap, price FROM recon_anchors WHERE category=? ORDER BY window_open_ms DESC LIMIT ?",
+                (category, limit)))
 
     def add_side_note(self, window_open_ms: int, ts_ms: int, kind: str, dedup_key: str, headline: str,
-                      detail: str | None = None, price: float | None = None) -> bool:
+                      detail: str | None = None, price: float | None = None, category: str = "live") -> bool:
         """Append-only. Returns False when the same change was already noted in this window."""
         with self._lock:
             seen = self._conn.execute(
-                "SELECT 1 FROM live_side_notes WHERE window_open_ms=? AND dedup_key=?",
-                (window_open_ms, dedup_key)).fetchone()
+                "SELECT 1 FROM recon_side_notes WHERE category=? AND window_open_ms=? AND dedup_key=?",
+                (category, window_open_ms, dedup_key)).fetchone()
             if seen:
                 return False
             self._conn.execute(
-                "INSERT INTO live_side_notes (window_open_ms, ts_ms, kind, dedup_key, headline, detail, price) "
-                "VALUES (?,?,?,?,?,?,?)", (window_open_ms, ts_ms, kind, dedup_key, headline, detail, price))
+                "INSERT INTO recon_side_notes (category, window_open_ms, ts_ms, kind, dedup_key, headline, "
+                "detail, price) VALUES (?,?,?,?,?,?,?,?)",
+                (category, window_open_ms, ts_ms, kind, dedup_key, headline, detail, price))
             self._conn.commit()
         return True
 
-    def side_notes(self, window_open_ms: int) -> list[dict]:
+    def side_notes(self, window_open_ms: int, category: str = "live") -> list[dict]:
         with self._lock:
             return _rows(self._conn.execute(
-                "SELECT * FROM live_side_notes WHERE window_open_ms=? ORDER BY ts_ms, id", (window_open_ms,)))
+                "SELECT * FROM recon_side_notes WHERE category=? AND window_open_ms=? ORDER BY ts_ms, id",
+                (category, window_open_ms)))
 
     def close(self) -> None:
         with self._lock:

@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from core.agents.recon_profiles import LIVE, ReconProfile
+
 BULLISH, BEARISH = "bullish", "bearish"
 
 
@@ -18,8 +20,9 @@ class RubricItem:
     bullish: str   # the condition, phrased for the bullish case
     bearish: str   # same condition, phrased for the bearish case
 
-    def question(self, side: str) -> str:
-        return self.bullish if side == BULLISH else self.bearish
+    def question(self, side: str, profile: "ReconProfile | None" = None) -> str:
+        text = self.bullish if side == BULLISH else self.bearish
+        return text.format(**(profile or LIVE).fmt)
 
 
 @dataclass(frozen=True)
@@ -27,36 +30,41 @@ class Domain:
     key: str
     agent_no: int
     title: str
-    checklist: tuple[str, ...]      # diagnostic steps the agent must consider
+    checklist: tuple[str, ...]      # diagnostic steps, templated on {ltf}/{mtf}/{htf}/{horizon}
     items: tuple[RubricItem, ...]
 
     @property
     def max_points(self) -> int:
         return sum(i.weight for i in self.items)
 
+    def steps(self, profile: "ReconProfile | None" = None) -> tuple[str, ...]:
+        """The diagnostic checklist, filled in for one category's timeframes."""
+        fmt = (profile or LIVE).fmt
+        return tuple(step.format(**fmt) for step in self.checklist)
+
 
 DOMAINS: tuple[Domain, ...] = (
     Domain(
         key="smc", agent_no=1, title="Market Structure & SMC",
         checklist=(
-            "Identify the 4h structural state: expansion, retracement or consolidation.",
+            "Identify the {htf} structural state: expansion, retracement or consolidation.",
             "Locate the nearest unmitigated premium/discount order block.",
-            "Map active fair value gaps on the 1h and 15m charts.",
-            "Verify whether a change of character occurred within the last 1-3 candles on 15m.",
+            "Map active fair value gaps on the {mtf} and {ltf} charts.",
+            "Verify whether a change of character occurred within the last 1-3 candles on {ltf}.",
         ),
         items=(
             RubricItem("smc_bos", 5,
-                       "A confirmed 4h break of structure or change of character points UP.",
-                       "A confirmed 4h break of structure or change of character points DOWN."),
+                       "A confirmed {htf} break of structure or change of character points UP.",
+                       "A confirmed {htf} break of structure or change of character points DOWN."),
             RubricItem("smc_ob", 5,
-                       "Price is testing or reacting to an unmitigated 1h/4h demand order block.",
-                       "Price is testing or reacting to an unmitigated 1h/4h supply order block."),
+                       "Price is testing or reacting to an unmitigated {mtf}/{htf} demand order block.",
+                       "Price is testing or reacting to an unmitigated {mtf}/{htf} supply order block."),
             RubricItem("smc_fvg", 5,
                        "A clear unfilled fair value gap sits ABOVE price as an upside magnet or entry zone.",
                        "A clear unfilled fair value gap sits BELOW price as a downside magnet or entry zone."),
             RubricItem("smc_ltf", 5,
-                       "The 15m structure is clean, making higher highs and higher lows.",
-                       "The 15m structure is clean, making lower highs and lower lows."),
+                       "The {ltf} structure is clean, making higher highs and higher lows.",
+                       "The {ltf} structure is clean, making lower highs and lower lows."),
         ),
     ),
     Domain(
@@ -65,7 +73,7 @@ DOMAINS: tuple[Domain, ...] = (
             "Locate buyside and sellside liquidity targets.",
             "Confirm whether CVD is expanding with price or showing absorption or divergence.",
             "Identify the point of control and value area limits.",
-            "Track the net change in open interest over 15m, 1h and 4h.",
+            "Track the net change in open interest over {ltf}, {mtf} and {htf}.",
         ),
         items=(
             RubricItem("liq_sweep", 5,
@@ -85,18 +93,18 @@ DOMAINS: tuple[Domain, ...] = (
     Domain(
         key="mtf", agent_no=3, title="Multi-Timeframe Alignment",
         checklist=(
-            "Verify the 4h trend direction.",
-            "Verify the 1h trend direction.",
-            "Verify the 15m trend direction.",
+            "Verify the {htf} trend direction.",
+            "Verify the {mtf} trend direction.",
+            "Verify the {ltf} trend direction.",
             "Measure how much of the three timeframes agree.",
         ),
         items=(
             RubricItem("mtf_triple", 8,
-                       "All three timeframes (15m, 1h, 4h) point UP.",
-                       "All three timeframes (15m, 1h, 4h) point DOWN."),
+                       "All three timeframes ({ltf}, {mtf}, {htf}) point UP.",
+                       "All three timeframes ({ltf}, {mtf}, {htf}) point DOWN."),
             RubricItem("mtf_double", 6,
-                       "The 1h and 4h point UP while the 15m pulls back into discount.",
-                       "The 1h and 4h point DOWN while the 15m pulls back into premium."),
+                       "The {mtf} and {htf} point UP while the {ltf} pulls back into discount.",
+                       "The {mtf} and {htf} point DOWN while the {ltf} pulls back into premium."),
             RubricItem("mtf_fib", 6,
                        "Price is at a Fibonacci retracement or time zone that supports an upside turn.",
                        "Price is at a Fibonacci retracement or time zone that supports a downside turn."),
@@ -106,7 +114,7 @@ DOMAINS: tuple[Domain, ...] = (
         key="quant", agent_no=4, title="Quantitative Volatility",
         checklist=(
             "Compare current ATR with its 20-period average.",
-            "Verify EMA alignment on the 1h and 4h.",
+            "Verify EMA alignment on the {mtf} and {htf}.",
             "Check the standard deviation band boundaries.",
             "Audit RSI and StochRSI for momentum locks or hidden divergences.",
         ),
@@ -115,8 +123,8 @@ DOMAINS: tuple[Domain, ...] = (
                        "Price is pushing the upper volatility band in a way that favours continuation higher.",
                        "Price is pushing the lower volatility band in a way that favours continuation lower."),
             RubricItem("quant_ema", 5,
-                       "The EMA ribbon is stacked bullish on both the 1h and 4h.",
-                       "The EMA ribbon is stacked bearish on both the 1h and 4h."),
+                       "The EMA ribbon is stacked bullish on both the {mtf} and {htf}.",
+                       "The EMA ribbon is stacked bearish on both the {mtf} and {htf}."),
             RubricItem("quant_momentum", 5,
                        "RSI momentum supports upside and is not contradicted by a bearish divergence.",
                        "RSI momentum supports downside and is not contradicted by a bullish divergence."),
@@ -128,7 +136,7 @@ DOMAINS: tuple[Domain, ...] = (
     Domain(
         key="macro", agent_no=5, title="Macro & Financial News",
         checklist=(
-            "Scan the economic calendar for tier-1 releases in the next 15m, 1h and 4h.",
+            "Scan the economic calendar for tier-1 releases in the next {ltf}, {mtf} and {htf}.",
             "Read sentiment indicators for market-moving shifts.",
             "Assess broader market positioning and funding conditions.",
             "Flag any high-impact event landing mid-candle.",
@@ -138,11 +146,11 @@ DOMAINS: tuple[Domain, ...] = (
                        "The nearest high-impact release or its outcome favours upside.",
                        "The nearest high-impact release or its outcome favours downside."),
             RubricItem("macro_sentiment", 6,
-                       "Current sentiment and positioning support upside over the next four hours.",
-                       "Current sentiment and positioning support downside over the next four hours."),
+                       "Current sentiment and positioning support upside over the next {horizon}.",
+                       "Current sentiment and positioning support downside over the next {horizon}."),
             RubricItem("macro_clear", 6,
-                       "No imminent high-impact event threatens the upside case inside the next four hours.",
-                       "No imminent high-impact event threatens the downside case inside the next four hours."),
+                       "No imminent high-impact event threatens the upside case inside the next {horizon}.",
+                       "No imminent high-impact event threatens the downside case inside the next {horizon}."),
         ),
     ),
 )

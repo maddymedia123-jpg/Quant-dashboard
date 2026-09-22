@@ -138,3 +138,66 @@ def test_a_quiet_rerun_files_nothing(store):
     out = la.publish(store, result(0.78, 0.32, ms=t + 900_000), t + 900_000)
     assert not out.anchored and out.appended == () and out.skipped == ()
     assert store.side_notes(2 * H4) == []
+
+
+# ---- one anchor per category per window ----
+def test_categories_pin_separately_in_the_same_window(store):
+    assert store.put_live_anchor(H4, 2 * H4, H4 + 1, "BULL", 30.0, 0.6, None, 1.0, {"bias": "BULL"})
+    assert store.put_live_anchor(H4, 2 * H4, H4 + 1, "BEAR", -30.0, 0.6, None, 1.0, {"bias": "BEAR"},
+                                 category="intraday")
+    assert store.get_live_anchor(H4)["bias"] == "BULL"
+    assert store.get_live_anchor(H4, category="intraday")["bias"] == "BEAR"
+    assert not store.put_live_anchor(H4, 2 * H4, H4 + 2, "BEAR", -1.0, 0.1, None, 1.0, {},
+                                     category="intraday"), "still insert-once within a category"
+
+
+def test_side_notes_are_kept_per_category(store):
+    assert store.add_side_note(H4, H4 + 5, "BIAS_FLIP", "bias:BULL->BEAR", "flip")
+    assert store.add_side_note(H4, H4 + 5, "BIAS_FLIP", "bias:BULL->BEAR", "flip", category="weekly")
+    assert len(store.side_notes(H4)) == 1 and len(store.side_notes(H4, category="weekly")) == 1
+
+
+def test_anchors_pinned_before_categories_existed_migrate_to_live(tmp_path):
+    import json
+    import sqlite3
+
+    path = tmp_path / "old.sqlite"
+    con = sqlite3.connect(path)
+    con.executescript("""
+        CREATE TABLE live_anchors (window_open_ms INTEGER PRIMARY KEY, window_close_ms INTEGER NOT NULL,
+            published_ms INTEGER NOT NULL, bias TEXT NOT NULL, margin REAL, confidence REAL, trap TEXT,
+            price REAL, payload TEXT NOT NULL);
+        CREATE TABLE live_side_notes (id INTEGER PRIMARY KEY AUTOINCREMENT, window_open_ms INTEGER NOT NULL,
+            ts_ms INTEGER NOT NULL, kind TEXT NOT NULL, dedup_key TEXT NOT NULL, headline TEXT NOT NULL,
+            detail TEXT, price REAL);""")
+    con.execute("INSERT INTO live_anchors VALUES (?,?,?,?,?,?,?,?,?)",
+                (H4, 2 * H4, H4 + 9, "BULL", 20.0, 0.5, "NO_TRAP", 78000.0, json.dumps({"bias": "BULL"})))
+    con.execute("INSERT INTO live_side_notes (window_open_ms, ts_ms, kind, dedup_key, headline) VALUES (?,?,?,?,?)",
+                (H4, H4 + 99, "BIAS_FLIP", "bias:BULL->BEAR", "flip"))
+    con.commit()
+    con.close()
+
+    s = Store(path)
+    assert s.get_live_anchor(H4)["bias"] == "BULL" and s.get_live_anchor(H4)["payload"] == {"bias": "BULL"}
+    assert [n["headline"] for n in s.side_notes(H4)] == ["flip"]
+    s.close()
+    s2 = Store(path)                                          # migration is idempotent on reopen
+    assert len(s2.side_notes(H4)) == 1 and len(s2.live_anchors()) == 1
+    s2.close()
+
+
+def test_publish_pins_each_category_to_its_own_candle(store):
+    from core.agents.recon_profiles import PROFILES
+
+    weekly = PROFILES["weekly"]
+    tuesday = int(datetime(2026, 9, 22, 10, 0, tzinfo=timezone.utc).timestamp() * 1000)
+    out = la.publish(store, result(0.8, 0.3, ms=tuesday), tuesday, price=81_000.0, profile=weekly)
+    monday = int(datetime(2026, 9, 21, tzinfo=timezone.utc).timestamp() * 1000)
+    assert out.anchored and out.window_open_ms == monday
+    assert out.window_close_ms == monday + 7 * 24 * 3_600_000
+    assert store.get_live_anchor(monday, category="weekly")["bias"] == "BULL"
+    assert store.get_live_anchor(category="live") is None, "the weekly run does not pin Live Recon"
+
+    later = la.publish(store, result(0.2, 0.9, ms=tuesday + 3_600_000), tuesday + 3_600_000, profile=weekly)
+    assert not later.anchored and [n.kind for n in later.appended] == [la.BIAS_FLIP]
+    assert len(store.side_notes(monday, category="weekly")) == 1 and store.side_notes(monday) == []
