@@ -129,6 +129,8 @@ const PAYLOAD = __PAYLOAD__;
 (function(){
 const P = PAYLOAD, T = P.theme, LW = LightweightCharts;
 const el = document.getElementById('chart');
+// On a phone the price-line titles make the right axis wider than the candles; keep just the price there.
+const NARROW = el.clientWidth < 640;
 const chart = LW.createChart(el, {
   width: el.clientWidth, height: __HEIGHT__,
   layout: { background: { type: 'solid', color: T.panel }, textColor: T.text, fontFamily: 'Inter, system-ui, sans-serif',
@@ -137,6 +139,8 @@ const chart = LW.createChart(el, {
   rightPriceScale: { borderColor: T.border },
   timeScale: { borderColor: T.border, timeVisible: true, secondsVisible: false, rightOffset: 2 },
   crosshair: { mode: 0 },
+  // a vertical swipe over the chart scrolls the page instead of panning the price axis
+  handleScroll: { vertTouchDrag: false },
 });
 const candles = chart.addSeries(LW.CandlestickSeries, { upColor: T.up, downColor: T.down, borderVisible: false, wickUpColor: T.up, wickDownColor: T.down });
 candles.setData(P.candles.concat(P.whitespace));
@@ -146,8 +150,8 @@ P.emas.forEach(e => {
   s.setData(e.data);
   const tag = document.createElement('span'); tag.style.setProperty('--c', e.color); tag.textContent = 'EMA' + e.period; legend.appendChild(tag);
 });
-P.levels.forEach(l => candles.createPriceLine({ price: l.price, color: l.color, lineWidth: 1, lineStyle: LW.LineStyle.Dashed, axisLabelVisible: true, title: l.title }));
-(P.retracements || []).forEach(r => candles.createPriceLine({ price: r.price, color: T.fib, lineWidth: 1, lineStyle: LW.LineStyle.SparseDotted, axisLabelVisible: true, title: r.title }));
+P.levels.forEach(l => candles.createPriceLine({ price: l.price, color: l.color, lineWidth: 1, lineStyle: LW.LineStyle.Dashed, axisLabelVisible: true, title: NARROW ? '' : l.title }));
+(P.retracements || []).forEach(r => candles.createPriceLine({ price: r.price, color: T.fib, lineWidth: 1, lineStyle: LW.LineStyle.SparseDotted, axisLabelVisible: true, title: NARROW ? '' : r.title }));
 (P.patterns || []).forEach(pt => {
   pt.lines.forEach((ln, j) => {
     const s = chart.addSeries(LW.LineSeries, { color: pt.color, lineWidth: 2, lineStyle: LW.LineStyle.LargeDashed, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
