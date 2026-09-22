@@ -17,7 +17,7 @@ from core.agents.judge import Judge
 from core.agents.live_recon import run_live_recon
 from core.agents.recon_profiles import LIVE, PROFILES
 from core.anchors import anchor_step
-from core import live_anchor
+from core import live_accuracy, live_anchor
 from core.config import CATEGORIES, MACRO_EVENTS, TTL
 from core.data.market import assemble, load_context, load_spot
 from core.derived import enrich_futures, record_sample
@@ -46,7 +46,7 @@ def _context():
 # Streamlit Cloud reloads the script on deploy but keeps cached resources, so a Store built from the
 # previous revision survives and is missing whatever that revision did not have. Keying the cache on a
 # version makes a deploy that changes core.store hand back a fresh Store instead of a stale one.
-STORE_VERSION = 3   # bump whenever core.store gains tables or methods
+STORE_VERSION = 4   # bump whenever core.store gains tables or methods
 
 
 @st.cache_resource(show_spinner=False)
@@ -57,7 +57,7 @@ def _store(version: int = STORE_VERSION):
 def _live_store():
     """A Store that definitely understands the current schema, even behind a stale cache."""
     s = _store()
-    if not hasattr(s, "get_live_anchor"):       # cached from an older revision
+    if not hasattr(s, "scored_windows"):        # cached from an older revision
         _store.clear()
         s = _store()
     return s
@@ -204,6 +204,13 @@ try:
 except Exception as e:  # noqa: BLE001 - ledger problems must never blank the page
     st.warning(f"Ledger unavailable this refresh: {e}")
 
+# score every war-room window whose candle has closed, once, against the price at that close
+try:
+    for _profile in PROFILES.values():
+        live_accuracy.score_due(store, m.spot.frames, now_ms, _profile)
+except Exception as e:  # noqa: BLE001 - scoring problems must never blank the page
+    st.warning(f"Accuracy audit unavailable this refresh: {e}")
+
 st.sidebar.markdown(f"<span class='ti-chip'>ledger: {store.path}</span>", unsafe_allow_html=True)
 st.sidebar.caption("Anchors and accuracy persist in SQLite. On Streamlit Cloud this resets on reboot until a hosted database is configured.")
 
@@ -260,6 +267,11 @@ def render_war_room(profile) -> None:
     except Exception as e:  # noqa: BLE001 - the ledger must never blank the tab
         st.warning(f"Anchor ledger unavailable: {e}")
         return
+
+    try:
+        panels.render(panels.accuracy_report_html(live_accuracy.diagnose(store, profile)))
+    except Exception as e:  # noqa: BLE001 - the audit must never blank the tab
+        st.warning(f"Accuracy audit unavailable: {e}")
 
     pair = st.session_state["recon"].get(cat)
     anchored_now = bool(pair and pair[1].anchored and pair[1].window_open_ms == w_open)

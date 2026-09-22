@@ -72,6 +72,11 @@ def anchor_payload(res: LiveReconResult, price: float | None = None) -> dict:
             side.side: {d.key: round(d.points, 2) for d in side.domains}
             for side in (res.bull, res.bear)
         },
+        # every item's probability, so the accuracy report can grade each protocol after the close
+        "items": {
+            side.side: {item_id: round(p, 4) for d in side.domains for item_id, _w, p in d.items}
+            for side in (res.bull, res.bear) if side.ok
+        },
         "published_at_utc": res.generated_at.strftime("%Y-%m-%d %H:%M UTC"),
     }
 

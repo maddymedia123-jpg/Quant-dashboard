@@ -55,6 +55,11 @@ CREATE TABLE IF NOT EXISTS recon_side_notes (
     ts_ms INTEGER NOT NULL, kind TEXT NOT NULL, dedup_key TEXT NOT NULL, headline TEXT NOT NULL,
     detail TEXT, price REAL);
 CREATE INDEX IF NOT EXISTS idx_recon_notes ON recon_side_notes (category, window_open_ms, ts_ms);
+CREATE TABLE IF NOT EXISTS recon_scores (
+    category TEXT NOT NULL, window_open_ms INTEGER NOT NULL, scored_ms INTEGER NOT NULL,
+    open_price REAL NOT NULL, close_price REAL NOT NULL, move_pct REAL NOT NULL, realised TEXT NOT NULL,
+    bias TEXT NOT NULL, direction_hit INTEGER NOT NULL, trap TEXT, trap_hit INTEGER,
+    bull_brier REAL, bear_brier REAL, PRIMARY KEY (category, window_open_ms));
 CREATE TABLE IF NOT EXISTS signals (
     id INTEGER PRIMARY KEY AUTOINCREMENT, ts_ms INTEGER NOT NULL, category TEXT NOT NULL,
     squeeze_score INTEGER, price REAL);
@@ -257,6 +262,50 @@ class Store:
             return _rows(self._conn.execute(
                 "SELECT * FROM recon_side_notes WHERE category=? AND window_open_ms=? ORDER BY ts_ms, id",
                 (category, window_open_ms)))
+
+    # ---- war-room accuracy: each closed window scored once against the price at its close ----
+    def put_recon_score(self, category: str, window_open_ms: int, scored_ms: int, open_price: float,
+                        close_price: float, move_pct: float, realised: str, bias: str, direction_hit: bool,
+                        trap: str | None, trap_hit: bool | None, bull_brier: float | None,
+                        bear_brier: float | None) -> bool:
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO recon_scores (category, window_open_ms, scored_ms, open_price, close_price, move_pct, "
+                "realised, bias, direction_hit, trap, trap_hit, bull_brier, bear_brier) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(category, window_open_ms) DO NOTHING",
+                (category, window_open_ms, scored_ms, open_price, close_price, move_pct, realised, bias,
+                 int(direction_hit), trap, None if trap_hit is None else int(trap_hit), bull_brier, bear_brier))
+            self._conn.commit()
+        return cur.rowcount > 0
+
+    def recon_scores(self, category: str = "live", limit: int = 50) -> list[dict]:
+        with self._lock:
+            return _rows(self._conn.execute(
+                "SELECT * FROM recon_scores WHERE category=? ORDER BY window_open_ms DESC LIMIT ?",
+                (category, limit)))
+
+    def anchors_due(self, now_ms: int, category: str = "live") -> list[dict]:
+        """Pinned anchors whose candle has closed and which have not been scored yet."""
+        with self._lock:
+            rows = _rows(self._conn.execute(
+                "SELECT a.* FROM recon_anchors a LEFT JOIN recon_scores s "
+                "ON s.category = a.category AND s.window_open_ms = a.window_open_ms "
+                "WHERE a.category=? AND a.window_close_ms <= ? AND s.window_open_ms IS NULL "
+                "ORDER BY a.window_open_ms", (category, now_ms)))
+        for r in rows:
+            r["payload"] = json.loads(r["payload"])
+        return rows
+
+    def scored_windows(self, category: str = "live", limit: int = 50) -> list[dict]:
+        """Scores joined with the anchor they graded, newest first."""
+        with self._lock:
+            rows = _rows(self._conn.execute(
+                "SELECT s.*, a.payload FROM recon_scores s JOIN recon_anchors a "
+                "ON a.category = s.category AND a.window_open_ms = s.window_open_ms "
+                "WHERE s.category=? ORDER BY s.window_open_ms DESC LIMIT ?", (category, limit)))
+        for r in rows:
+            r["payload"] = json.loads(r["payload"])
+        return rows
 
     def close(self) -> None:
         with self._lock:
