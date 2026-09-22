@@ -79,3 +79,31 @@ def test_every_category_tab_shows_its_accuracy_report(app):
     for window in ("4h windows scored", "daily windows scored", "weekly windows scored", "monthly windows scored"):
         assert window in markdown
     assert not any("Accuracy audit unavailable" in w.value for w in app.warning)
+
+
+def test_a_module_left_stale_by_a_redeploy_is_reloaded(tmp_path, monkeypatch):
+    """What the live site hit on 9/22: Streamlit Cloud re-ran the new app.py against the previous revision's
+    ui.theme still held in memory, so `from ui.theme import md_safe` raised ImportError until a reboot."""
+    import sys
+    import types
+
+    import ui.theme
+
+    monkeypatch.setenv("TI_OFFLINE_FIXTURES", "1")
+    monkeypatch.setenv("TI_DATA_DIR", str(tmp_path))
+    monkeypatch.delattr(ui.theme, "md_safe")                     # the old module, as the server held it
+    deploy = sys.modules.setdefault("_ti_deploy", types.ModuleType("_ti_deploy"))
+    monkeypatch.setattr(deploy, "fingerprint", -1.0, raising=False)   # loaded by an earlier revision
+
+    # the app will swap in fresh core/ui modules; put the originals back afterwards so the other tests keep
+    # the class objects they imported (pydantic rejects an instance of a same-named class from a reload)
+    project = lambda: [n for n in sys.modules if n.split(".")[0] in ("core", "ui")]  # noqa: E731
+    saved = {n: sys.modules[n] for n in project()}
+    try:
+        at = pytest.importorskip("streamlit.testing.v1").AppTest.from_file(APP, default_timeout=180).run()
+        assert not at.exception, [e.value for e in at.exception]
+        assert hasattr(sys.modules["ui.theme"], "md_safe"), "the fresh module replaced the stale one"
+    finally:
+        for n in project():
+            del sys.modules[n]
+        sys.modules.update(saved)
