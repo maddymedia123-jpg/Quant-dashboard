@@ -20,7 +20,8 @@ MIN_TOUCHES = 2            # a pool needs at least two attempts at the same leve
 CONFIRM_BARS = 2           # and price must have left it: the last bars are where price is, not a pool
 DEFAULT_TOLERANCE_PCT = 0.1
 VALUE_AREA_SHARE = 0.70
-WINDOWS_MS = {"15m": 900_000, "1h": 3_600_000, "4h": 14_400_000}
+TF_MS = {"15m": 900_000, "1h": 3_600_000, "4h": 14_400_000, "1d": 86_400_000, "1w": 604_800_000}
+DEFAULT_WINDOWS = ("15m", "1h", "4h")
 
 
 @dataclass
@@ -181,14 +182,16 @@ def volume_profile(df: pd.DataFrame, bins: int = 48, lookback: int = 200) -> Vol
     return VolumeProfile(True, float(centres[poc_i]), va_high, va_low, float(covered / total), position)
 
 
-def oi_changes(history: list[tuple[int, float]], now_ms: int) -> dict[str, float | None]:
+def oi_changes(history: list[tuple[int, float]], now_ms: int,
+               windows: tuple[str, ...] = DEFAULT_WINDOWS) -> dict[str, float | None]:
     """Percent change in open interest over each Live Recon window.
 
     A window with no sample near its start returns None: unknown is not the same as unchanged, and a
     reading from the wrong window is not an approximation of the right one."""
     out: dict[str, float | None] = {}
     latest = history[-1][1] if history else None
-    for name, span in WINDOWS_MS.items():
+    for name in windows:
+        span = TF_MS[name]
         if not history or not latest:
             out[name] = None
             continue
@@ -203,7 +206,7 @@ def oi_changes(history: list[tuple[int, float]], now_ms: int) -> dict[str, float
 
 
 def summarise(df: pd.DataFrame, oi_history: list[tuple[int, float]], now_ms: int,
-              tolerance_pct: float = DEFAULT_TOLERANCE_PCT) -> dict:
+              tolerance_pct: float = DEFAULT_TOLERANCE_PCT, windows: tuple[str, ...] = DEFAULT_WINDOWS) -> dict:
     """The compact, JSON-safe reading handed to the rubric judges."""
     price = float(df["close"].iloc[-1]) if len(df) else 0.0
     pools = liquidity_pools(df, tolerance_pct)
@@ -235,5 +238,5 @@ def summarise(df: pd.DataFrame, oi_history: list[tuple[int, float]], now_ms: int
                             "value_area_low": round(vp.value_area_low, 2),
                             "price_position": vp.position}),
         "open_interest": {k: (None if v is None else round(v, 3))
-                          for k, v in oi_changes(oi_history, now_ms).items()},
+                          for k, v in oi_changes(oi_history, now_ms, windows).items()},
     }

@@ -182,3 +182,47 @@ def test_every_rubric_domain_now_has_evidence_in_the_state(market_and_analyses):
                   "pools", "cumulative_delta", "volume_profile", "open_interest",
                   "categories", "macro_calendar"):
         assert token in blob, f"rubric asks about {token} but the state does not carry it"
+
+
+# ---- every category runs its own war room ----
+def test_weekly_state_reads_the_weekly_timeframes(market_and_analyses):
+    from core.agents.recon_profiles import PROFILES
+
+    m, analyses = market_and_analyses
+    st = lr.build_state(m, analyses, profile=PROFILES["weekly"])
+    json.dumps(st)
+    assert set(st["smc"]) == set(st["liquidity"]) == {"4h", "1d", "1w"}
+    assert set(st["liquidity"]["4h"]["open_interest"]) == {"4h", "1d", "1w"}
+    assert set(st["categories"]) == {"weekly", "monthly"}, "the analyses drawn on 4h and 1d"
+    assert st["timeframes_read"] == {"weekly": "4h", "monthly": "1d"}
+    assert st["horizon"] == "seven days"
+
+
+def test_a_weekly_run_asks_weekly_questions(market_and_analyses):
+    from core.agents.recon_profiles import PROFILES
+
+    m, analyses = market_and_analyses
+    seen = []
+
+    def handler(request: httpx.Request):
+        body = json.loads(request.content)
+        seen.append(body)
+        if "trap" in body["questions"]:
+            return httpx.Response(200, json={"answers": {"trap": {"type": "choice", "choice": "NO_TRAP",
+                                                                   "probabilities": {"NO_TRAP": 0.8}}}})
+        return httpx.Response(200, json={"answers": {q: {"type": "noul", "noul": 0.5} for q in body["questions"]}})
+
+    j = Judge(SETTINGS, typesafe_key="ts", client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    res = asyncio.run(lr.run_live_recon(j, m, analyses, profile=PROFILES["weekly"]))
+    assert res.category == "weekly"
+    noul = next(b for b in seen if "trap" not in b["questions"])
+    q = noul["questions"]["mtf_triple"]["instructions"]
+    assert "(4h, 1d, 1w)" in q and "seven days" in q and "15m" not in q
+    trap = next(b for b in seen if "trap" in b["questions"])["questions"]["trap"]["instructions"]
+    assert "seven days" in trap and "four-hour" not in trap
+
+
+def test_live_remains_the_default_profile(market_and_analyses):
+    m, analyses = market_and_analyses
+    st = lr.build_state(m, analyses)
+    assert set(st["smc"]) == {"15m", "1h", "4h"} and st["horizon"] == "four hours"

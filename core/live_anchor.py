@@ -14,6 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from core.agents.live_recon import DECISIVE_MARGIN, TRAP_OVERRIDE_P, LiveReconResult
+from core.agents.recon_profiles import LIVE, ReconProfile
 
 WINDOW_MS = 4 * 60 * 60 * 1000          # the 4h candle, aligned to UTC
 SWING_POINTS = 15.0                      # team-score move that counts as substantial
@@ -137,25 +138,28 @@ class PublishResult:
 
 
 def publish(store, res: LiveReconResult, now_ms: int, price: float | None = None,
-            macro_event: str | None = None) -> PublishResult:
+            macro_event: str | None = None, profile: ReconProfile | None = None) -> PublishResult:
     """Anchor the summary if this window has none; otherwise append what changed.
 
     A run never rewrites a pinned summary, so an interim re-run cannot lose the structural context the
     client trades from - the new read arrives as a note beside it."""
-    w_open, w_close = window_open(now_ms), window_close(now_ms)
+    profile = profile or LIVE
+    cat = profile.category
+    w_open, w_close = profile.window_open(now_ms), profile.window_close(now_ms)
     payload = anchor_payload(res, price)
-    existing = store.get_live_anchor(w_open)
+    existing = store.get_live_anchor(w_open, category=cat)
 
     if existing is None:
         published = store.put_live_anchor(w_open, w_close, now_ms, res.bias, res.margin, res.confidence,
-                                          res.trap.choice if res.trap.ok else None, price, payload)
+                                          res.trap.choice if res.trap.ok else None, price, payload, category=cat)
         if published:
             return PublishResult(w_open, w_close, True, payload)
-        existing = store.get_live_anchor(w_open)   # a concurrent run won the race; fall through to notes
+        existing = store.get_live_anchor(w_open, category=cat)   # a concurrent run won; fall through to notes
 
     anchor = existing["payload"]
     appended, skipped = [], []
     for note in detect_side_notes(anchor, res, macro_event):
-        wrote = store.add_side_note(w_open, now_ms, note.kind, note.dedup_key, note.headline, note.detail, price)
+        wrote = store.add_side_note(w_open, now_ms, note.kind, note.dedup_key, note.headline, note.detail, price,
+                                    category=cat)
         (appended if wrote else skipped).append(note)
     return PublishResult(w_open, w_close, False, anchor, tuple(appended), tuple(skipped))

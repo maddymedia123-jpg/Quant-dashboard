@@ -428,8 +428,17 @@ def war_room_html(res) -> str:
     return card_html("War room · trap audit", body, tone)
 
 
-def anchored_summary_html(anchor: dict, window_close_ms: int, now_ms: int, anchored_now: bool) -> str:
-    """The pinned 4h summary. It does not change until the next UTC 4h candle close."""
+def _remaining(mins: int) -> str:
+    if mins >= 24 * 60:
+        return f"{mins // 1440}d {(mins % 1440) // 60:02d}h"
+    return f"{mins // 60}h {mins % 60:02d}m"
+
+
+def anchored_summary_html(anchor: dict, window_close_ms: int, now_ms: int, anchored_now: bool,
+                          profile=None) -> str:
+    """The pinned summary. It does not change until the category's candle closes."""
+    from core.agents.recon_profiles import LIVE
+    p = profile or LIVE
     mins = max(0, (window_close_ms - now_ms) // 60000)
     bias = str(anchor.get("bias", "—"))
     body = (f"<p><strong>{html.escape(bias)}</strong> · confidence {float(anchor.get('confidence') or 0):.0%} "
@@ -439,12 +448,12 @@ def anchored_summary_html(anchor: dict, window_close_ms: int, now_ms: int, ancho
              f"trap read {html.escape(TRAP_LABELS.get(anchor.get('trap') or '', anchor.get('trap') or '—'))}</p>")
     body += (f"<p class='muted'>Anchored {html.escape(str(anchor.get('published_at_utc', '')))} "
              + (f"at {fmt_num(anchor.get('price'), 0, '$')} " if anchor.get("price") else "")
-             + f"· pinned for {mins // 60}h {mins % 60:02d}m more, until the 4h candle closes.</p>")
+             + f"· pinned for {_remaining(mins)} more, until the {p.window_label} candle closes.</p>")
     body += ("<p class='muted'>" + ("Published by this run." if anchored_now else
              "Re-runs during this candle append side notes; they never rewrite this summary.") + "</p>")
     if anchor.get("degraded"):
         body += "<p><span class='ti-chip warn'>degraded</span> part of the checklist did not score.</p>"
-    return card_html("4-hour anchored summary", body, tone_for_direction(bias.split()[0]))
+    return card_html(f"{p.window_title} anchored summary", body, tone_for_direction(bias.split()[0]))
 
 
 def side_notes_html(rows: list[dict]) -> str:

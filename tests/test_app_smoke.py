@@ -51,3 +51,22 @@ def test_the_live_recon_tab_shows_the_smc_and_liquidity_protocols(app):
     assert "Market structure (SMC)" in markdown and "Liquidity &amp; order flow" in markdown
     assert "candle close-position proxy" in markdown, "delta must be labelled, not passed off as tape"
     assert not any("Protocols unavailable" in w.value for w in app.warning)
+
+
+def test_every_category_tab_has_its_own_war_room(app):
+    labels = [b.label for b in app.button]
+    for name in ("Live Recon", "Intraday", "Weekly", "Monthly"):
+        assert f"Run {name} war room" in labels, f"{name} tab has no war-room button"
+    markdown = " ".join(m.value for m in app.markdown)
+    for title in ("4-hour anchored summary", "Daily anchored summary", "Weekly anchored summary",
+                  "Monthly anchored summary"):
+        assert title in markdown, f"missing: {title}"
+    for window in ("current 4h candle", "current daily candle", "current weekly candle",
+                   "current monthly candle"):
+        assert window in markdown
+
+
+def test_every_category_tab_shows_protocols_for_its_own_timeframes(app):
+    markdown = " ".join(m.value for m in app.markdown)
+    assert markdown.count("Market structure (SMC)") == 4, "one SMC panel per category tab"
+    assert "<td>1w</td>" in markdown, "weekly and monthly read the weekly candle"
