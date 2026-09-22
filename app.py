@@ -5,10 +5,36 @@ import asyncio
 import time
 from datetime import datetime, timezone
 
+import pathlib
+import sys
+import types
+
 import pandas as pd
 import streamlit as st
 
-from core.accuracy import majority_direction, record_report, score_due_calls, score_reports, summary
+
+def _drop_stale_modules() -> None:
+    """Streamlit Cloud re-runs a freshly pulled app.py inside the process that loaded the previous revision,
+    so `core.*` and `ui.*` stay in memory at their old versions. A name added in the new revision then fails
+    to import (ImportError on ui.theme.md_safe, AttributeError on panels.patterns_html, a Store missing new
+    methods) until someone reboots the app. When any project source file has changed since this process
+    loaded it, drop those modules and the caches built from them, so the imports below load the new code."""
+    root = pathlib.Path(__file__).resolve().parent
+    fingerprint = max(p.stat().st_mtime for pkg in ("core", "ui") for p in (root / pkg).rglob("*.py"))
+    deploy = sys.modules.setdefault("_ti_deploy", types.ModuleType("_ti_deploy"))
+    previous = getattr(deploy, "fingerprint", None)
+    deploy.fingerprint = fingerprint
+    if previous is None or previous == fingerprint:
+        return                        # first run in this process, or nothing changed: nothing can be stale
+    for name in [n for n in sys.modules if n.split(".")[0] in ("core", "ui")]:
+        del sys.modules[name]
+    st.cache_data.clear()             # cached objects were built by the old code too
+    st.cache_resource.clear()
+
+
+_drop_stale_modules()
+
+from core.accuracy import majority_direction, record_report, score_due_calls, score_reports, summary  # noqa: E402
 from core.agents.llm import LLMClient
 from core.agents.report import to_markdown
 from core.agents.runner import run_pipeline_sync
