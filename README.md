@@ -138,6 +138,60 @@ Two honesty rules worth knowing:
 - **An open-interest window reports nothing unless a stored sample brackets it.** A reading from the wrong
   window is not an approximation of the right one.
 
+## TRAP Intelligence (its own tab)
+
+The watchdog for engineered moves: fakeouts, swing failures and stop runs. Candidates are found in code
+and only then judged, so a trap is never asserted without the evidence that produced it and every level
+on a card comes from the data.
+
+**Two triggers, from the spec.** Liquidity taken and immediately reclaimed (the swing failure), or price
+holding beyond the value-area edge while cumulative delta drains the other way. A trigger needs at least
+one *independent* supporting factor from funding, open interest, the 2-sigma channel, premium/discount or
+counter-trend structure — a factor that merely restates the reading which fired the trigger is not a
+second signal.
+
+**Three gates keep a candidate live**, each set from measurements over the fixture candles rather than by
+taste:
+
+- **The reclaim must have happened.** A fake break up is only a fake once price is back below the high it
+  took; while price is still above it, the break is in progress.
+- **The raid must be recent** — within `MAX_SWEEP_BARS` (5). Unbounded, this carded raids up to 189 bars
+  old while still calling them "immediately reclaimed".
+- **The candidate must not already be settled** by the price that found it, checked with the same
+  `resolved_by()` the settle pass uses, so detection and settlement cannot disagree. Without these gates
+  35% of declared traps were resolved seconds later, most recorded as "the break was real after all"
+  against a trap declared at that very price.
+
+The invalidation sits half an ATR beyond the raid (a quarter ATR is a hair trigger — ordinary noise would
+resolve a live trap within minutes), and the payoff target is the point of control, pushed out when that
+sits nearer than the invalidation so a card never advertises a trade that risks more than it makes.
+
+**Ten sub-agents, then the Head, then the desk.** The strongest candidate goes to five domain questions in
+one batched request, judged by the side whose case the trap would prove — the bearish specialists hunt
+bull traps and the bullish ones hunt bear traps — out of 100. The Head then makes one categorical call:
+engineered trap, authentic break, or unclear. Before anything is declared the affected desk is asked, in
+code, whether this is a real higher-timeframe break: **structure in the direction of the move together
+with acceptance beyond value** vetoes the declaration and the trap stays a watch. Open interest building
+is context only, never a veto — a crowded move is exactly what a trap looks like.
+
+A trap is declared when the sub-agents score 60 or more, the Head calls it engineered, and the desk does
+not read an authentic break.
+
+**A trap is a market event, not a desk's opinion of one.** Each timeframe is scanned once, by the first
+desk that reads it — 15m/1h/4h by Live Recon, 1d by Intraday, 1w by Weekly — and a trap then appears on
+every desk that reads its timeframe. Monthly owns no timeframe of its own, because the feed stops at the
+weekly candle and so Weekly and Monthly read identical candles; scanning per desk instead judged the same
+shape twice and anchored two rows for one raid. Identity is side, timeframe and level, matched within a
+quarter ATR rather than to the cent, because a recomputed value-area edge drifts by dollars between
+refreshes.
+
+**Cost:** a full sweep is at most six requests — three desks own timeframes, two requests each. The scan
+itself is free arithmetic.
+
+**Anchored until price settles it.** Invalidated when the break proves real, played out when price returns
+inside value; settlement happens once, so a refresh cannot double-report, and nothing expires on a clock.
+Declared traps warn on every affected desk and append a side note to its anchored summary.
+
 ## Accuracy report
 
 Every pinned summary is a prediction. When its candle closes it is scored once, against the price at that
@@ -192,7 +246,10 @@ tab shows hit rates with sample sizes; under 10 samples is labelled indicative.
 
 SQLite at `TI_DATA_DIR` (default `./data`, gitignored): anchored verdicts and their audit log, direction
 calls and report scores, per-category war-room anchors (`recon_anchors`), side notes
-(`recon_side_notes`), scored windows (`recon_scores`), squeeze signals and futures samples.
+(`recon_side_notes`), scored windows (`recon_scores`), anchored traps (`traps`), squeeze signals and
+futures samples. `STORE_VERSION` in `app.py` is passed to the cached `_store()` call, not defaulted:
+Streamlit hashes the arguments a call actually makes, so a version left as a default never reaches the
+cache key and a bump does nothing.
 
 **On Streamlit Cloud this file resets on reboot or redeploy**, so the accuracy report rarely passes
 "collecting" there. Point `TI_DATA_DIR` at a mounted volume, or move to a hosted database.
