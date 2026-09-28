@@ -213,3 +213,24 @@ def test_windows_scored_under_an_older_checklist_do_not_speak_about_new_items(st
     old = acc.diagnose(store)
     assert old.n == 12 and old.hit_rate == 0.0, "direction accuracy still counts every window"
     assert not any(i.item for i in old.issues), "no item findings from a checklist that no longer exists"
+
+
+def test_each_finding_suggests_a_fix_for_the_domain_that_actually_failed(store):
+    """Remapping the domains without rewriting the advice cross-wired it: the sweep item was told to
+    tighten break confirmation while the delta item was told to tighten sweep reclaims."""
+    from core.agents.rubric import DOMAIN_BY_KEY
+
+    cases = {"ict_sweep": ("sweep", "reclaim"), "delta_confirm": ("delta", "flow"),
+             "derivs_funding": ("funding", "positioning", "open interest"),
+             "quant_mtf": ("timeframe", "agree")}
+    seed(store, 12, 0.7, 0.3, move_up=False,
+         items={(BULLISH, item): 0.95 for item in cases})
+    rep = acc.diagnose(store)
+    assert rep.status == "calibration needed"
+    found = {i.item: i for i in rep.issues if i.item}
+    for item, words in cases.items():
+        issue = found.get(item)
+        assert issue is not None, f"{item} scored 0.95 into 12 losses and was not named"
+        advice = issue.suggestion.lower()
+        assert any(w in advice for w in words), f"{item} advised: {issue.suggestion}"
+        assert issue.kind == acc.ITEM_KIND[item.split("_")[0]]

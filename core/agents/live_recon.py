@@ -138,7 +138,11 @@ def build_state(m, analyses: dict, now_ms: int | None = None, profile: ReconProf
     state["war_room"] = profile.label
     state["horizon"] = profile.horizon
 
-    state["derivatives"], state["unavailable"] = derivatives_payload(m)
+    state["derivatives"], derivs_missing = derivatives_payload(m)
+    state["derivatives"]["unavailable"] = derivs_missing
+    # every feed that failed, not only the derivatives ones: a judge reading an empty list assumes
+    # sentiment and the calendar are present
+    state["unavailable"] = sorted(set(m.unavailable()) | set(derivs_missing))
 
     now = now_ms if now_ms is not None else int(m.generated_at.timestamp() * 1000)
     oi_history = list(getattr(m.futures, "oi_history", []) or [])

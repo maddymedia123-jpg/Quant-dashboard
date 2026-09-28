@@ -49,7 +49,6 @@ from core.config import CATEGORIES, MACRO_EVENTS, TTL
 from core.data.market import assemble, load_context, load_spot
 from core.derived import enrich_futures, record_sample
 from core.indicators.category import analyze_category
-from core.indicators import liquidity, smc, volatility
 from core.indicators.early_warning import early_warnings
 from core.store import Store
 from core.indicators.trade_map import map_trade
@@ -255,8 +254,8 @@ tabs = st.tabs(tab_labels)
 
 @st.cache_data(ttl=TTL["spot"], show_spinner=False)
 def _desk_state(category: str, now_bucket: int) -> dict:
-    """The very state the desk's judges are handed. The panels read it too, so the screen and the
-    scorecard cannot drift apart, and the maths runs once per refresh instead of twice."""
+    """The very state the desk's judges are handed, so the screen and the scorecard cannot drift
+    apart. Cached per desk per minute; a war-room run builds its own state at the moment it runs."""
     return build_state(m, analyses, now_ms, PROFILES[category])
 
 

@@ -79,4 +79,6 @@ def test_the_deck_follows_the_category_it_is_asked_for(market_and_analyses):
     live = deck_for(m, analyses, PROFILES["live"])
     weekly = deck_for(m, analyses, PROFILES["weekly"])
     assert live[0].timeframe == "1h" and weekly[0].timeframe == "1d", "the desk's middle timeframe"
-    assert any("4h" in a.note or a.timeframe for a in weekly)
+    by_key = {a.key: a for a in weekly}
+    assert by_key["ict"].timeframe == "1w", "structure is read on the desk's higher timeframe"
+    assert {a.timeframe for a in weekly} == {"1d", "1w"}, "weekly reads its own candles, not Live Recon's"

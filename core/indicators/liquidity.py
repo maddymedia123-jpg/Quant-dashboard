@@ -16,6 +16,9 @@ from typing import Literal
 import numpy as np
 import pandas as pd
 
+from core.indicators.pivots import find_pivots
+from core.indicators.volatility import atr
+
 MIN_TOUCHES = 2            # a pool needs at least two attempts at the same level
 CONFIRM_BARS = 2           # and price must have left it: the last bars are where price is, not a pool
 DEFAULT_TOLERANCE_PCT = 0.1
@@ -184,6 +187,61 @@ def volume_profile(df: pd.DataFrame, bins: int = 48, lookback: int = 200) -> Vol
     return VolumeProfile(True, float(centres[poc_i]), va_high, va_low, float(covered / total), position)
 
 
+def volume_profile_context(df: pd.DataFrame, lookback: int = 200, window: int = 10,
+                           excess_window: int = 20) -> dict:
+    """Which way the auction is rotating, and where it has left excess.
+
+    Nine of the Auction sub-agent's twenty points ask about these two, so they are computed rather than
+    left for a judge to infer from three levels. Rotation reads the recent drift against the profile;
+    excess counts bars that traded beyond a value-area edge and closed back inside it."""
+    vp = volume_profile(df, lookback=lookback)
+    if not vp.available:
+        return {"rotation": "unknown", "excess": {"low": 0, "high": 0,
+                                                  "last_low_bars_ago": None, "last_high_bars_ago": None}}
+    close = df["close"].astype(float)
+    price = float(close.iloc[-1])
+    look = min(window, len(close) - 1)
+    drift = price - float(close.iloc[-1 - look]) if look > 0 else 0.0
+    span = (vp.value_area_high or price) - (vp.value_area_low or price)
+    quiet = abs(drift) < max(span * 0.1, price * 0.0005)
+
+    if quiet:
+        rotation = "balanced inside value"
+    elif drift > 0:
+        rotation = ("rotating up towards the point of control" if price < (vp.poc or price)
+                    else "rotating up towards the value area high" if price < (vp.value_area_high or price)
+                    else "rotating up out of value")
+    else:
+        rotation = ("rotating down towards the point of control" if price > (vp.poc or price)
+                    else "rotating down towards the value area low" if price > (vp.value_area_low or price)
+                    else "rotating down out of value")
+
+    tail = df.tail(excess_window)
+    lows, highs, closes = (tail["low"].to_numpy(), tail["high"].to_numpy(), tail["close"].to_numpy())
+    n = len(tail)
+    # Excess means price was rejected, not that a wick grazed the edge: the excursion has to be worth a
+    # quarter of an ATR, otherwise every bar whose range straddles the boundary counts.
+    a = atr(df)
+    atr_v = float(a.iloc[-1]) if len(a) and not np.isnan(a.iloc[-1]) else 0.0
+    reach = max(atr_v * 0.25, span * 0.02)
+    # ...and it has to happen at a local extreme. Without that, a market ranging across the value edge
+    # reports excess on every bar, because each wick pokes through and each close comes back inside.
+    pivot_lows = set(find_pivots(lows, 1, 1, "low"))
+    pivot_highs = set(find_pivots(highs, 1, 1, "high"))
+    low_bars = [i for i in range(n) if i in pivot_lows
+                and (vp.value_area_low - lows[i]) > reach and closes[i] > vp.value_area_low]
+    high_bars = [i for i in range(n) if i in pivot_highs
+                 and (highs[i] - vp.value_area_high) > reach and closes[i] < vp.value_area_high]
+    return {
+        "rotation": rotation,
+        "excess": {
+            "low": len(low_bars), "high": len(high_bars),
+            "last_low_bars_ago": (n - 1 - low_bars[-1]) if low_bars else None,
+            "last_high_bars_ago": (n - 1 - high_bars[-1]) if high_bars else None,
+        },
+    }
+
+
 def oi_changes(history: list[tuple[int, float]], now_ms: int,
                windows: tuple[str, ...] = DEFAULT_WINDOWS) -> dict[str, float | None]:
     """Percent change in open interest over each Live Recon window.
@@ -238,7 +296,8 @@ def summarise(df: pd.DataFrame, oi_history: list[tuple[int, float]], now_ms: int
                            {"available": True, "point_of_control": round(vp.poc, 2),
                             "value_area_high": round(vp.value_area_high, 2),
                             "value_area_low": round(vp.value_area_low, 2),
-                            "price_position": vp.position}),
+                            "price_position": vp.position,
+                            **volume_profile_context(df)}),
         "open_interest": {k: (None if v is None else round(v, 3))
                           for k, v in oi_changes(oi_history, now_ms, windows).items()},
     }

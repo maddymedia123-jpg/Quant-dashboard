@@ -156,3 +156,20 @@ def test_the_estimator_separates_the_three_regimes_across_many_seeds():
     assert abs(walk.mean() - 0.5) < 0.03, walk.mean()
     assert trend.min() > walk.max(), "every trending path must read above every random walk"
     assert revert.max() < walk.min(), "every mean-reverting path must read below every random walk"
+
+
+def test_the_unavailable_note_gives_the_real_reason():
+    """A 500-bar flat series is not short of candles; saying so points the operator at the wrong thing."""
+    m = v.volatility_matrix(frame(np.full(500, 80_000.0)), "1h", None)
+    assert not m.available
+    assert "variance" in m.note.lower() or "flat" in m.note.lower()
+    assert "500" not in m.note
+
+
+def test_one_degenerate_lag_does_not_discard_the_whole_estimate():
+    """A flat stretch inside live data kills one aggregation lag; the remaining lags still answer."""
+    rng = np.random.default_rng(23)
+    live = np.diff(np.log(prices_from(rng.normal(0, 0.004, 700))))
+    padded = np.concatenate([np.zeros(64), live])            # 64 identical bars, then real movement
+    h = v.hurst(80_000.0 * np.exp(np.cumsum(padded)))
+    assert h is not None, "one dead lag must not void the other lags"

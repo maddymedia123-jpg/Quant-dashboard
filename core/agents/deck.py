@@ -46,7 +46,7 @@ def sub_agent_deck(state: dict, profile: ReconProfile | None = None) -> list[Dec
     fut = _get(state, "derivatives", "futures", default={})
     opts = _get(state, "derivatives", "options", default={})
     liqs = _get(state, "derivatives", "liquidations", default={})
-    missing = list(_get(state, "unavailable", default=[]) or [])
+    missing = list(_get(state, "derivatives", "unavailable", default=[]) or [])
 
     def agent(key: str, timeframe: str, rows: list[Row], note: str = "") -> DeckAgent:
         d = DOMAIN_BY_KEY[key]

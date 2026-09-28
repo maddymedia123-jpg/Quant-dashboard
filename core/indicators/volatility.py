@@ -109,7 +109,7 @@ def hurst(closes, min_bars: int = HURST_MIN_BARS) -> float | None:
         agg = cumulative[k:] - cumulative[:-k]
         var = float(np.var(agg, ddof=1))
         if var <= 0:
-            return None
+            continue                         # one dead lag, from a flat stretch: the others still answer
         lags.append(k)
         variances.append(var)
     if len(lags) < 3:
@@ -170,7 +170,11 @@ def volatility_matrix(df: pd.DataFrame, timeframe: str, options=None) -> VolMatr
     bands = sigma_bands(df) or {}
     h = hurst(df["close"].astype(float).to_numpy())
     if bv is None and not bands:
-        return VolMatrix(note=f"needs at least {BAND_WINDOW + 1} {timeframe} candles, has {len(df)}")
+        close = df["close"].astype(float)
+        flat = len(close) > BAND_WINDOW and float(close.std(ddof=0)) == 0
+        note = ("no variance in the series: nothing to measure" if flat else
+                f"needs at least {BAND_WINDOW + 1} {timeframe} candles, has {len(df)}")
+        return VolMatrix(note=note)
 
     a = atr(df)
     atr_v = float(a.iloc[-1]) if len(a) and not np.isnan(a.iloc[-1]) else None

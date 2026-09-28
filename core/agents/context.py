@@ -158,6 +158,14 @@ def derivatives_payload(m: MarketSnapshot) -> tuple[dict, list[str]]:
             data[name] = _dump(snap, **kw)
         else:
             unavailable.append(name)
+    # _dump rounds to four places, which turns a funding rate of 4.9e-05 into 0.0 and makes the
+    # "overheated funding" item unjudgeable. Rates keep the precision the exchange reported: rounding
+    # anything at 1e-5 to a fixed number of decimals throws away significant figures.
+    if "futures" in data:
+        for rate in ("funding_rate", "funding_7d_mean", "predicted_funding_rate"):
+            value = getattr(m.futures, rate, None)
+            if value is not None:
+                data["futures"][rate] = float(value)
     return data, unavailable
 
 

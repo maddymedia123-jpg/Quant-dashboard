@@ -320,3 +320,17 @@ def test_volatility_matrix_panel_explains_what_hurst_means():
     m = _market()
     h = panels.vol_matrix_html({"1h": matrix_summary(m.spot.frames["1h"], "1h", m.options)})
     assert "0.5" in h and ("mean-revert" in h.lower() or "trend" in h.lower())
+
+
+def test_volatility_matrix_row_spans_the_whole_table_when_a_timeframe_is_thin():
+    h = panels.vol_matrix_html({"1w": {"available": False, "note": "no candles"}})
+    header_cells = h.count("<th>")
+    assert f"colspan='{header_cells - 1}'" in h, f"row must fill all {header_cells} columns"
+
+
+def test_a_missing_number_renders_as_a_dash_not_as_a_dash_with_a_unit():
+    partial = {"1h": {"available": True, "realized_vol_pct": None, "implied_vol_pct": None,
+                      "atr_pct": None, "hurst": None, "memory": "unknown", "regime": "UNKNOWN",
+                      "bands": {}, "note": ""}}
+    h = panels.vol_matrix_html(partial)
+    assert "—%" not in h, "a dash carrying a percent sign reads as a measured zero"

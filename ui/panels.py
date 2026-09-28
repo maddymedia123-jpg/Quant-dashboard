@@ -478,6 +478,11 @@ def _dash(v, digits=0, prefix="") -> str:
     return "—" if v is None else fmt_num(v, digits, prefix)
 
 
+def _pct_or_dash(v, digits=1) -> str:
+    """A dash carrying a percent sign reads as a measured zero, so the unit goes only with a number."""
+    return "—" if v is None else f"{fmt_num(v, digits)}%"
+
+
 def smc_html(by_tf: dict) -> str:
     """Structure, order blocks, gaps and premium/discount per timeframe."""
     rows = ""
@@ -579,14 +584,15 @@ def vol_matrix_html(by_tf: dict) -> str:
     bands_line = ""
     for tf, m in by_tf.items():
         if not (m or {}).get("available"):
-            rows += f"<tr><td>{html.escape(tf)}</td><td colspan='5' class='muted'>— not enough candles</td></tr>"
+            rows += (f"<tr><td>{html.escape(tf)}</td><td colspan='6' class='muted'>"
+                     f"— {html.escape(str((m or {}).get('note') or 'not enough candles'))}</td></tr>")
             continue
         prem = m.get("implied_minus_realized_pct")
         rows += (f"<tr><td>{html.escape(tf)}</td>"
-                 f"<td>{_dash(m.get('realized_vol_pct'), 1)}%</td>"
-                 f"<td>{'—' if m.get('implied_vol_pct') is None else _dash(m['implied_vol_pct'], 1) + '%'}</td>"
+                 f"<td>{_pct_or_dash(m.get('realized_vol_pct'), 1)}</td>"
+                 f"<td>{_pct_or_dash(m.get('implied_vol_pct'), 1)}</td>"
                  f"<td>{'—' if prem is None else f'{prem:+.1f} pts'}</td>"
-                 f"<td>{_dash(m.get('atr_pct'), 2)}%</td>"
+                 f"<td>{_pct_or_dash(m.get('atr_pct'), 2)}</td>"
                  f"<td>{_dash(m.get('hurst'), 3)} <span class='muted'>{html.escape(str(m.get('memory', '')))}</span></td>"
                  f"<td>{html.escape(str(m.get('regime', '—')))}</td></tr>")
         b = m.get("bands") or {}

@@ -290,3 +290,30 @@ def test_every_scored_domain_has_evidence_in_the_state(market_and_analyses):
                   "structure", "order_blocks", "pools",         # ict
                   "funding_rate", "open_interest", "max_pain"):  # derivs
         assert token in blob, f"no evidence in the state for {token}"
+
+
+def test_auction_agent_can_answer_every_item_it_is_scored_on(market_and_analyses):
+    """Rotation and excess carry 9 of agent 2's 20 points; without them in the state they score zero."""
+    m, analyses = market_and_analyses
+    vp = lr.build_state(m, analyses)["liquidity"]["1h"]["volume_profile"]
+    assert vp["rotation"] and vp["excess"] is not None
+    assert {"point_of_control", "value_area_high", "value_area_low", "price_position",
+            "rotation", "excess"} <= set(vp)
+
+
+def test_funding_rates_survive_the_trip_to_the_judge(market_and_analyses):
+    """Funding lives at 1e-5. Rounded to four places it becomes 0.0 and "overheated" is unjudgeable."""
+    m, analyses = market_and_analyses
+    fut = lr.build_state(m, analyses)["derivatives"]["futures"]
+    assert fut["funding_rate"] == pytest.approx(m.futures.funding_rate, rel=1e-6)
+    assert fut["funding_7d_mean"] == pytest.approx(m.futures.funding_7d_mean, rel=1e-6)
+    assert fut["funding_7d_mean"] != 0.0
+
+
+def test_unavailable_lists_every_feed_that_failed_not_just_derivatives(market_and_analyses):
+    from core.data.types import SentimentSnapshot
+
+    m, analyses = market_and_analyses
+    blind = m.model_copy(update={"sentiment": SentimentSnapshot.unavailable("alternative.me", "timeout")})
+    state = lr.build_state(blind, analyses)
+    assert "sentiment" in state["unavailable"], "a judge must not read an empty list as all feeds present"
