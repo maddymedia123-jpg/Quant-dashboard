@@ -226,3 +226,27 @@ def test_live_remains_the_default_profile(market_and_analyses):
     m, analyses = market_and_analyses
     st = lr.build_state(m, analyses)
     assert set(st["smc"]) == {"15m", "1h", "4h"} and st["horizon"] == "four hours"
+
+
+# ---- the volatility matrix the spec injects into every desk ----
+def test_state_carries_the_volatility_matrix_per_timeframe(market_and_analyses):
+    m, analyses = market_and_analyses
+    state = lr.build_state(m, analyses)
+    json.dumps(state)
+    assert set(state["volatility"]) == {"15m", "1h", "4h"}
+    for tf, vm in state["volatility"].items():
+        assert vm["available"] is True
+        assert vm["realized_vol_pct"] > 0 and vm["hurst"] is not None
+        assert vm["memory"] in ("trending", "mean-reverting", "random walk")
+        assert vm["bands"]["sigma3_up"] > vm["bands"]["sigma1_up"] > vm["bands"]["mean"]
+    assert state["volatility"]["1h"]["implied_vol_pct"] == pytest.approx(m.options.iv_atm)
+
+
+def test_implied_vol_is_absent_rather_than_invented_when_options_are_down(market_and_analyses):
+    from core.data.types import OptionsSnapshot
+
+    m, analyses = market_and_analyses
+    blind = m.model_copy(update={"options": OptionsSnapshot.unavailable("deribit", "451")})
+    vm = lr.build_state(blind, analyses)["volatility"]["1h"]
+    assert vm["implied_vol_pct"] is None and vm["implied_minus_realized_pct"] is None
+    assert vm["realized_vol_pct"] > 0, "realized vol is ours to compute and still stands"

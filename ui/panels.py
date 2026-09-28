@@ -570,3 +570,35 @@ def accuracy_report_html(rep) -> str:
         body += "<p class='muted'>Accuracy is below the floor but no single protocol stands out yet.</p>"
     body += "<p class='muted'>These are suggestions for a person to review; nothing is changed automatically.</p>"
     return card_html("Accuracy report · calibration needed", body, "warn")
+
+
+# ---------- volatility matrix (spec section 2) ----------
+def vol_matrix_html(by_tf: dict) -> str:
+    """Realized and implied volatility, ATR, the sigma channels and market memory, per timeframe."""
+    rows = ""
+    bands_line = ""
+    for tf, m in by_tf.items():
+        if not (m or {}).get("available"):
+            rows += f"<tr><td>{html.escape(tf)}</td><td colspan='5' class='muted'>— not enough candles</td></tr>"
+            continue
+        prem = m.get("implied_minus_realized_pct")
+        rows += (f"<tr><td>{html.escape(tf)}</td>"
+                 f"<td>{_dash(m.get('realized_vol_pct'), 1)}%</td>"
+                 f"<td>{'—' if m.get('implied_vol_pct') is None else _dash(m['implied_vol_pct'], 1) + '%'}</td>"
+                 f"<td>{'—' if prem is None else f'{prem:+.1f} pts'}</td>"
+                 f"<td>{_dash(m.get('atr_pct'), 2)}%</td>"
+                 f"<td>{_dash(m.get('hurst'), 3)} <span class='muted'>{html.escape(str(m.get('memory', '')))}</span></td>"
+                 f"<td>{html.escape(str(m.get('regime', '—')))}</td></tr>")
+        b = m.get("bands") or {}
+        if not bands_line and b:
+            bands_line = (f"<p>{html.escape(tf)} channel · 1&sigma; {_dash(b.get('sigma1_dn'), 0, '$')}–"
+                          f"{_dash(b.get('sigma1_up'), 0, '$')} · 2&sigma; {_dash(b.get('sigma2_dn'), 0, '$')}–"
+                          f"{_dash(b.get('sigma2_up'), 0, '$')} · 3&sigma; {_dash(b.get('sigma3_dn'), 0, '$')}–"
+                          f"{_dash(b.get('sigma3_up'), 0, '$')}</p>")
+    body = ("<table><thead><tr><th>TF</th><th>Realized</th><th>Implied</th><th>IV − RV</th><th>ATR</th>"
+            f"<th>Hurst</th><th>Regime</th></tr></thead><tbody>{rows}</tbody></table>" + bands_line)
+    body += ("<p class='muted'>Realized volatility is annualised from that timeframe's returns; implied "
+             "comes from Deribit options or shows as — , never from realized. Hurst measures memory: 0.5 "
+             "is a coin-flip walk, above 0.56 trends persist, below 0.44 moves mean-revert; readings "
+             "inside that band are noise.</p>")
+    return card_html("Volatility matrix", body)

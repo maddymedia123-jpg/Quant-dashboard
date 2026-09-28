@@ -48,7 +48,7 @@ from core.config import CATEGORIES, MACRO_EVENTS, TTL
 from core.data.market import assemble, load_context, load_spot
 from core.derived import enrich_futures, record_sample
 from core.indicators.category import analyze_category
-from core.indicators import liquidity, smc
+from core.indicators import liquidity, smc, volatility
 from core.indicators.early_warning import early_warnings
 from core.store import Store
 from core.indicators.trade_map import map_trade
@@ -253,27 +253,30 @@ tabs = st.tabs(tab_labels)
 
 
 @st.cache_data(ttl=TTL["spot"], show_spinner=False)
-def _evidence(timeframes: tuple[str, ...], now_bucket: int) -> tuple[dict, dict]:
-    """SMC and liquidity per timeframe: the same evidence the rubric judges read."""
+def _evidence(timeframes: tuple[str, ...], now_bucket: int) -> tuple[dict, dict, dict]:
+    """SMC, liquidity and the volatility matrix per timeframe: the evidence the rubric judges read."""
     oi = list(getattr(m.futures, "oi_history", []) or [])
-    smc_by_tf, liq_by_tf = {}, {}
+    smc_by_tf, liq_by_tf, vol_by_tf = {}, {}, {}
     for tf in timeframes:
         df = m.spot.frames.get(tf)
         if df is None or df.empty:
-            smc_by_tf[tf] = liq_by_tf[tf] = {"available": False, "note": f"no {tf} candles"}
+            blank = {"available": False, "note": f"no {tf} candles"}
+            smc_by_tf[tf] = liq_by_tf[tf] = vol_by_tf[tf] = blank
             continue
         smc_by_tf[tf] = smc.summarise(df)
         liq_by_tf[tf] = liquidity.summarise(df, oi, now_ms, windows=timeframes)
-    return smc_by_tf, liq_by_tf
+        vol_by_tf[tf] = volatility.matrix_summary(df, tf, m.options)
+    return smc_by_tf, liq_by_tf, vol_by_tf
 
 
 def render_protocols(profile) -> None:
     """The deterministic SMC and liquidity reads, shown rather than left inside the agent prompt."""
     try:
-        smc_by_tf, liq_by_tf = _evidence(profile.timeframes, now_ms // 60000)
+        smc_by_tf, liq_by_tf, vol_by_tf = _evidence(profile.timeframes, now_ms // 60000)
     except Exception as e:  # noqa: BLE001 - a protocol failure must not blank the tab
         st.warning(f"Protocols unavailable this refresh: {e}")
         return
+    panels.render(panels.vol_matrix_html(vol_by_tf))
     panels.render(panels.smc_html(smc_by_tf))
     panels.render(panels.liquidity_html(liq_by_tf))
 

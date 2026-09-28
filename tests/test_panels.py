@@ -293,3 +293,30 @@ def test_accuracy_panel_lists_each_protocol_finding_with_its_fix():
     assert "Accuracy report \u00b7 calibration needed" in h and "ti-card warn" in h
     assert "misread liquidity" in h and "reclaim close" in h and "12 windows" in h
     assert "&lt;b&gt;sweeps" in h, "findings quote model-facing text, so they are escaped"
+
+
+# ---------- volatility matrix panel ----------
+def test_volatility_matrix_panel_shows_each_timeframe_with_its_memory():
+    from core.data.types import OptionsSnapshot
+    from core.indicators.volatility import matrix_summary
+
+    m = _market()
+    by_tf = {tf: matrix_summary(m.spot.frames[tf], tf, m.options) for tf in ("15m", "1h")}
+    h = panels.vol_matrix_html(by_tf)
+    assert "Volatility matrix" in h
+    for tf in ("15m", "1h"):
+        assert f"<td>{tf}</td>" in h
+    assert "Hurst" in h and ("trending" in h or "random walk" in h or "mean-reverting" in h)
+    assert "%" in h and "1&sigma;" in h and "3&sigma;" in h, "the sigma channel must be spelled out"
+
+    blind = {"1h": matrix_summary(m.spot.frames["1h"], "1h", OptionsSnapshot.unavailable("deribit", "x"))}
+    out = panels.vol_matrix_html(blind)
+    assert "—" in out, "implied vol renders as a dash, never as a guess"
+
+
+def test_volatility_matrix_panel_explains_what_hurst_means():
+    from core.indicators.volatility import matrix_summary
+
+    m = _market()
+    h = panels.vol_matrix_html({"1h": matrix_summary(m.spot.frames["1h"], "1h", m.options)})
+    assert "0.5" in h and ("mean-revert" in h.lower() or "trend" in h.lower())
