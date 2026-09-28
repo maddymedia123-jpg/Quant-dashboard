@@ -67,6 +67,18 @@ CREATE TABLE IF NOT EXISTS recon_scores (
     open_price REAL NOT NULL, close_price REAL NOT NULL, move_pct REAL NOT NULL, realised TEXT NOT NULL,
     bias TEXT NOT NULL, direction_hit INTEGER NOT NULL, trap TEXT, trap_hit INTEGER,
     bull_brier REAL, bear_brier REAL, PRIMARY KEY (category, window_open_ms));
+CREATE TABLE IF NOT EXISTS trades (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, opened_ms INTEGER NOT NULL, asset TEXT NOT NULL,
+    side TEXT NOT NULL, entry REAL NOT NULL, stop REAL NOT NULL, given_stop REAL,
+    stop_verdict TEXT NOT NULL, category TEXT NOT NULL, plan TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'open', closed_ms INTEGER, closed_reason TEXT, closed_price REAL,
+    refreshed_ms INTEGER);
+CREATE INDEX IF NOT EXISTS idx_trades_open ON trades (status, opened_ms);
+CREATE TABLE IF NOT EXISTS trade_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, trade_id INTEGER NOT NULL, ts_ms INTEGER NOT NULL,
+    kind TEXT NOT NULL, dedup_key TEXT NOT NULL, headline TEXT NOT NULL, price REAL,
+    notified INTEGER NOT NULL DEFAULT 0);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_trade_events_once ON trade_events (trade_id, dedup_key);
 CREATE TABLE IF NOT EXISTS signals (
     id INTEGER PRIMARY KEY AUTOINCREMENT, ts_ms INTEGER NOT NULL, category TEXT NOT NULL,
     squeeze_score INTEGER, price REAL);
@@ -384,6 +396,101 @@ class Store:
                 (status, price, now_ms, trap_id))
             self._conn.commit()
         return cur.rowcount > 0
+
+
+    # ---------- active trades (spec sections 3 and 4) ----------
+    def open_trade(self, *, opened_ms: int, asset: str, side: str, entry: float, stop: float,
+                   given_stop: float | None, stop_verdict: str, category: str, plan: dict) -> int:
+        """Pin a trade. The plan is written once here and never rewritten, so Refresh cannot quietly
+        change the thesis a trader is holding against."""
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO trades (opened_ms, asset, side, entry, stop, given_stop, stop_verdict, "
+                "category, plan, status) VALUES (?,?,?,?,?,?,?,?,?,'open')",
+                (opened_ms, asset, side, float(entry), float(stop),
+                 None if given_stop is None else float(given_stop), stop_verdict, category,
+                 json.dumps(plan)))
+            self._conn.commit()
+            return int(cur.lastrowid)
+
+    def trades(self, status: str | None = "open", limit: int = 20) -> list[dict]:
+        sql = "SELECT * FROM trades"
+        args: list = []
+        if status:
+            sql += " WHERE status=?"
+            args.append(status)
+        sql += " ORDER BY opened_ms DESC LIMIT ?"
+        args.append(limit)
+        with self._lock:
+            rows = _rows(self._conn.execute(sql, tuple(args)))
+        for r in rows:
+            r["plan"] = json.loads(r["plan"]) if r.get("plan") else {}
+        return rows
+
+    def trade(self, trade_id: int) -> dict | None:
+        with self._lock:
+            r = self._conn.execute("SELECT * FROM trades WHERE id=?", (trade_id,)).fetchone()
+        if not r:
+            return None
+        d = dict(r)
+        d["plan"] = json.loads(d["plan"]) if d.get("plan") else {}
+        return d
+
+    def touch_trade(self, trade_id: int, now_ms: int) -> None:
+        """Record a Refresh. The plan is untouched; only the fact that it was looked at is stored."""
+        with self._lock:
+            self._conn.execute("UPDATE trades SET refreshed_ms=? WHERE id=?", (now_ms, trade_id))
+            self._conn.commit()
+
+    def close_trade(self, trade_id: int, reason: str, price: float | None, now_ms: int) -> bool:
+        """The KILL button, and anything else that ends tracking. Once only, so a rerun cannot re-close
+        a trade and overwrite why it ended."""
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE trades SET status='closed', closed_reason=?, closed_price=?, closed_ms=? "
+                "WHERE id=? AND status='open'", (reason, price, now_ms, trade_id))
+            self._conn.commit()
+        return cur.rowcount > 0
+
+    def add_trade_event(self, trade_id: int, ts_ms: int, kind: str, dedup_key: str, headline: str,
+                        price: float | None) -> int | None:
+        """Log something that happened to a trade, once. Returns the row id, or None if already logged.
+
+        The unique index is what makes an alert fire once rather than on every refresh: the same target
+        being hit is the same event however many times the page reloads."""
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT OR IGNORE INTO trade_events (trade_id, ts_ms, kind, dedup_key, headline, price) "
+                "VALUES (?,?,?,?,?,?)", (trade_id, ts_ms, kind, dedup_key, headline, price))
+            self._conn.commit()
+            return int(cur.lastrowid) if cur.rowcount else None
+
+    def trade_events(self, trade_id: int | None = None, unnotified_only: bool = False,
+                     limit: int = 100) -> list[dict]:
+        sql = "SELECT * FROM trade_events"
+        where, args = [], []
+        if trade_id is not None:
+            where.append("trade_id=?")
+            args.append(trade_id)
+        if unnotified_only:
+            where.append("notified=0")
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY ts_ms DESC LIMIT ?"
+        args.append(limit)
+        with self._lock:
+            return _rows(self._conn.execute(sql, tuple(args)))
+
+    def mark_notified(self, event_ids: list[int]) -> int:
+        """Whatever the dispatcher actually delivered. Nothing is marked until a channel confirms it."""
+        if not event_ids:
+            return 0
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE trade_events SET notified=1 WHERE notified=0 AND id IN (%s)"
+                % ",".join("?" * len(event_ids)), tuple(event_ids))
+            self._conn.commit()
+        return cur.rowcount
 
     def close(self) -> None:
         with self._lock:
