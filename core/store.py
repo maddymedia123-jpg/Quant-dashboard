@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS traps (
     declared_ms INTEGER NOT NULL, score REAL, head_call TEXT, evidence TEXT NOT NULL, notes TEXT,
     status TEXT NOT NULL DEFAULT 'active', resolved_ms INTEGER, resolved_price REAL);
 CREATE INDEX IF NOT EXISTS idx_traps_open ON traps (status, category, level);
+CREATE INDEX IF NOT EXISTS idx_traps_live ON traps (status, side, timeframe, level);
 CREATE TABLE IF NOT EXISTS recon_scores (
     category TEXT NOT NULL, window_open_ms INTEGER NOT NULL, scored_ms INTEGER NOT NULL,
     open_price REAL NOT NULL, close_price REAL NOT NULL, move_pct REAL NOT NULL, realised TEXT NOT NULL,
@@ -319,28 +320,52 @@ class Store:
                  evidence: list[str], notes: list[str] | None = None) -> int:
         """Declare a trap, or return the id of the live one it repeats.
 
-        The same raid is re-detected on every refresh, so a trap is identified by its category, side,
-        timeframe and level rather than by the moment it was seen."""
-        with self._lock:
-            existing = self._conn.execute(
-                "SELECT id FROM traps WHERE status='active' AND category=? AND side=? AND timeframe=? "
-                "AND abs(level - ?) < 0.01", (category, side, timeframe, level)).fetchone()
-            if existing:
-                return int(existing["id"])
-            cur = self._conn.execute(
-                "INSERT INTO traps (category, side, timeframe, level, invalidation, plays_out, declared_ms, "
-                "score, head_call, evidence, notes, status) VALUES (?,?,?,?,?,?,?,?,?,?,?,'active')",
-                (category, side, timeframe, level, invalidation, plays_out, declared_ms, score, head_call,
-                 json.dumps(evidence), json.dumps(notes or [])))
-            self._conn.commit()
-            return int(cur.lastrowid)
+        A trap is a market event, not a desk's opinion of one: the same 4h raid is the same raid whether
+        the Live or the Weekly desk found it, so identity is side, timeframe and level. `category` records
+        which desk declared it, for provenance, and does not take part in the match.
 
-    def traps(self, category: str | None = None, status: str | None = None, limit: int = 100) -> list[dict]:
+        The level is matched on the trap's own scale rather than to the cent. `invalidation` sits half an
+        ATR from `level`, so that distance *is* the volatility of this timeframe; half of it - a quarter
+        ATR - absorbs the drift in a recomputed level while keeping genuinely separate levels apart. This
+        matters on real data: a value-area edge moved $14.79 across five consecutive 1h refreshes, 1,476
+        times the one-cent window this used to allow, so one raid anchored twice.
+
+        The read and the insert share one IMMEDIATE transaction, because the lock above is per-Store and
+        two Store objects on the same file would otherwise both pass the read and both insert."""
+        tolerance = max(abs(invalidation - level) / 2.0, 0.01)
+        with self._lock:
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                existing = self._conn.execute(
+                    "SELECT id FROM traps WHERE status='active' AND side=? AND timeframe=? "
+                    "AND abs(level - ?) <= ?", (side, timeframe, level, tolerance)).fetchone()
+                if existing:
+                    self._conn.commit()
+                    return int(existing["id"])
+                cur = self._conn.execute(
+                    "INSERT INTO traps (category, side, timeframe, level, invalidation, plays_out, "
+                    "declared_ms, score, head_call, evidence, notes, status) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,'active')",
+                    (category, side, timeframe, level, invalidation, plays_out, declared_ms, score,
+                     head_call, json.dumps(evidence), json.dumps(notes or [])))
+                self._conn.commit()
+                return int(cur.lastrowid)
+            except BaseException:
+                self._conn.rollback()
+                raise
+
+    def traps(self, category: str | None = None, status: str | None = None, limit: int = 100,
+              timeframes: tuple[str, ...] | list[str] | None = None) -> list[dict]:
+        """Traps, newest first. `timeframes` is how a desk asks for the traps it can actually see: a 4h
+        trap belongs on every desk that reads the 4h, not only on the one that happened to declare it."""
         sql = "SELECT * FROM traps"
         where, args = [], []
         if category:
             where.append("category=?")
             args.append(category)
+        if timeframes:
+            where.append("timeframe IN (%s)" % ",".join("?" * len(timeframes)))
+            args.extend(timeframes)
         if status:
             where.append("status=?")
             args.append(status)

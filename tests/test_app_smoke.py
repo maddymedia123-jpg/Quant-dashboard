@@ -125,14 +125,20 @@ def test_the_trap_tab_is_present_with_its_console(app):
     assert "Sweep every timeframe for traps" in [b.label for b in app.button]
     markdown = " ".join(m.value for m in app.markdown)
     assert "TRAP intelligence · watchdog" in markdown
-    assert "Nothing anchored" in markdown, "an empty console says so rather than showing nothing"
-    assert "Nothing expires on a timer" in markdown
-    assert not any("Trap ledger unavailable" in w.value or "Trap console unavailable" in w.value
-                   for w in app.warning)
+    # wording distinct from the desks' own "Nothing anchored for the current ... candle yet", which is
+    # rendered once per desk: the old assertion matched that instead and passed with the console's
+    # empty state deleted outright
+    assert markdown.count("No trap is anchored.") == 1, "the empty console says so, once"
+    assert "Nothing expires on a clock" in markdown
+    assert not any("could not be read" in str(e.value) or "could not be drawn" in str(e.value)
+                   for e in app.error)
 
 
-def test_an_anchored_trap_warns_the_desk_it_belongs_to(tmp_path, monkeypatch):
-    """The outbound half of the handshake: the warning shows on that category's tab, not the others."""
+def test_an_anchored_trap_warns_every_desk_that_reads_its_timeframe(tmp_path, monkeypatch):
+    """The outbound half of the handshake, routed by timeframe.
+
+    A 1d trap is one market event, and it belongs on every desk that reads the 1d chart - Intraday,
+    Weekly and Monthly - but not on Live, which reads 15m/1h/4h and cannot see the level."""
     import streamlit as st
 
     monkeypatch.setenv("TI_OFFLINE_FIXTURES", "1")
@@ -152,6 +158,8 @@ def test_an_anchored_trap_warns_the_desk_it_belongs_to(tmp_path, monkeypatch):
     at = pytest.importorskip("streamlit.testing.v1").AppTest.from_file(APP, default_timeout=180).run()
     assert not at.exception, [e.value for e in at.exception]
     markdown = " ".join(m.value for m in at.markdown)
-    assert markdown.count("TRAP warning") == 1, "one desk is affected, not all four"
+    assert markdown.count("TRAP warning") == 3, "the three desks that read the 1d, and not Live"
     assert "1d at $78,600" in markdown and "invalidated at $78,900" in markdown.lower()
     assert "Anchored bull trap" in markdown, "and it appears in the console too"
+    assert "buyside liquidity swept and reclaimed" in markdown, "the card carries its own evidence"
+    assert "sub-agents 72/100" in markdown, "and the score that declared it"

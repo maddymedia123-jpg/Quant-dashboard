@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import html
+import json
 
 import streamlit as st
 
@@ -643,80 +644,131 @@ def agent_matrix_html(deck) -> str:
 
 # ---------- TRAP intelligence console (spec section 1) ----------
 TRAP_LABEL = {"bull_trap": "bull trap", "bear_trap": "bear trap"}
+TRAP_SIDES = ("bull_trap", "bear_trap")
 
 
-def _trap_age(ms: int, now_ms: int) -> str:
-    mins = max(0, (now_ms - ms) // 60000)
+def _trap_side(row) -> tuple[str, str]:
+    """The side as stored and as written. An unrecognised side is named as unknown rather than described
+    as a bear trap by falling through a `== "bull_trap"` branch, and never printed as the word None."""
+    raw = row.get("side") if isinstance(row, dict) else getattr(row, "side", None)
+    if raw in TRAP_SIDES:
+        return raw, TRAP_LABEL[raw]
+    return "", (str(raw) if raw else "trap of unknown side")
+
+
+def _trap_age(ms, now_ms: int) -> str:
+    """How long ago, or a dash. `.get(key, default)` returns the default only when the key is absent, so
+    a stored NULL arrived here as None and raised - which the caller then reported as a missing trap."""
+    if ms is None or now_ms is None:
+        return "—"
+    try:
+        mins = max(0, (int(now_ms) - int(ms)) // 60000)
+    except (TypeError, ValueError):
+        return "—"
     return f"{mins // 1440}d {(mins % 1440) // 60}h" if mins >= 1440 else f"{mins // 60}h {mins % 60:02d}m"
+
+
+def _evidence_list(raw) -> list[str]:
+    """Evidence as stored (a JSON string) or already decoded. A trap card without its evidence would
+    assert a trap with nothing behind it, so a blob that will not parse says so instead of going quiet."""
+    if not raw:
+        return []
+    if isinstance(raw, (list, tuple)):
+        return [str(e) for e in raw]
+    try:
+        parsed = json.loads(raw)
+    except (ValueError, TypeError):
+        return ["(the stored evidence for this trap could not be read)"]
+    if isinstance(parsed, (list, tuple)):
+        return [str(e) for e in parsed]
+    return [str(parsed)]
 
 
 def trap_card_html(row: dict, now_ms: int, category_label: str = "") -> str:
     """One anchored trap: what it is, the level it is built on, and what settles it."""
-    import json as _json
-
-    side = TRAP_LABEL.get(row.get("side"), str(row.get("side")))
+    side_key, side = _trap_side(row)
     tone = "warn" if row.get("status") == "active" else "neutral"
     head = (f"<p><span class='ti-chip warn'>{html.escape(side)}</span> "
-            f"<strong>{html.escape(row.get('timeframe', ''))} at {fmt_num(row.get('level'), 0, '$')}</strong>")
+            f"<strong>{html.escape(str(row.get('timeframe') or '—'))} at "
+            f"{fmt_num(row.get('level'), 0, '$')}</strong>")
     if category_label:
-        head += f" <span class='muted'>· {html.escape(category_label)} desk</span>"
-    head += (f" <span class='muted'>· declared {_trap_age(row.get('declared_ms', now_ms), now_ms)} ago"
-             f" · sub-agents {float(row.get('score') or 0):.0f}/100</span></p>")
+        head += f" <span class='muted'>· declared by the {html.escape(category_label)} desk</span>"
+    # a dash means the score was never recorded, not that the sub-agents scored it zero
+    score = row.get("score")
+    head += (f" <span class='muted'>· declared {_trap_age(row.get('declared_ms'), now_ms)} ago"
+             f" · sub-agents {fmt_num(score, 0) if score is not None else '—'}/100</span></p>")
     body = head
-    body += (f"<p>Invalidated above {fmt_num(row.get('invalidation'), 0, '$')}"
-             if row.get("side") == "bull_trap" else
-             f"<p>Invalidated below {fmt_num(row.get('invalidation'), 0, '$')}")
+    if side_key == "bull_trap":
+        body += f"<p>Invalidated above {fmt_num(row.get('invalidation'), 0, '$')}"
+    elif side_key == "bear_trap":
+        body += f"<p>Invalidated below {fmt_num(row.get('invalidation'), 0, '$')}"
+    else:
+        body += f"<p>Invalidated at {fmt_num(row.get('invalidation'), 0, '$')}"
     body += f" · pays off back at {fmt_num(row.get('plays_out'), 0, '$')}</p>"
-    try:
-        evidence = _json.loads(row.get("evidence") or "[]")
-    except ValueError:
-        evidence = []
-    body += _li([str(e) for e in evidence])
+    body += _li(_evidence_list(row.get("evidence")))
     if row.get("status") != "active":
-        body += (f"<p class='muted'>{html.escape(str(row.get('status')).replace('_', ' '))} at "
+        body += (f"<p class='muted'>{html.escape(str(row.get('status') or 'unknown').replace('_', ' '))} at "
                  f"{fmt_num(row.get('resolved_price'), 0, '$')}</p>")
     return card_html(f"Anchored {side}", body, tone)
 
 
-def trap_console_html(rows: list[dict], candidates: list, now_ms: int, labels: dict | None = None) -> str:
-    """The watchdog console: what is anchored, and what is being watched but not declared."""
+def trap_console_html(rows: list[dict], candidates: list, now_ms: int, labels: dict | None = None,
+                      settled: list[dict] | None = None, swept_ms: int | None = None) -> str:
+    """The watchdog console: what is anchored, and what is being watched but not declared.
+
+    `rows` are the anchored traps and `settled` the recently closed ones, queried separately so newer
+    settled traps cannot push the live ones out of sight. The watch list is dated: candidates live in
+    session state and survive every auto-refresh, so an undated one read as current long after the scan
+    that found it."""
     labels = labels or {}
+    settled = settled or []
     active = [r for r in rows if r.get("status") == "active"]
-    settled = [r for r in rows if r.get("status") != "active"][:6]
     body = (f"<p><strong>{len(active)} anchored</strong> · {len(candidates)} candidate(s) on watch · "
             f"{len(settled)} recently settled</p>")
     if not active:
-        body += ("<p class='muted'>Nothing anchored. A trap is declared only when its five sub-agents "
+        body += ("<p class='muted'>No trap is anchored. A trap is declared only when its five sub-agents "
                  "score 60 or more, the TRAP Head calls it engineered, and the category desk does not read "
                  "the move as an authentic break.</p>")
     if candidates:
-        body += "<p>On watch, from the deterministic scan:</p><ul>"
+        age = _trap_age(swept_ms, now_ms)
+        body += (f"<p>On watch, from the deterministic scan of {age} ago:</p><ul>"
+                 if swept_ms else "<p>On watch, from the deterministic scan:</p><ul>")
         for c in candidates[:6]:
-            body += (f"<li>{html.escape(TRAP_LABEL.get(c.side, c.side))} · {html.escape(c.timeframe)} at "
+            _key, label = _trap_side(c)
+            body += (f"<li>{html.escape(label)} · {html.escape(str(c.timeframe))} at "
                      f"{fmt_num(c.level, 0, '$')} · {c.strength} factors: "
                      f"{html.escape('; '.join(c.evidence[:2]))}</li>")
         body += "</ul>"
+        if swept_ms and (now_ms - swept_ms) > 30 * 60_000:
+            body += ("<p class='muted'>That scan is over half an hour old. Sweep again before trading "
+                     "from it - these levels were measured against a price that has since moved.</p>")
     if settled:
-        body += "<p class='muted'>Recently settled: " + ", ".join(
-            f"{TRAP_LABEL.get(r['side'], r['side'])} {r['timeframe']} "
-            f"{str(r['status']).replace('_', ' ')}" for r in settled) + "</p>"
-    body += ("<p class='muted'>Traps stay anchored to their desk until price settles them: invalidated "
-             "when the break proves real, played out when price returns inside value. Nothing expires on "
-             "a timer.</p>")
+        parts = []
+        for r in settled:
+            _key, label = _trap_side(r)
+            desk = labels.get(r.get("category"), r.get("category") or "")
+            parts.append(f"{label} {r.get('timeframe') or '?'} "
+                         f"{str(r.get('status') or '').replace('_', ' ')}"
+                         + (f" ({desk})" if desk else ""))
+        body += "<p class='muted'>Recently settled: " + html.escape(", ".join(parts)) + "</p>"
+    body += ("<p class='muted'>Traps stay anchored until price settles them: invalidated when the break "
+             "proves real, played out when price returns inside value. Nothing expires on a clock.</p>")
     return card_html("TRAP intelligence · watchdog", body, "warn" if active else "neutral")
 
 
 def trap_warning_html(rows: list[dict], now_ms: int) -> str | None:
-    """The outbound half of the handshake, on the desk that is affected."""
+    """The outbound half of the handshake, on every desk that reads the trap's timeframe."""
     active = [r for r in rows if r.get("status") == "active"]
     if not active:
         return None
     body = ""
     for r in active[:3]:
-        side = TRAP_LABEL.get(r.get("side"), str(r.get("side")))
+        side_key, side = _trap_side(r)
         body += (f"<p><span class='ti-chip warn'>{html.escape(side)}</span> "
-                 f"{html.escape(r.get('timeframe', ''))} at {fmt_num(r.get('level'), 0, '$')} · "
+                 f"{html.escape(str(r.get('timeframe') or '—'))} at {fmt_num(r.get('level'), 0, '$')} · "
                  f"invalidated at {fmt_num(r.get('invalidation'), 0, '$')} · "
-                 f"declared {_trap_age(r.get('declared_ms', now_ms), now_ms)} ago</p>")
+                 f"declared {_trap_age(r.get('declared_ms'), now_ms)} ago</p>")
+    if len(active) > 3:
+        body += f"<p class='muted'>and {len(active) - 3} more on this desk's timeframes.</p>"
     body += "<p class='muted'>From the TRAP desk. It stays here until price settles it.</p>"
     return card_html("TRAP warning", body, "warn")

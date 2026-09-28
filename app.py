@@ -74,7 +74,7 @@ def _context():
 # Streamlit Cloud reloads the script on deploy but keeps cached resources, so a Store built from the
 # previous revision survives and is missing whatever that revision did not have. Keying the cache on a
 # version makes a deploy that changes core.store hand back a fresh Store instead of a stale one.
-STORE_VERSION = 5   # bump whenever core.store gains tables or methods
+STORE_VERSION = 6   # bump whenever core.store gains tables or methods, or changes how it matches rows
 
 
 @st.cache_resource(show_spinner=False)
@@ -83,12 +83,25 @@ def _store(version: int = STORE_VERSION):
 
 
 def _live_store():
-    """A Store that definitely understands the current schema, even behind a stale cache."""
-    s = _store()
+    """A Store that definitely understands the current schema, even behind a stale cache.
+
+    The version has to be passed, not defaulted: Streamlit hashes the arguments a call actually makes, so
+    `_store()` produced a cache key that never mentioned STORE_VERSION and a bump changed nothing. The
+    hasattr probe stays as a second line of defence for a revision that forgets to bump."""
+    s = _store(STORE_VERSION)
     if not hasattr(s, "put_trap"):             # cached from an older revision
-        _store.clear()
-        s = _store()
+        _drop_store(s)
+        s = _store(STORE_VERSION)
     return s
+
+
+def _drop_store(s) -> None:
+    """Close the connection before dropping the cache entry, or each deploy leaks an open sqlite file."""
+    try:
+        s.close()
+    except Exception:  # noqa: BLE001 - a store we are throwing away must not break the page
+        pass
+    _store.clear()
 
 
 # ---------- sidebar ----------
@@ -171,40 +184,76 @@ def _macro_event_now(m, now_ms: int, profile=LIVE) -> str | None:
     return due[0].get("title") if due else None
 
 
-def run_trap_sweep() -> None:
-    """Scan every desk for trap shapes, then judge the strongest candidate on each.
+def sweep_plan() -> list[tuple[str, str]]:
+    """Which desk judges which timeframe, so a trap is scanned once rather than once per desk.
 
-    The scan is free arithmetic; only the strongest candidate per desk is sent to the agents, which keeps
-    a sweep at two requests per desk that has one rather than two per shape found."""
-    results = []
+    The feed stops at the weekly candle, so four desks cannot have four distinct three-timeframe windows:
+    Weekly and Monthly read exactly the same candles. Scanning per desk therefore found the same shape
+    twice, paid for two judgements of it, and anchored two rows for one raid. A timeframe belongs to the
+    first desk that reads it - the shortest horizon that can see the level, and so the desk that will act
+    on it soonest - which gives 15m/1h/4h to Live, 1d to Intraday and 1w to Weekly. Monthly owns nothing
+    of its own; it still shows every trap on the timeframes it reads."""
+    plan, claimed = [], set()
+    for cat, profile in PROFILES.items():
+        for tf in profile.timeframes:
+            if tf not in claimed:
+                claimed.add(tf)
+                plan.append((cat, tf))
+    return plan
+
+
+def run_trap_sweep() -> None:
+    """Scan every timeframe once, then judge the strongest candidate on each desk that owns one.
+
+    The scan is free arithmetic; only the strongest candidate per owning desk goes to the agents. Each
+    desk's result is committed to session state as it completes, so a failure part-way through keeps the
+    desks that already succeeded - their traps are in the database by then either way."""
+    run_ms = int(time.time() * 1000)          # not the page-load time: the judgements take round-trips
+    results: list[dict] = []
+    st.session_state["trap_sweep"] = {"at": run_ms, "results": results, "complete": False}
+    plan = sweep_plan()
     with st.status("TRAP desk: sweeping every timeframe...", expanded=False) as status:
         try:
             judge = Judge(settings, typesafe_key=settings.typesafe_key, llm=LLMClient(settings))
-            price = m.spot.last
-            for cat, profile in PROFILES.items():
-                state = _desk_state(cat, now_ms // 60000)
-                candidates = find_candidates(state, profile.timeframes)
+            for cat, timeframes in _grouped(plan):
+                profile = PROFILES[cat]
+                state = _desk_state(cat, _data_stamp())
+                price = m.spot.last
+                candidates = find_candidates(state, timeframes)
+                entry = {"category": cat, "timeframes": timeframes, "candidates": candidates,
+                         "verdict": None}
+                results.append(entry)
                 if not candidates:
-                    results.append({"category": cat, "candidates": [], "verdict": None})
                     continue
                 verdict = asyncio.run(judge_candidate(judge, state, candidates[0], profile))
-                trap_id = record(store, verdict, cat, now_ms)
+                entry["verdict"] = verdict
+                trap_id = record(store, verdict, cat, int(time.time() * 1000))
                 if trap_id is not None:
                     c = verdict.candidate
                     store.add_side_note(
-                        profile.window_open(now_ms), now_ms, "TRAP",
-                        f"trap:{c.side}:{c.level:.0f}",
+                        profile.window_open(run_ms), run_ms, "TRAP", f"trap:{trap_id}",
                         f"TRAP desk: {c.label} anchored at {c.level:,.0f} on the {c.timeframe} chart.",
                         f"Invalidated at {c.invalidation:,.0f}; pays off at {c.plays_out:,.0f}. "
                         + "; ".join(c.evidence), price, category=cat)
-                results.append({"category": cat, "candidates": candidates, "verdict": verdict})
             declared = sum(1 for r in results if r["verdict"] is not None and r["verdict"].declared)
             watching = sum(len(r["candidates"]) for r in results)
-            st.session_state["trap_sweep"] = {"at": now_ms, "results": results}
+            st.session_state["trap_sweep"]["complete"] = True
             status.update(label=f"Sweep complete - {declared} declared, {watching} candidate(s) on watch",
                           state="complete")
         except Exception as e:  # noqa: BLE001 - a sweep failure must not crash the page
-            status.update(label=f"Trap sweep failed: {e}", state="error")
+            done = sum(1 for r in results if r["verdict"] is not None)
+            status.update(label=f"Trap sweep failed after {done} desk(s): {type(e).__name__}: {e}",
+                          state="error")
+            st.error(f"The trap sweep stopped after {done} desk(s): {e}. Any trap already declared is "
+                     "in the ledger below; the desks that did not run are missing from it.")
+
+
+def _grouped(plan: list[tuple[str, str]]) -> list[tuple[str, tuple[str, ...]]]:
+    """The plan as one entry per desk, so each desk's state is built and judged once."""
+    out: dict[str, list[str]] = {}
+    for cat, tf in plan:
+        out.setdefault(cat, []).append(tf)
+    return [(cat, tuple(tfs)) for cat, tfs in out.items()]
 
 
 def run_war_room(profile) -> None:
@@ -277,8 +326,14 @@ try:
         for _t in _settled:
             log_line = f"{_t['side']} {_t['timeframe']} {_t['status'].replace('_', ' ')}"
             st.sidebar.caption(f"TRAP: {log_line}")
+    elif store.traps(status="active", limit=1):
+        # silence here would leave anchored traps rendering as live with no hint that nothing is
+        # checking them against price any more
+        st.warning("No price this refresh, so anchored traps were not checked for settlement. "
+                   "The levels below are as of the last successful refresh.")
 except Exception as e:  # noqa: BLE001 - trap bookkeeping must never blank the page
-    st.warning(f"Trap ledger unavailable this refresh: {e}")
+    st.warning(f"Anchored traps could not be checked against price this refresh ({e}); "
+               "they may already have been invalidated or paid off.")
 
 # score every war-room window whose candle has closed, once, against the price at that close
 try:
@@ -302,26 +357,51 @@ tab_labels = [c.label for c in CATEGORIES.values()] + ["TRAP Intelligence", "Act
 tabs = st.tabs(tab_labels)
 
 
+def _data_stamp() -> str:
+    """A fingerprint of the snapshot this run is rendering.
+
+    `_desk_state` reads module globals that are rebound on every script run, so keying its cache on the
+    clock alone handed back a state built from an older snapshot: after a manual Refresh the header
+    showed the new price while the volatility, structure and liquidity panels - and the trap scan -
+    still read the old one. Keying on the data means the cache follows the snapshot, not the minute."""
+    last = getattr(m.spot, "last", None)
+    stamps = [str(last)]
+    for tf in ("15m", "1h", "4h", "1d", "1w"):
+        df = m.spot.frames.get(tf)
+        stamps.append(str(int(df["timestamp"].iloc[-1])) if df is not None and not df.empty else "-")
+    return "|".join(stamps)
+
+
 @st.cache_data(ttl=TTL["spot"], show_spinner=False)
-def _desk_state(category: str, now_bucket: int) -> dict:
+def _desk_state(category: str, data_stamp: str) -> dict:
     """The very state the desk's judges are handed, so the screen and the scorecard cannot drift
-    apart. Cached per desk per minute; a war-room run builds its own state at the moment it runs."""
+    apart. Cached per desk per snapshot; a war-room run builds its own state at the moment it runs."""
     return build_state(m, analyses, now_ms, PROFILES[category])
 
 
 def render_protocols(profile) -> None:
     """The deterministic reads - volatility, structure, liquidity - and each sub-agent's own deck."""
     try:
-        state = _desk_state(profile.category, now_ms // 60000)
+        state = _desk_state(profile.category, _data_stamp())
     except Exception as e:  # noqa: BLE001 - a protocol failure must not blank the tab
         st.warning(f"Protocols unavailable this refresh: {e}")
         return
+    # every trap on a timeframe this desk reads, not only the ones it declared itself
     try:
-        warning = panels.trap_warning_html(store.traps(category=profile.category, status="active"), now_ms)
-        if warning:
-            panels.render(warning)
-    except Exception as e:  # noqa: BLE001 - the warning must never blank the tab
-        st.warning(f"Trap warnings unavailable: {e}")
+        rows = store.traps(timeframes=profile.timeframes, status="active")
+    except Exception as e:  # noqa: BLE001 - the ledger must not blank the tab
+        rows = []
+        st.warning(f"Trap ledger unavailable: {e}")
+    if rows:
+        # rendered outside the query's guard: a warning that vanishes silently is worse than none, so a
+        # row that will not render is reported as a broken row rather than as no trap at all
+        try:
+            warning = panels.trap_warning_html(rows, now_ms)
+            if warning:
+                panels.render(warning)
+        except Exception as e:  # noqa: BLE001
+            st.error(f"{len(rows)} trap(s) are anchored on this desk but could not be drawn "
+                     f"({type(e).__name__}: {e}). Treat the levels as live and check the TRAP tab.")
     panels.render(panels.vol_matrix_html(state.get("volatility", {})))
     panels.render(panels.smc_html(state.get("smc", {})))
     panels.render(panels.liquidity_html(state.get("liquidity", {})))
@@ -419,21 +499,40 @@ with tabs[4]:
     st.caption("Ten trap sub-agents across the five domains, a Head that consults the affected desk, and "
                "traps anchored to that desk until price settles them.")
     if st.button("Sweep every timeframe for traps", key="trap_sweep_btn", disabled=settings is None,
-                 help="Deterministic scan on all four desks; the strongest candidate on each goes to the agents."):
+                 help="Deterministic scan of every timeframe once; the strongest candidate on each "
+                      "owning desk goes to the agents."):
+        # deliberately no st.rerun(): it discards the status box, so a sweep that failed on desk three
+        # came back looking exactly like a page that had done nothing. The console below renders from
+        # session state in this same run.
         run_trap_sweep()
-        st.rerun()
 
     sweep = st.session_state.get("trap_sweep")
     try:
-        all_traps = store.traps(limit=50)
-        watching = [c for r in (sweep or {}).get("results", []) for c in r["candidates"]]
-        panels.render(panels.trap_console_html(all_traps, watching, now_ms,
-                                               {k: c.label for k, c in CATEGORIES.items()}))
-        for row in all_traps[:8]:
+        # anchored traps are what a trader acts on, so they are never pushed off the list by newer
+        # settled ones: the two are queried separately rather than sliced out of one ordered list
+        active = store.traps(status="active", limit=25)
+        settled = [r for r in store.traps(limit=50) if r.get("status") != "active"][:6]
+    except Exception as e:  # noqa: BLE001 - never crash the tab on ledger trouble
+        active, settled = [], []
+        st.error(f"The trap ledger could not be read ({type(e).__name__}: {e}). "
+                 "Anchored traps are not shown below; do not read this as 'no traps'.")
+
+    watching = [c for r in (sweep or {}).get("results", []) for c in r["candidates"]]
+    try:
+        panels.render(panels.trap_console_html(active, watching, now_ms,
+                                              {k: c.label for k, c in CATEGORIES.items()},
+                                              settled=settled, swept_ms=(sweep or {}).get("at")))
+    except Exception as e:  # noqa: BLE001
+        st.error(f"{len(active)} anchored trap(s) exist but the console could not be drawn "
+                 f"({type(e).__name__}: {e}).")
+    for row in active + settled:
+        # per row, so one malformed trap cannot take the others off the screen with it
+        try:
             label = CATEGORIES[row["category"]].label if row["category"] in CATEGORIES else row["category"]
             panels.render(panels.trap_card_html(row, now_ms, label))
-    except Exception as e:  # noqa: BLE001 - never crash the tab on ledger trouble
-        st.warning(f"Trap console unavailable: {e}")
+        except Exception as e:  # noqa: BLE001
+            st.warning(f"Trap #{row.get('id', '?')} ({row.get('side', 'unknown')} on "
+                       f"{row.get('timeframe', '?')}) could not be drawn: {type(e).__name__}: {e}")
 
     if sweep:
         for r in sweep["results"]:
