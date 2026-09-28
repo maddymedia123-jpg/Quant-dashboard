@@ -41,6 +41,8 @@ from core.agents.runner import run_pipeline_sync
 from core.agents.settings import load_settings
 from core.agents.judge import Judge
 from core.agents.deck import sub_agent_deck
+from core.agents.trap_desk import judge_candidate, record, settle
+from core.traps import find_candidates
 from core.agents.live_recon import build_state, run_live_recon
 from core.agents.recon_profiles import LIVE, PROFILES
 from core.anchors import anchor_step
@@ -72,7 +74,7 @@ def _context():
 # Streamlit Cloud reloads the script on deploy but keeps cached resources, so a Store built from the
 # previous revision survives and is missing whatever that revision did not have. Keying the cache on a
 # version makes a deploy that changes core.store hand back a fresh Store instead of a stale one.
-STORE_VERSION = 4   # bump whenever core.store gains tables or methods
+STORE_VERSION = 5   # bump whenever core.store gains tables or methods
 
 
 @st.cache_resource(show_spinner=False)
@@ -83,7 +85,7 @@ def _store(version: int = STORE_VERSION):
 def _live_store():
     """A Store that definitely understands the current schema, even behind a stale cache."""
     s = _store()
-    if not hasattr(s, "scored_windows"):        # cached from an older revision
+    if not hasattr(s, "put_trap"):             # cached from an older revision
         _store.clear()
         s = _store()
     return s
@@ -169,6 +171,42 @@ def _macro_event_now(m, now_ms: int, profile=LIVE) -> str | None:
     return due[0].get("title") if due else None
 
 
+def run_trap_sweep() -> None:
+    """Scan every desk for trap shapes, then judge the strongest candidate on each.
+
+    The scan is free arithmetic; only the strongest candidate per desk is sent to the agents, which keeps
+    a sweep at two requests per desk that has one rather than two per shape found."""
+    results = []
+    with st.status("TRAP desk: sweeping every timeframe...", expanded=False) as status:
+        try:
+            judge = Judge(settings, typesafe_key=settings.typesafe_key, llm=LLMClient(settings))
+            price = m.spot.last
+            for cat, profile in PROFILES.items():
+                state = _desk_state(cat, now_ms // 60000)
+                candidates = find_candidates(state, profile.timeframes)
+                if not candidates:
+                    results.append({"category": cat, "candidates": [], "verdict": None})
+                    continue
+                verdict = asyncio.run(judge_candidate(judge, state, candidates[0], profile))
+                trap_id = record(store, verdict, cat, now_ms)
+                if trap_id is not None:
+                    c = verdict.candidate
+                    store.add_side_note(
+                        profile.window_open(now_ms), now_ms, "TRAP",
+                        f"trap:{c.side}:{c.level:.0f}",
+                        f"TRAP desk: {c.label} anchored at {c.level:,.0f} on the {c.timeframe} chart.",
+                        f"Invalidated at {c.invalidation:,.0f}; pays off at {c.plays_out:,.0f}. "
+                        + "; ".join(c.evidence), price, category=cat)
+                results.append({"category": cat, "candidates": candidates, "verdict": verdict})
+            declared = sum(1 for r in results if r["verdict"] is not None and r["verdict"].declared)
+            watching = sum(len(r["candidates"]) for r in results)
+            st.session_state["trap_sweep"] = {"at": now_ms, "results": results}
+            status.update(label=f"Sweep complete - {declared} declared, {watching} candidate(s) on watch",
+                          state="complete")
+        except Exception as e:  # noqa: BLE001 - a sweep failure must not crash the page
+            status.update(label=f"Trap sweep failed: {e}", state="error")
+
+
 def run_war_room(profile) -> None:
     """Both teams and the trap audit for one category, then anchor or append side notes."""
     with st.status(f"{profile.label} war room: both teams and the trap audit...", expanded=False) as status:
@@ -230,6 +268,18 @@ try:
 except Exception as e:  # noqa: BLE001 - ledger problems must never blank the page
     st.warning(f"Ledger unavailable this refresh: {e}")
 
+# settle anchored traps the price has now answered, before anything is rendered
+st.session_state.setdefault("trap_sweep", None)
+try:
+    _px = m.spot.last or (next(iter(analyses.values())).price if analyses else None)
+    if _px:
+        _settled = settle(store, float(_px), now_ms)
+        for _t in _settled:
+            log_line = f"{_t['side']} {_t['timeframe']} {_t['status'].replace('_', ' ')}"
+            st.sidebar.caption(f"TRAP: {log_line}")
+except Exception as e:  # noqa: BLE001 - trap bookkeeping must never blank the page
+    st.warning(f"Trap ledger unavailable this refresh: {e}")
+
 # score every war-room window whose candle has closed, once, against the price at that close
 try:
     for _profile in PROFILES.values():
@@ -248,7 +298,7 @@ st.markdown("<p class='ti-title'>BTC / USD · Trap Intelligence Terminal</p>"
 if not m.spot.available:
     st.error(f"Spot data unavailable from {m.spot.source}: {m.spot.error}. Nothing to analyse.")
 
-tab_labels = [c.label for c in CATEGORIES.values()] + ["Active Trade", "War Room"]
+tab_labels = [c.label for c in CATEGORIES.values()] + ["TRAP Intelligence", "Active Trade", "War Room"]
 tabs = st.tabs(tab_labels)
 
 
@@ -266,6 +316,12 @@ def render_protocols(profile) -> None:
     except Exception as e:  # noqa: BLE001 - a protocol failure must not blank the tab
         st.warning(f"Protocols unavailable this refresh: {e}")
         return
+    try:
+        warning = panels.trap_warning_html(store.traps(category=profile.category, status="active"), now_ms)
+        if warning:
+            panels.render(warning)
+    except Exception as e:  # noqa: BLE001 - the warning must never blank the tab
+        st.warning(f"Trap warnings unavailable: {e}")
     panels.render(panels.vol_matrix_html(state.get("volatility", {})))
     panels.render(panels.smc_html(state.get("smc", {})))
     panels.render(panels.liquidity_html(state.get("liquidity", {})))
@@ -357,8 +413,46 @@ def category_tab(tab, key):
 for tab, key in zip(tabs[:4], CATEGORIES.keys()):
     category_tab(tab, key)
 
-# ---------- active trade ----------
+# ---------- TRAP intelligence ----------
 with tabs[4]:
+    st.markdown("### TRAP intelligence")
+    st.caption("Ten trap sub-agents across the five domains, a Head that consults the affected desk, and "
+               "traps anchored to that desk until price settles them.")
+    if st.button("Sweep every timeframe for traps", key="trap_sweep_btn", disabled=settings is None,
+                 help="Deterministic scan on all four desks; the strongest candidate on each goes to the agents."):
+        run_trap_sweep()
+        st.rerun()
+
+    sweep = st.session_state.get("trap_sweep")
+    try:
+        all_traps = store.traps(limit=50)
+        watching = [c for r in (sweep or {}).get("results", []) for c in r["candidates"]]
+        panels.render(panels.trap_console_html(all_traps, watching, now_ms,
+                                               {k: c.label for k, c in CATEGORIES.items()}))
+        for row in all_traps[:8]:
+            label = CATEGORIES[row["category"]].label if row["category"] in CATEGORIES else row["category"]
+            panels.render(panels.trap_card_html(row, now_ms, label))
+    except Exception as e:  # noqa: BLE001 - never crash the tab on ledger trouble
+        st.warning(f"Trap console unavailable: {e}")
+
+    if sweep:
+        for r in sweep["results"]:
+            v = r["verdict"]
+            if v is None:
+                continue
+            with st.expander(f"{CATEGORIES[r['category']].label} · {v.candidate.label} on "
+                             f"{v.candidate.timeframe} · {v.score:.0f}/100 · {v.status}", expanded=False):
+                st.markdown(f"**Head call:** {v.head_call or '—'}"
+                            + (f" ({v.head_confidence:.0%} confidence)" if v.head_confidence else "")
+                            + f"  \n**Desk says:** {v.desk.reads}")
+                if v.desk.reasons:
+                    st.markdown("  \n".join(f"- {x}" for x in v.desk.reasons))
+                st.markdown("  \n".join(f"- {d.title}: {d.points:.0f}/20" for d in v.domains))
+                if v.notes:
+                    st.caption(" · ".join(v.notes))
+
+# ---------- active trade ----------
+with tabs[5]:
     live, intraday = analyses.get("live"), analyses.get("intraday")
     spot = m.spot.last or (live.price if live else 0.0)
     with st.form("trade"):
@@ -376,7 +470,7 @@ with tabs[4]:
         st.caption("Enter the position and run the stress-test. Structures come from the 15m and 1h EMAs and swing levels.")
 
 # ---------- war room ----------
-with tabs[5]:
+with tabs[6]:
     if report is not None:
         panels.render(panels.report_stats_html(report))
         md = to_markdown(report)

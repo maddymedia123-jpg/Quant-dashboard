@@ -118,3 +118,40 @@ def test_every_tab_shows_its_sub_agent_deck(app):
                     "Funding 7d mean", "Longs liquidated 24h"):
         assert markdown.count(reading) == 4, reading
     assert "A dash means no feed, not zero." in markdown
+
+
+def test_the_trap_tab_is_present_with_its_console(app):
+    assert not app.exception, [e.value for e in app.exception]
+    assert "Sweep every timeframe for traps" in [b.label for b in app.button]
+    markdown = " ".join(m.value for m in app.markdown)
+    assert "TRAP intelligence · watchdog" in markdown
+    assert "Nothing anchored" in markdown, "an empty console says so rather than showing nothing"
+    assert "Nothing expires on a timer" in markdown
+    assert not any("Trap ledger unavailable" in w.value or "Trap console unavailable" in w.value
+                   for w in app.warning)
+
+
+def test_an_anchored_trap_warns_the_desk_it_belongs_to(tmp_path, monkeypatch):
+    """The outbound half of the handshake: the warning shows on that category's tab, not the others."""
+    import streamlit as st
+
+    monkeypatch.setenv("TI_OFFLINE_FIXTURES", "1")
+    monkeypatch.setenv("TI_DATA_DIR", str(tmp_path))
+    from core.store import Store
+
+    # the app caches its Store as a resource, and this process has already run the app for other tests
+    st.cache_resource.clear()
+    st.cache_data.clear()
+    s = Store()
+    # straddling the fixture price, so page load neither invalidates it nor plays it out
+    s.put_trap(category="weekly", side="bull_trap", timeframe="1d", level=78_600.0, invalidation=78_900.0,
+               plays_out=78_000.0, declared_ms=1, score=72.0, head_call="ENGINEERED_TRAP",
+               evidence=["buyside liquidity swept and reclaimed"], notes=[])
+    s.close()
+
+    at = pytest.importorskip("streamlit.testing.v1").AppTest.from_file(APP, default_timeout=180).run()
+    assert not at.exception, [e.value for e in at.exception]
+    markdown = " ".join(m.value for m in at.markdown)
+    assert markdown.count("TRAP warning") == 1, "one desk is affected, not all four"
+    assert "1d at $78,600" in markdown and "invalidated at $78,900" in markdown.lower()
+    assert "Anchored bull trap" in markdown, "and it appears in the console too"

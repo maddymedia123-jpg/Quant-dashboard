@@ -55,6 +55,12 @@ CREATE TABLE IF NOT EXISTS recon_side_notes (
     ts_ms INTEGER NOT NULL, kind TEXT NOT NULL, dedup_key TEXT NOT NULL, headline TEXT NOT NULL,
     detail TEXT, price REAL);
 CREATE INDEX IF NOT EXISTS idx_recon_notes ON recon_side_notes (category, window_open_ms, ts_ms);
+CREATE TABLE IF NOT EXISTS traps (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, category TEXT NOT NULL, side TEXT NOT NULL,
+    timeframe TEXT NOT NULL, level REAL NOT NULL, invalidation REAL NOT NULL, plays_out REAL NOT NULL,
+    declared_ms INTEGER NOT NULL, score REAL, head_call TEXT, evidence TEXT NOT NULL, notes TEXT,
+    status TEXT NOT NULL DEFAULT 'active', resolved_ms INTEGER, resolved_price REAL);
+CREATE INDEX IF NOT EXISTS idx_traps_open ON traps (status, category, level);
 CREATE TABLE IF NOT EXISTS recon_scores (
     category TEXT NOT NULL, window_open_ms INTEGER NOT NULL, scored_ms INTEGER NOT NULL,
     open_price REAL NOT NULL, close_price REAL NOT NULL, move_pct REAL NOT NULL, realised TEXT NOT NULL,
@@ -306,6 +312,53 @@ class Store:
         for r in rows:
             r["payload"] = json.loads(r["payload"])
         return rows
+
+    # ---- TRAP desk: a declared trap is anchored until price settles it ----
+    def put_trap(self, category: str, side: str, timeframe: str, level: float, invalidation: float,
+                 plays_out: float, declared_ms: int, score: float | None, head_call: str,
+                 evidence: list[str], notes: list[str] | None = None) -> int:
+        """Declare a trap, or return the id of the live one it repeats.
+
+        The same raid is re-detected on every refresh, so a trap is identified by its category, side,
+        timeframe and level rather than by the moment it was seen."""
+        with self._lock:
+            existing = self._conn.execute(
+                "SELECT id FROM traps WHERE status='active' AND category=? AND side=? AND timeframe=? "
+                "AND abs(level - ?) < 0.01", (category, side, timeframe, level)).fetchone()
+            if existing:
+                return int(existing["id"])
+            cur = self._conn.execute(
+                "INSERT INTO traps (category, side, timeframe, level, invalidation, plays_out, declared_ms, "
+                "score, head_call, evidence, notes, status) VALUES (?,?,?,?,?,?,?,?,?,?,?,'active')",
+                (category, side, timeframe, level, invalidation, plays_out, declared_ms, score, head_call,
+                 json.dumps(evidence), json.dumps(notes or [])))
+            self._conn.commit()
+            return int(cur.lastrowid)
+
+    def traps(self, category: str | None = None, status: str | None = None, limit: int = 100) -> list[dict]:
+        sql = "SELECT * FROM traps"
+        where, args = [], []
+        if category:
+            where.append("category=?")
+            args.append(category)
+        if status:
+            where.append("status=?")
+            args.append(status)
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY declared_ms DESC LIMIT ?"
+        args.append(limit)
+        with self._lock:
+            return _rows(self._conn.execute(sql, tuple(args)))
+
+    def resolve_trap(self, trap_id: int, status: str, price: float, now_ms: int) -> bool:
+        """Settle a trap once. Returns False if it was already settled, so a refresh cannot double-report."""
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE traps SET status=?, resolved_price=?, resolved_ms=? WHERE id=? AND status='active'",
+                (status, price, now_ms, trap_id))
+            self._conn.commit()
+        return cur.rowcount > 0
 
     def close(self) -> None:
         with self._lock:

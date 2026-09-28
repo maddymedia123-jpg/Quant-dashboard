@@ -639,3 +639,84 @@ def agent_matrix_html(deck) -> str:
     body += ("<p class='muted'>These are the exact readings handed to the ten domain agents, so the "
              "scorecard cannot disagree with what is shown here. A dash means no feed, not zero.</p>")
     return card_html("Institutional quantitative matrix", body)
+
+
+# ---------- TRAP intelligence console (spec section 1) ----------
+TRAP_LABEL = {"bull_trap": "bull trap", "bear_trap": "bear trap"}
+
+
+def _trap_age(ms: int, now_ms: int) -> str:
+    mins = max(0, (now_ms - ms) // 60000)
+    return f"{mins // 1440}d {(mins % 1440) // 60}h" if mins >= 1440 else f"{mins // 60}h {mins % 60:02d}m"
+
+
+def trap_card_html(row: dict, now_ms: int, category_label: str = "") -> str:
+    """One anchored trap: what it is, the level it is built on, and what settles it."""
+    import json as _json
+
+    side = TRAP_LABEL.get(row.get("side"), str(row.get("side")))
+    tone = "warn" if row.get("status") == "active" else "neutral"
+    head = (f"<p><span class='ti-chip warn'>{html.escape(side)}</span> "
+            f"<strong>{html.escape(row.get('timeframe', ''))} at {fmt_num(row.get('level'), 0, '$')}</strong>")
+    if category_label:
+        head += f" <span class='muted'>· {html.escape(category_label)} desk</span>"
+    head += (f" <span class='muted'>· declared {_trap_age(row.get('declared_ms', now_ms), now_ms)} ago"
+             f" · sub-agents {float(row.get('score') or 0):.0f}/100</span></p>")
+    body = head
+    body += (f"<p>Invalidated above {fmt_num(row.get('invalidation'), 0, '$')}"
+             if row.get("side") == "bull_trap" else
+             f"<p>Invalidated below {fmt_num(row.get('invalidation'), 0, '$')}")
+    body += f" · pays off back at {fmt_num(row.get('plays_out'), 0, '$')}</p>"
+    try:
+        evidence = _json.loads(row.get("evidence") or "[]")
+    except ValueError:
+        evidence = []
+    body += _li([str(e) for e in evidence])
+    if row.get("status") != "active":
+        body += (f"<p class='muted'>{html.escape(str(row.get('status')).replace('_', ' '))} at "
+                 f"{fmt_num(row.get('resolved_price'), 0, '$')}</p>")
+    return card_html(f"Anchored {side}", body, tone)
+
+
+def trap_console_html(rows: list[dict], candidates: list, now_ms: int, labels: dict | None = None) -> str:
+    """The watchdog console: what is anchored, and what is being watched but not declared."""
+    labels = labels or {}
+    active = [r for r in rows if r.get("status") == "active"]
+    settled = [r for r in rows if r.get("status") != "active"][:6]
+    body = (f"<p><strong>{len(active)} anchored</strong> · {len(candidates)} candidate(s) on watch · "
+            f"{len(settled)} recently settled</p>")
+    if not active:
+        body += ("<p class='muted'>Nothing anchored. A trap is declared only when its five sub-agents "
+                 "score 60 or more, the TRAP Head calls it engineered, and the category desk does not read "
+                 "the move as an authentic break.</p>")
+    if candidates:
+        body += "<p>On watch, from the deterministic scan:</p><ul>"
+        for c in candidates[:6]:
+            body += (f"<li>{html.escape(TRAP_LABEL.get(c.side, c.side))} · {html.escape(c.timeframe)} at "
+                     f"{fmt_num(c.level, 0, '$')} · {c.strength} factors: "
+                     f"{html.escape('; '.join(c.evidence[:2]))}</li>")
+        body += "</ul>"
+    if settled:
+        body += "<p class='muted'>Recently settled: " + ", ".join(
+            f"{TRAP_LABEL.get(r['side'], r['side'])} {r['timeframe']} "
+            f"{str(r['status']).replace('_', ' ')}" for r in settled) + "</p>"
+    body += ("<p class='muted'>Traps stay anchored to their desk until price settles them: invalidated "
+             "when the break proves real, played out when price returns inside value. Nothing expires on "
+             "a timer.</p>")
+    return card_html("TRAP intelligence · watchdog", body, "warn" if active else "neutral")
+
+
+def trap_warning_html(rows: list[dict], now_ms: int) -> str | None:
+    """The outbound half of the handshake, on the desk that is affected."""
+    active = [r for r in rows if r.get("status") == "active"]
+    if not active:
+        return None
+    body = ""
+    for r in active[:3]:
+        side = TRAP_LABEL.get(r.get("side"), str(r.get("side")))
+        body += (f"<p><span class='ti-chip warn'>{html.escape(side)}</span> "
+                 f"{html.escape(r.get('timeframe', ''))} at {fmt_num(r.get('level'), 0, '$')} · "
+                 f"invalidated at {fmt_num(r.get('invalidation'), 0, '$')} · "
+                 f"declared {_trap_age(r.get('declared_ms', now_ms), now_ms)} ago</p>")
+    body += "<p class='muted'>From the TRAP desk. It stays here until price settles it.</p>"
+    return card_html("TRAP warning", body, "warn")
