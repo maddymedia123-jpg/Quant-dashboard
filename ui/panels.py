@@ -602,3 +602,34 @@ def vol_matrix_html(by_tf: dict) -> str:
              "is a coin-flip walk, above 0.56 trends persist, below 0.44 moves mean-revert; readings "
              "inside that band are noise.</p>")
     return card_html("Volatility matrix", body)
+
+
+# ---------- institutional quantitative matrix (spec section 5) ----------
+def _deck_value(value, kind: str) -> str:
+    if value is None or value == "":
+        return "—"
+    if kind == "usd":
+        return fmt_num(value, 0, "$")
+    if kind == "pct":
+        return f"{float(value):+.2f}%"
+    if kind == "rate":
+        return f"{float(value) * 100:+.3f}%"
+    if kind == "num":
+        return fmt_num(value, 3) if abs(float(value)) < 100 else fmt_num(value, 0)
+    return html.escape(str(value))
+
+
+def agent_matrix_html(deck) -> str:
+    """What each of the five sub-agents read, straight from the state the judges were given."""
+    body = ""
+    for a in deck:
+        rows = "".join(f"<tr><td class='muted'>{html.escape(label)}</td>"
+                       f"<td>{_deck_value(value, kind)}</td></tr>" for label, value, kind in a.rows)
+        body += (f"<p><strong>{a.agent_no}. {html.escape(a.title)}</strong> "
+                 f"<span class='muted'>· {html.escape(a.timeframe)}</span></p>"
+                 f"<table><tbody>{rows}</tbody></table>")
+        if a.note:
+            body += f"<p class='muted'>{html.escape(a.note)}</p>"
+    body += ("<p class='muted'>These are the exact readings handed to the ten domain agents, so the "
+             "scorecard cannot disagree with what is shown here. A dash means no feed, not zero.</p>")
+    return card_html("Institutional quantitative matrix", body)

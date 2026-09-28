@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 import pandas as pd
 
 from core.agents.recon_profiles import LIVE, PROFILES, ReconProfile
-from core.agents.rubric import ALL_ITEMS, BEARISH, BULLISH
+from core.agents.rubric import ALL_ITEMS, BEARISH, BULLISH, RUBRIC_VERSION
 
 UP, DOWN, FLAT = "UP", "DOWN", "FLAT"
 TF_MS = {"15m": 900_000, "1h": 3_600_000, "4h": 14_400_000, "1d": 86_400_000, "1w": 604_800_000}
@@ -41,8 +41,10 @@ ITEM_GAP = 0.20           # ...and this far from what actually happened is a fin
 MAX_ITEM_ISSUES = 8
 TRAP_MIN_MISSES = 3
 
-ITEM_KIND = {"smc": "structural misalignment", "mtf": "structural misalignment",
-             "liq": "misread liquidity", "macro": "false sentiment", "quant": "volatility misread"}
+# The spec names the failures it wants called out: protocol failures, misread liquidity, false
+# sentiment signals, structural misalignment and missed traps. Each sub-agent maps to one of them.
+ITEM_KIND = {"ict": "structural misalignment", "auction": "misread liquidity",
+             "delta": "misread liquidity", "derivs": "false sentiment", "quant": "volatility misread"}
 
 SUGGESTIONS = {
     "structural misalignment": "Require a break to hold for a full {ltf} candle and agree with the {htf} bias "
@@ -175,6 +177,9 @@ def _mean(xs: list[float]) -> float | None:
 
 
 def _item_issues(rows: list[dict], profile: ReconProfile) -> list[Issue]:
+    # Item ids are the memory here. A window scored under an older checklist cannot speak about items
+    # that did not exist then, so it counts towards direction accuracy but not towards item findings.
+    rows = [r for r in rows if int((r.get("payload") or {}).get("rubric_version") or 1) == RUBRIC_VERSION]
     found: list[tuple[float, Issue]] = []
     for side, target in ((BULLISH, UP), (BEARISH, DOWN)):
         for item in ALL_ITEMS:

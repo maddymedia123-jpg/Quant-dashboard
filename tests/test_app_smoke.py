@@ -107,3 +107,14 @@ def test_a_module_left_stale_by_a_redeploy_is_reloaded(tmp_path, monkeypatch):
         for n in project():
             del sys.modules[n]
         sys.modules.update(saved)
+
+
+def test_every_tab_shows_its_sub_agent_deck(app):
+    """The deck reads the judges' own state, so it must appear once per category tab."""
+    markdown = " ".join(m.value for m in app.markdown)
+    assert markdown.count("Institutional quantitative matrix") == 4
+    # labels that belong to the deck alone - "Hurst" also appears in the volatility matrix above it
+    for reading in ("Point of control", "Options max pain", "Taker buy/sell", "Range position",
+                    "Funding 7d mean", "Longs liquidated 24h"):
+        assert markdown.count(reading) == 4, reading
+    assert "A dash means no feed, not zero." in markdown

@@ -175,9 +175,9 @@ def test_team_scorecard_shows_five_domain_agents_and_their_points():
     res = _recon()
     h = panels.team_html(res.bull)
     assert "80 / 100" in h and "high confluence" in h and "typesafe" in h and "1.4s" in h
-    for n, title in ((1, "Market Structure &amp; SMC"), (2, "Liquidity &amp; Order Flow"),
-                     (3, "Multi-Timeframe Alignment"), (4, "Quantitative Volatility"),
-                     (5, "Macro &amp; Financial News")):
+    for n, title in ((1, "Quant &amp; Statistics"), (2, "Auction Market &amp; Volume Profile"),
+                     (3, "Order Flow &amp; Delta"), (4, "ICT &amp; Liquidity"),
+                     (5, "On-Chain &amp; Derivatives")):
         assert f"{n}. {title}" in h
     assert "16.0 / 20" in h and "ti-card up" in h
     assert "ti-card down" in panels.team_html(res.bear)

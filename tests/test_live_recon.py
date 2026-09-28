@@ -60,11 +60,11 @@ def test_a_failed_judgment_scores_zero_and_says_so_rather_than_reading_zero():
 
 def test_missing_checklist_answers_are_named_in_the_notes():
     probs = {i.id: 0.5 for i in ALL_ITEMS}
-    probs.pop("macro_release")
+    probs.pop("derivs_funding")
     t = team(BULLISH, probs)
-    assert t.missing == ("macro_release",)
+    assert t.missing == ("derivs_funding",)
     _, _, _, _, _, notes = lr.resolve(t, flat(BEARISH, 0.5), ChoiceResult(choice="NO_TRAP"))
-    assert any("missing 1 checklist answers" in n and "Macro" in n for n in notes)
+    assert any("missing 1 checklist answers" in n and "On-Chain" in n for n in notes)
 
 
 # ---- bias and consult policy ----
@@ -122,7 +122,7 @@ def test_run_live_recon_makes_three_calls_on_one_shared_state(market_and_analyse
             return httpx.Response(200, json={"model": "jev-latest", "answers": {"trap": {
                 "type": "choice", "choice": "BULL_TRAP", "confidence": 0.78, "probabilities": {
                     "BULL_TRAP": 0.7, "BEAR_TRAP": 0.1, "GENUINE_MOVE": 0.15, "NO_TRAP": 0.05}}}})
-        side = body["questions"]["smc_bos"]["instructions"]
+        side = body["questions"]["ict_structure"]["instructions"]
         p = 0.9 if "bullish" in side else 0.2
         return httpx.Response(200, json={"model": "jev-latest",
                                          "answers": {q: {"type": "noul", "noul": p} for q in body["questions"]},
@@ -216,7 +216,7 @@ def test_a_weekly_run_asks_weekly_questions(market_and_analyses):
     res = asyncio.run(lr.run_live_recon(j, m, analyses, profile=PROFILES["weekly"]))
     assert res.category == "weekly"
     noul = next(b for b in seen if "trap" not in b["questions"])
-    q = noul["questions"]["mtf_triple"]["instructions"]
+    q = noul["questions"]["quant_mtf"]["instructions"]
     assert "(4h, 1d, 1w)" in q and "seven days" in q and "15m" not in q
     trap = next(b for b in seen if "trap" in b["questions"])["questions"]["trap"]["instructions"]
     assert "seven days" in trap and "four-hour" not in trap
@@ -250,3 +250,43 @@ def test_implied_vol_is_absent_rather_than_invented_when_options_are_down(market
     vm = lr.build_state(blind, analyses)["volatility"]["1h"]
     assert vm["implied_vol_pct"] is None and vm["implied_minus_realized_pct"] is None
     assert vm["realized_vol_pct"] > 0, "realized vol is ours to compute and still stands"
+
+
+# ---- derivatives evidence: the On-Chain & Derivatives sub-agent is worth 20 points ----
+def test_state_carries_the_derivatives_evidence_its_domain_is_scored_on(market_and_analyses):
+    """Five of the twenty-two items ask about funding, open interest, liquidations, options and the
+    long/short ratio. Without them in the state that whole sub-agent scores near zero, which is exactly
+    how SMC and liquidity were capped before they were computed."""
+    m, analyses = market_and_analyses
+    d = lr.build_state(m, analyses)["derivatives"]
+    json.dumps(d)
+    assert d["futures"]["funding_rate"] is not None
+    assert "funding_7d_mean" in d["futures"] and "oi_change_24h_pct" in d["futures"]
+    assert d["futures"]["long_short_ratio"] is not None and d["futures"]["taker_buy_sell_ratio"] is not None
+    assert d["options"]["max_pain"] > 0 and "iv_skew" in d["options"]
+    assert "liquidations" in d and "long_usd" in d["liquidations"]
+    assert "stablecoins" in d
+
+
+def test_missing_derivatives_feeds_are_named_rather_than_left_blank(market_and_analyses):
+    from core.data.types import FuturesSnapshot, OptionsSnapshot
+
+    m, analyses = market_and_analyses
+    blind = m.model_copy(update={"futures": FuturesSnapshot.unavailable("binance,bybit,gate", "451"),
+                                 "options": OptionsSnapshot.unavailable("deribit", "timeout")})
+    state = lr.build_state(blind, analyses)
+    assert "futures" not in state["derivatives"] and "options" not in state["derivatives"]
+    assert {"futures", "options"} <= set(state["unavailable"])
+
+
+def test_every_scored_domain_has_evidence_in_the_state(market_and_analyses):
+    """One guard for the whole rubric: each sub-agent's data must reach the judges."""
+    m, analyses = market_and_analyses
+    state = lr.build_state(m, analyses)
+    blob = json.dumps(state)
+    for token in ("volatility", "hurst",                        # quant
+                  "point_of_control", "value_area_high",        # auction
+                  "cumulative_delta", "taker_buy_sell_ratio",   # delta
+                  "structure", "order_blocks", "pools",         # ict
+                  "funding_rate", "open_interest", "max_pain"):  # derivs
+        assert token in blob, f"no evidence in the state for {token}"

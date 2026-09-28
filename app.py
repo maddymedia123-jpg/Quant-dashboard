@@ -40,7 +40,8 @@ from core.agents.report import to_markdown
 from core.agents.runner import run_pipeline_sync
 from core.agents.settings import load_settings
 from core.agents.judge import Judge
-from core.agents.live_recon import run_live_recon
+from core.agents.deck import sub_agent_deck
+from core.agents.live_recon import build_state, run_live_recon
 from core.agents.recon_profiles import LIVE, PROFILES
 from core.anchors import anchor_step
 from core import live_accuracy, live_anchor
@@ -253,32 +254,24 @@ tabs = st.tabs(tab_labels)
 
 
 @st.cache_data(ttl=TTL["spot"], show_spinner=False)
-def _evidence(timeframes: tuple[str, ...], now_bucket: int) -> tuple[dict, dict, dict]:
-    """SMC, liquidity and the volatility matrix per timeframe: the evidence the rubric judges read."""
-    oi = list(getattr(m.futures, "oi_history", []) or [])
-    smc_by_tf, liq_by_tf, vol_by_tf = {}, {}, {}
-    for tf in timeframes:
-        df = m.spot.frames.get(tf)
-        if df is None or df.empty:
-            blank = {"available": False, "note": f"no {tf} candles"}
-            smc_by_tf[tf] = liq_by_tf[tf] = vol_by_tf[tf] = blank
-            continue
-        smc_by_tf[tf] = smc.summarise(df)
-        liq_by_tf[tf] = liquidity.summarise(df, oi, now_ms, windows=timeframes)
-        vol_by_tf[tf] = volatility.matrix_summary(df, tf, m.options)
-    return smc_by_tf, liq_by_tf, vol_by_tf
+def _desk_state(category: str, now_bucket: int) -> dict:
+    """The very state the desk's judges are handed. The panels read it too, so the screen and the
+    scorecard cannot drift apart, and the maths runs once per refresh instead of twice."""
+    return build_state(m, analyses, now_ms, PROFILES[category])
 
 
 def render_protocols(profile) -> None:
-    """The deterministic SMC and liquidity reads, shown rather than left inside the agent prompt."""
+    """The deterministic reads - volatility, structure, liquidity - and each sub-agent's own deck."""
     try:
-        smc_by_tf, liq_by_tf, vol_by_tf = _evidence(profile.timeframes, now_ms // 60000)
+        state = _desk_state(profile.category, now_ms // 60000)
     except Exception as e:  # noqa: BLE001 - a protocol failure must not blank the tab
         st.warning(f"Protocols unavailable this refresh: {e}")
         return
-    panels.render(panels.vol_matrix_html(vol_by_tf))
-    panels.render(panels.smc_html(smc_by_tf))
-    panels.render(panels.liquidity_html(liq_by_tf))
+    panels.render(panels.vol_matrix_html(state.get("volatility", {})))
+    panels.render(panels.smc_html(state.get("smc", {})))
+    panels.render(panels.liquidity_html(state.get("liquidity", {})))
+    with st.expander(f"Institutional quantitative matrix — {profile.label} sub-agents", expanded=False):
+        panels.render(panels.agent_matrix_html(sub_agent_deck(state, profile)))
 
 
 def render_war_room(profile) -> None:

@@ -157,13 +157,13 @@ def test_a_healthy_ledger_produces_no_calibration_report(store):
 
 def test_poor_accuracy_names_the_protocols_that_failed(store):
     # the bullish team leans hard on sweeps and structure while price keeps falling
-    items = {(BULLISH, "liq_sweep"): 0.95, (BULLISH, "smc_bos"): 0.9, (BULLISH, "macro_sentiment"): 0.9}
+    items = {(BULLISH, "ict_sweep"): 0.95, (BULLISH, "delta_confirm"): 0.9, (BULLISH, "derivs_funding"): 0.9}
     seed(store, 12, 0.7, 0.3, move_up=False, items=items)
     rep = acc.diagnose(store)
     assert rep.status == "calibration needed" and rep.hit_rate == 0.0
     kinds = {i.kind for i in rep.issues}
     assert {"misread liquidity", "structural misalignment", "false sentiment"} <= kinds
-    sweep = next(i for i in rep.issues if i.item == "liq_sweep")
+    sweep = next(i for i in rep.issues if i.item == "ict_sweep")
     assert sweep.side == BULLISH and sweep.mean_probability == pytest.approx(0.95)
     assert "sweep" in sweep.finding.lower() and sweep.windows == 12
     assert rep.bull_brier > 0.25, "worse than a coin flip"
@@ -190,3 +190,26 @@ def test_anchors_from_before_item_tracking_still_count_toward_direction(store):
         store._conn.commit()
     rep = acc.diagnose(store)
     assert rep.n == 10 and rep.hit_rate == 1.0
+
+
+def test_windows_scored_under_an_older_checklist_do_not_speak_about_new_items(store):
+    """Item ids are this report's memory. When the checklist changes, old windows still count towards
+    direction accuracy, but they cannot be evidence about items that did not exist when they were made."""
+    import json
+
+    items = {(BULLISH, "ict_sweep"): 0.95, (BULLISH, "delta_confirm"): 0.9}
+    seed(store, 12, 0.7, 0.3, move_up=False, items=items)
+    fresh = acc.diagnose(store)
+    assert fresh.status == "calibration needed" and any(i.item == "ict_sweep" for i in fresh.issues)
+
+    with store._lock:                                    # rewrite them as a previous checklist's scores
+        for r in store._conn.execute("SELECT window_open_ms, payload FROM recon_anchors").fetchall():
+            p = json.loads(r["payload"])
+            p["rubric_version"] = 1
+            store._conn.execute("UPDATE recon_anchors SET payload=? WHERE window_open_ms=?",
+                                (json.dumps(p), r["window_open_ms"]))
+        store._conn.commit()
+
+    old = acc.diagnose(store)
+    assert old.n == 12 and old.hit_rate == 0.0, "direction accuracy still counts every window"
+    assert not any(i.item for i in old.issues), "no item findings from a checklist that no longer exists"

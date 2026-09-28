@@ -62,21 +62,21 @@ def test_a_run_at_the_close_belongs_to_the_next_window(category):
 # ---------- the rubric, templated per category ----------
 def test_live_questions_are_word_for_word_what_the_client_approved():
     live = rp.PROFILES["live"]
-    bos = next(i for i in ALL_ITEMS if i.id == "smc_bos")
+    bos = next(i for i in ALL_ITEMS if i.id == "ict_structure")
     assert bos.question(BULLISH, live) == "A confirmed 4h break of structure or change of character points UP."
-    triple = next(i for i in ALL_ITEMS if i.id == "mtf_triple")
+    triple = next(i for i in ALL_ITEMS if i.id == "quant_mtf")
     assert triple.question(BEARISH, live) == "All three timeframes (15m, 1h, 4h) point DOWN."
-    sent = next(i for i in ALL_ITEMS if i.id == "macro_sentiment")
+    sent = next(i for i in ALL_ITEMS if i.id == "quant_memory")
     assert sent.question(BULLISH, live).endswith("over the next four hours.")
     assert bos.question(BULLISH) == bos.question(BULLISH, live), "live stays the default"
 
 
 def test_other_categories_ask_about_their_own_timeframes_and_horizon():
     weekly = rp.PROFILES["weekly"]
-    triple = next(i for i in ALL_ITEMS if i.id == "mtf_triple")
+    triple = next(i for i in ALL_ITEMS if i.id == "quant_mtf")
     q = triple.question(BULLISH, weekly)
     assert q == "All three timeframes (4h, 1d, 1w) point UP."
-    sent = next(i for i in ALL_ITEMS if i.id == "macro_sentiment")
+    sent = next(i for i in ALL_ITEMS if i.id == "quant_memory")
     assert sent.question(BEARISH, weekly).endswith("over the next seven days.")
     for d in DOMAINS:
         for step in d.steps(weekly):

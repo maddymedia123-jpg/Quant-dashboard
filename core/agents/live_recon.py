@@ -15,7 +15,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from core.agents.context import common_payload
+from core.agents.context import common_payload, derivatives_payload
 from core.agents.recon_profiles import LIVE, ReconProfile
 from core.indicators import liquidity as lq
 from core.indicators import volatility as vol
@@ -137,6 +137,8 @@ def build_state(m, analyses: dict, now_ms: int | None = None, profile: ReconProf
     state["timeframes_read"] = dict(wanted)
     state["war_room"] = profile.label
     state["horizon"] = profile.horizon
+
+    state["derivatives"], state["unavailable"] = derivatives_payload(m)
 
     now = now_ms if now_ms is not None else int(m.generated_at.timestamp() * 1000)
     oi_history = list(getattr(m.futures, "oi_history", []) or [])
