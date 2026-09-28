@@ -47,7 +47,7 @@ class DeltaRead:
     last: float = 0.0
     delta_change: float = 0.0
     price_change: float = 0.0
-    state: str = "unavailable"               # confirming, bearish absorption, bullish absorption, flat
+    state: str = "unavailable"    # confirming up/down, bearish/bullish absorption, flat
     method: str = "candle close-position proxy (no tick data)"
     series: list[float] = field(default_factory=list)
 
@@ -137,7 +137,9 @@ def cumulative_delta(df: pd.DataFrame, lookback: int = 20) -> DeltaRead:
     if abs(d_change) < scale * 0.5 or p_change == 0:
         state = "flat"
     elif (p_change > 0) == (d_change > 0):
-        state = "confirming"
+        # name the direction: a bare "confirming" reads as agreement to whichever side is asking, and
+        # delta confirming a fall is evidence against the bullish case, not for it
+        state = "confirming up" if p_change > 0 else "confirming down"
     else:
         state = "bearish absorption" if p_change > 0 else "bullish absorption"
     return DeltaRead(available=True, last=float(cvd[-1]), delta_change=d_change, price_change=p_change,

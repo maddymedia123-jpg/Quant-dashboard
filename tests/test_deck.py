@@ -44,7 +44,8 @@ def test_every_reading_comes_from_the_state_and_is_filled_on_live_data(market_an
     assert auction["Point of control"] > 0 and auction["Value area high"] > auction["Value area low"]
 
     delta = dict((label, value) for label, value, _ in by_key["delta"].rows)
-    assert delta["Delta read"] in ("confirming", "bearish absorption", "bullish absorption", "flat")
+    assert delta["Delta read"] in ("confirming up", "confirming down", "bearish absorption",
+                                   "bullish absorption", "flat")
     assert delta["Taker buy/sell"] is not None
 
     ict = dict((label, value) for label, value, _ in by_key["ict"].rows)

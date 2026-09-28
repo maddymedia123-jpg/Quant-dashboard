@@ -46,14 +46,20 @@ before publishing:
 
 | Agent | Domain | Points |
 | --- | --- | --- |
-| 1 | Market Structure & SMC | 20 |
-| 2 | Liquidity & Order Flow | 20 |
-| 3 | Multi-Timeframe Alignment | 20 |
-| 4 | Quantitative Volatility | 20 |
-| 5 | Macro & Financial News | 20 |
+| 1 | Quant & Statistics | 20 |
+| 2 | Auction Market & Volume Profile | 20 |
+| 3 | Order Flow & Delta | 20 |
+| 4 | ICT & Liquidity | 20 |
+| 5 | On-Chain & Derivatives | 20 |
 
-Eighteen weighted items make up those 100 points (`core/agents/rubric.py`), each phrased once for the
-bullish case and once for the bearish one. **The model only answers "does this condition hold" and
+Twenty-two weighted items make up those 100 points (`core/agents/rubric.py`), each phrased once for the
+bullish case and once for the bearish one. Macro and news are a global engine rather than a desk
+sub-agent, following the enhanced spec. `RUBRIC_VERSION` records which checklist scored each window, so
+the accuracy report never cites an old score as evidence about an item that did not exist yet.
+
+An expander on each tab shows the **Institutional Quantitative Matrix**: every reading each sub-agent
+was given, built from the same state dictionary the judges receive (`core/agents/deck.py`), so the
+screen cannot disagree with the scorecard. A missing feed shows a dash, never a number. **The model only answers "does this condition hold" and
 returns a probability; the weights and all arithmetic stay in code**, so a team score is auditable item by
 item and a weight can change without re-running any inference.
 
@@ -97,6 +103,19 @@ Interim re-runs are **append-only side notes** when something substantial change
 trap call at or above 0.60, a 15-point swing that does not flip the bias, a high-impact release landing
 inside the candle, or a scan that ran degraded. Each note carries a dedup key, so an interim scan that
 keeps seeing the same flip announces it once (`core/live_anchor.py`).
+
+## Volatility matrix
+
+`core/indicators/volatility.py` computes, per timeframe: realized volatility annualised from that
+timeframe's own returns (365 days, since crypto never closes), implied volatility taken from the Deribit
+options feed or shown as a dash, ATR with its percentile regime, the ±1/2/3σ channels, and the **Hurst
+exponent** with a plain-English memory label.
+
+Hurst is estimated from how return variance scales with aggregation, using overlapping windows because
+that measurably cut the estimator's spread by about a third against disjoint blocks. A random walk
+measures 0.50 give or take 0.03 on the history we hold, so the neutral band is two standard deviations
+wide: above 0.56 trends persist, below 0.44 moves mean-revert, and inside that band the reading claims
+nothing. Tests hold it to series whose behaviour is known by construction.
 
 ## SMC and liquidity protocols
 

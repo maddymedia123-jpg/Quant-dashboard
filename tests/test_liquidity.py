@@ -65,7 +65,7 @@ def test_price_rising_while_delta_falls_is_flagged_as_bearish_absorption():
 def test_delta_agreeing_with_price_is_confirmation():
     strong = [(100 + i, 101.5 + i, 100 + i, 101.4 + i, 10.0) for i in range(12)]
     cvd = lq.cumulative_delta(candles(strong), lookback=10)
-    assert cvd.state == "confirming" and cvd.delta_change > 0
+    assert cvd.state == "confirming up" and cvd.delta_change > 0
 
 
 def test_cumulative_delta_is_labelled_as_a_candle_proxy_not_real_tape():
@@ -143,3 +143,11 @@ def test_the_sample_used_must_bracket_the_window():
     oi = lq.oi_changes(hist, now_ms=now)
     assert oi["15m"] is None and oi["4h"] is None
     assert oi["1h"] == pytest.approx(10.0, abs=0.01)
+
+
+def test_confirmation_says_which_way_it_confirms():
+    """A bare "confirming" would read as agreement to whichever side asked the question."""
+    falling = [(100 - i, 100.5 - i, 98.5 - i, 98.6 - i, 10.0) for i in range(12)]
+    cvd = lq.cumulative_delta(candles(falling), lookback=10)
+    assert cvd.price_change < 0 and cvd.delta_change < 0
+    assert cvd.state == "confirming down", "delta confirming a fall is not evidence for the bulls"
