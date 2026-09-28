@@ -29,6 +29,7 @@ log = logging.getLogger(__name__)
 DOMAIN_KEYS = ("quant", "auction", "delta", "ict", "derivs")
 POINTS_PER_DOMAIN = 20
 DECLARE_POINTS = 60.0          # below this the desk watches rather than declares
+OI_BUILDING_PCT = 5.0          # 24h open-interest change that counts as the crowd piling in
 
 TRAP_CHOICES = {
     "ENGINEERED_TRAP": "The move is manufactured: liquidity was taken to fill the other side, and price "
@@ -104,29 +105,36 @@ def desk_view(state: dict, candidate: TrapCandidate, profile: ReconProfile | Non
     interest building with it all say the level genuinely gave way."""
     p = profile or LIVE
     _ltf, mtf, htf = p.timeframes
+    state = state if isinstance(state, dict) else {}
     up = candidate.side == BULL_TRAP
-    reasons: list[str] = []
+    strong: list[str] = []          # the two reads that distinguish an expansion from a raid
+    weak: list[str] = []            # context that is just as consistent with either
 
     structure = ((state.get("smc") or {}).get(htf) or {}).get("structure") or {}
     bias = structure.get("bias")
     if bias == ("bullish" if up else "bearish"):
         event = (structure.get("last_event") or {}).get("type")
-        reasons.append(f"{htf} structure is {bias}" + (f" on a confirmed {event}" if event else ""))
+        strong.append(f"{htf} structure is {bias}" + (f" on a confirmed {event}" if event else ""))
 
     position = (((state.get("liquidity") or {}).get(mtf) or {}).get("volume_profile") or {}).get("price_position")
     if position == ("above value" if up else "below value"):
-        reasons.append(f"price is accepting {position} rather than being rejected")
+        strong.append(f"price is accepting {position} rather than being rejected")
 
+    # Open interest *change* is unsigned with respect to direction: a genuine breakdown builds open
+    # interest exactly as a genuine breakout does, so the same test serves both sides. It is context
+    # only - crowding is as consistent with a trap as with a real break - so it never vetoes.
     oi = ((state.get("derivatives") or {}).get("futures") or {}).get("oi_change_24h_pct")
-    if oi is not None and ((float(oi) > 5.0) if up else (float(oi) > 5.0)):
-        reasons.append(f"open interest is building into the move ({float(oi):+.1f}% over 24h)")
+    try:
+        if oi is not None and float(oi) > OI_BUILDING_PCT:
+            weak.append(f"open interest is building into the move ({float(oi):+.1f}% over 24h)")
+    except (TypeError, ValueError):
+        pass
 
-    # Structure plus acceptance is the pair that distinguishes an expansion from a raid; open interest
-    # alone is crowding, which is just as consistent with a trap.
-    strong = sum(1 for r in reasons if "structure" in r or "accepting" in r)
-    if strong >= 2:
-        return DeskView("authentic break", tuple(reasons))
-    return DeskView("engineered or unclear" if reasons else "quiet", tuple(reasons))
+    reasons = tuple(strong + weak)
+    # Structure *and* acceptance together is the pair that vetoes: one on its own is half a break.
+    if len(strong) >= 2:
+        return DeskView("authentic break", reasons)
+    return DeskView("engineered or unclear" if reasons else "quiet", reasons)
 
 
 async def judge_candidate(judge: Judge, state: dict, candidate: TrapCandidate,

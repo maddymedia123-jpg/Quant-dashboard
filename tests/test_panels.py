@@ -194,9 +194,24 @@ def test_a_failed_team_says_it_failed_rather_than_showing_zero():
 
 def test_war_room_panel_shows_the_trap_distribution_and_any_override():
     h = panels.war_room_html(_recon())
-    assert "Bull Trap" in h and "70%" in h and "30%" in h and "ti-card warn" in h
+    # each number bound to its own row: asserting the labels and the percentages separately passed
+    # just as happily with the distribution rendered backwards
+    assert "<td>bull trap</td><td>70%</td>" in h, "70% belongs to the bull trap, not merely present"
+    assert "<td>no trap</td><td>30%</td>" in h
+    assert h.index("<td>bull trap</td>") < h.index("<td>no trap</td>"), "most likely first"
+    assert "ti-card warn" in h
     assert "override" in h and "overrides the long bias" in h
     assert "not required" in h  # a 50-point margin needs no consult
+
+
+def test_the_war_room_distribution_cannot_render_backwards():
+    from core.agents.judge import ChoiceResult
+
+    inverted = panels.war_room_html(_recon(trap=ChoiceResult(
+        choice="NO_TRAP", probabilities={"BULL_TRAP": 0.3, "NO_TRAP": 0.7}, provider="typesafe")))
+    assert "<td>no trap</td><td>70%</td>" in inverted
+    assert "<td>bull trap</td><td>30%</td>" in inverted
+    assert inverted.index("<td>no trap</td>") < inverted.index("<td>bull trap</td>")
 
     from core.agents.judge import ChoiceResult
     silent = panels.war_room_html(_recon(trap=ChoiceResult(error="timeout")))

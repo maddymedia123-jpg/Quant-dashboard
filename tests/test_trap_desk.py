@@ -11,7 +11,7 @@ import httpx
 import pytest
 
 from core.agents import trap_desk as td
-from core.agents.judge import Judge
+from core.agents.judge import Judge, JudgeResult
 from core.agents.recon_profiles import PROFILES
 from core.agents.rubric import BEARISH, BULLISH
 from core.agents.settings import LLMSettings
@@ -71,6 +71,76 @@ def test_the_bearish_sub_agents_are_the_ones_who_hunt_a_bull_trap():
     assert bear.side_scored == BULLISH
 
 
+def test_each_sub_agent_is_asked_about_its_own_domain():
+    """Every question interpolates the trap's label, so finding "bull trap" in one of them proves only
+    that the label was filled in. The five have to be distinguishable from one another."""
+    seen = []
+    asyncio.run(td.judge_candidate(judge_with(responder(seen=seen)), {"spot": {"price": 80_900.0}},
+                                   candidate(BULL_TRAP), LIVE))
+    body = next(b for b in seen if all(q["type"] == "noul" for q in b["questions"].values()))
+    texts = {qid: q["instructions"] for qid, q in body["questions"].items()}
+    assert len(set(texts.values())) == 5, "five domains, five different questions"
+    for qid, word in (("trap_auction", "value area"), ("trap_delta", "delta"), ("trap_ict", "liquidity"),
+                      ("trap_derivs", "funding"), ("trap_quant", "volatility")):
+        assert word in texts[qid].lower(), f"{qid} is not asking about {word}"
+
+
+def test_the_candidate_itself_is_handed_to_the_model():
+    """The questions name the level, but the judge also gets the candidate in the state it reads; without
+    it the model is scoring a trap whose shape it cannot see."""
+    captured = {}
+
+    async def fake_score(state, side, items=None, profile=None):
+        captured["state"] = state
+        raise RuntimeError("stop here")
+
+    j = judge_with(responder())
+    j.score = fake_score
+    with pytest.raises(RuntimeError):
+        asyncio.run(td.judge_candidate(j, {"spot": {"price": 80_900.0}}, candidate(BULL_TRAP), LIVE))
+    payload = captured["state"]["trap_candidate"]
+    assert payload["type"] == "bull trap" and payload["level"] == 80_800.0
+    assert payload["timeframe"] == "1h" and payload["invalidation"] == 81_000.0
+    assert payload["evidence"], "including the evidence that produced it"
+
+
+def test_a_probability_outside_the_range_cannot_inflate_the_score():
+    """"Out of 100" is guaranteed twice: the judge clamps what a provider returns, and the desk clamps
+    again before turning it into points. Both layers are checked, because the second is what holds if a
+    score ever reaches it from anywhere other than the judge's parser."""
+    high = asyncio.run(td.judge_candidate(judge_with(responder(noul=3.5)), {"spot": {"price": 80_900.0}},
+                                          candidate(), LIVE))
+    assert high.score == pytest.approx(100.0) and all(d.points <= 20 for d in high.domains)
+    low = asyncio.run(td.judge_candidate(judge_with(responder(noul=-2.0)), {"spot": {"price": 80_900.0}},
+                                         candidate(), LIVE))
+    assert low.score == pytest.approx(0.0) and not low.declared
+
+    # straight past the parser, with values no provider should ever send
+    async def unclamped(state, side, items=None, profile=None):
+        return JudgeResult(probabilities={f"trap_{k}": v for k, v in
+                                         (("quant", 4.0), ("auction", -1.0), ("delta", 0.5),
+                                          ("ict", 12.0), ("derivs", 0.25))}, provider="test")
+
+    j = judge_with(responder())
+    j.score = unclamped
+    v = asyncio.run(td.judge_candidate(j, {"spot": {"price": 80_900.0}}, candidate(), LIVE))
+    assert all(0.0 <= d.points <= 20.0 for d in v.domains), [d.points for d in v.domains]
+    assert v.score == pytest.approx(20.0 + 0.0 + 10.0 + 20.0 + 5.0)
+    assert v.score <= 100.0
+
+
+def test_the_declaration_threshold_is_sixty_out_of_a_hundred():
+    """Hardcoded, not compared against the constant under test: a threshold moved to 99 would otherwise
+    be invisible to the test meant to pin it."""
+    assert td.DECLARE_POINTS == 60.0
+    under = asyncio.run(td.judge_candidate(judge_with(responder(noul=0.59)),
+                                           {"spot": {"price": 80_900.0}}, candidate(), LIVE))
+    assert under.score == pytest.approx(59.0) and not under.declared
+    over = asyncio.run(td.judge_candidate(judge_with(responder(noul=0.61)),
+                                          {"spot": {"price": 80_900.0}}, candidate(), LIVE))
+    assert over.score == pytest.approx(61.0) and over.declared
+
+
 def test_the_five_sub_agents_score_out_of_one_hundred():
     v = asyncio.run(td.judge_candidate(judge_with(responder(noul=1.0)), {"spot": {"price": 80_900.0}},
                                        candidate(), LIVE))
@@ -90,20 +160,87 @@ def test_a_dead_provider_leaves_the_trap_unjudged_rather_than_declared():
 
 
 # ---------- the handshake ----------
+def desk_state(structure=None, position=None, oi=None, price=81_500.0) -> dict:
+    """One signal at a time, so the veto rule can be pinned. A fixture that hands over all three at once
+    cannot tell "structure and acceptance" from "any one of the three"."""
+    return {"spot": {"price": price},
+            "smc": {"4h": {"structure": {"available": True, "bias": structure,
+                                         "last_event": {"type": "BOS"} if structure else None}}},
+            "liquidity": {"1h": {"volume_profile": {"available": True, "price_position": position}}},
+            "derivatives": {"futures": {"oi_change_24h_pct": oi}}}
+
+
 def test_the_desk_can_veto_a_trap_it_reads_as_an_authentic_break():
     """Inbound re-verification: the category desk says this is a real higher-timeframe expansion."""
-    authentic = {"spot": {"price": 81_500.0},
-                 "smc": {"4h": {"structure": {"available": True, "bias": "bullish",
-                                              "last_event": {"type": "BOS", "direction": "bullish"}}}},
-                 "liquidity": {"1h": {"volume_profile": {"available": True, "price_position": "above value"}}},
-                 "derivatives": {"futures": {"oi_change_24h_pct": 8.0}}}
+    authentic = desk_state(structure="bullish", position="above value", oi=8.0)
     view = td.desk_view(authentic, candidate(BULL_TRAP), LIVE)
-    assert view.reads == "authentic break" and view.reasons
+    assert view.reads == "authentic break"
+    assert any("structure is bullish" in r for r in view.reasons)
+    assert any("accepting above value" in r for r in view.reasons)
 
     v = asyncio.run(td.judge_candidate(judge_with(responder(noul=0.9)), authentic, candidate(), LIVE))
     assert v.score >= 60 and v.head_call == "ENGINEERED_TRAP"
     assert not v.declared and v.status == "watching"
     assert any("desk" in n.lower() for n in v.notes)
+
+
+def test_the_veto_needs_structure_and_acceptance_together():
+    """Half a break is not a break. Either read on its own leaves the trap declarable."""
+    only_structure = td.desk_view(desk_state(structure="bullish"), candidate(BULL_TRAP), LIVE)
+    assert only_structure.reads != "authentic break" and only_structure.reasons
+
+    only_acceptance = td.desk_view(desk_state(position="above value"), candidate(BULL_TRAP), LIVE)
+    assert only_acceptance.reads != "authentic break" and only_acceptance.reasons
+
+    both = td.desk_view(desk_state(structure="bullish", position="above value"), candidate(BULL_TRAP), LIVE)
+    assert both.reads == "authentic break"
+
+
+def test_open_interest_alone_never_vetoes_a_trap():
+    """A crowded move is exactly what a trap looks like, so open interest is context and not a veto -
+    not even when it is the only thing the desk can see."""
+    view = td.desk_view(desk_state(oi=40.0), candidate(BULL_TRAP), LIVE)
+    assert view.reads == "engineered or unclear"
+    assert any("open interest" in r for r in view.reasons)
+
+    with_oi = td.desk_view(desk_state(structure="bullish", oi=40.0), candidate(BULL_TRAP), LIVE)
+    assert with_oi.reads != "authentic break", "open interest cannot complete a veto either"
+
+
+def test_open_interest_reads_the_same_for_both_sides():
+    """Open-interest change is unsigned with respect to direction: a genuine breakdown builds it just as
+    a genuine breakout does, so the bear mirror must not flip the comparison."""
+    for side in (BULL_TRAP, BEAR_TRAP):
+        building = td.desk_view(desk_state(oi=9.0), candidate(side), LIVE)
+        assert any("open interest" in r for r in building.reasons), side
+        assert td.desk_view(desk_state(oi=-9.0), candidate(side), LIVE).reasons == (), side
+
+
+def test_the_desk_reads_the_candidate_direction():
+    """A bull trap is vetoed by bullish structure, a bear trap by bearish. A desk that ignored the
+    candidate's side would read both the same way."""
+    bullish = desk_state(structure="bullish", position="above value")
+    assert td.desk_view(bullish, candidate(BULL_TRAP), LIVE).reads == "authentic break"
+    assert td.desk_view(bullish, candidate(BEAR_TRAP), LIVE).reads == "quiet"
+
+    bearish = desk_state(structure="bearish", position="below value")
+    assert td.desk_view(bearish, candidate(BEAR_TRAP), LIVE).reads == "authentic break"
+    assert td.desk_view(bearish, candidate(BULL_TRAP), LIVE).reads == "quiet"
+
+
+def test_the_desk_reads_its_own_higher_timeframe():
+    """The veto is a higher-timeframe question: structure on the desk's HTF, acceptance on its MTF."""
+    wrong_tf = {"spot": {"price": 81_500.0},
+                "smc": {"15m": {"structure": {"available": True, "bias": "bullish", "last_event": None}}},
+                "liquidity": {"15m": {"volume_profile": {"price_position": "above value"}}},
+                "derivatives": {}}
+    assert td.desk_view(wrong_tf, candidate(BULL_TRAP), LIVE).reads == "quiet"
+
+
+def test_a_desk_with_no_state_at_all_is_quiet_rather_than_raising():
+    for empty in (None, {}, {"smc": None, "liquidity": None, "derivatives": None}):
+        assert td.desk_view(empty, candidate(BULL_TRAP), LIVE).reads == "quiet"
+    assert td.desk_view(desk_state(oi="not a number"), candidate(BULL_TRAP), LIVE).reads == "quiet"
 
 
 def test_a_quiet_desk_does_not_block_a_declaration():
@@ -118,7 +255,8 @@ def test_a_quiet_desk_does_not_block_a_declaration():
 def test_a_weak_score_stays_a_watch_even_when_the_head_says_trap():
     v = asyncio.run(td.judge_candidate(judge_with(responder(noul=0.3)), {"spot": {"price": 80_900.0}},
                                        candidate(), LIVE))
-    assert v.score < td.DECLARE_POINTS and not v.declared and v.status == "watching"
+    assert v.score == pytest.approx(30.0) and not v.declared and v.status == "watching"
+    assert any("under the" in n for n in v.notes), "and it says why it is only a watch"
 
 
 def test_the_head_calling_it_authentic_stops_the_declaration():
