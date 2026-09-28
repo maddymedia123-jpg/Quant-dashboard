@@ -192,6 +192,69 @@ itself is free arithmetic.
 inside value; settlement happens once, so a refresh cannot double-report, and nothing expires on a clock.
 Declared traps warn on every affected desk and append a side note to its anchored summary.
 
+## Active Trade desk (spec sections 3 and 4)
+
+Enter a position and it is evaluated, pinned and tracked until you kill it. Everything the card asserts is
+either measured in code or judged by an agent that was shown the evidence; nothing on it is a number a
+model was simply asked to produce.
+
+**The deterministic half** (`core/trades.py`) runs first, so a card still carries usable levels when the
+model is unreachable:
+
+- **Stop verification.** A stop is judged by what sits between it and price, not by its distance. Resting
+  liquidity is swept before a level gives way, so a stop nearer than the pool below a long is one that
+  gets hunted on the way to a move that then works. When the given stop is unsafe — hunted, inside a
+  single bar's range, or on the wrong side of entry — the engine proposes one beyond the protective
+  structure and the cluster of levels around it, and the card shows both.
+- **Timed take-profits.** The price comes from the volatility bands, the time from the Fibonacci time
+  zones. A band behind the entry is not a target, so it falls back to a multiple of range and says so; a
+  Fibonacci window already past is not a date, so it falls back to the k-th candle close. Every target
+  carries its reward in R, and a first target nearer than the stop is called out.
+- **The pullback guardrail**, measured rather than assumed: the distribution of adverse excursions over
+  the lookback, stated in plain English so an ordinary retracement is not mistaken for a broken thesis.
+- **The monitoring schedule**: the exact candle closes to look at, in UTC.
+
+**The agents** (`core/agents/trade_desk.py`): five bullish and five bearish sub-agents across the same
+five domains, both sides asked about the same position, because a trade has a case for it and a case
+against it. The score is the difference, so a position whose opposite is equally well supported reads 50 —
+which is also the condition a trap is built in, and the card says so. The Head then calls it take, wait or
+stand aside.
+
+**Both handshakes are deterministic.** The four category heads are consulted from the verdicts they have
+already published rather than by asking a model again, which would cost more and could contradict what is
+on screen; a desk whose anchored candle has closed is silent rather than counted, and a `BULL TRAP RISK`
+verdict does not count as support for a long. The TRAP head is consulted against the anchored ledger:
+whether a live trap sits on the entry, the stop or any target, within half an ATR.
+
+**The probability is a confluence estimate, clamped to 15–85%, and labelled as such on the card.** Nothing
+in this system counts how often a setup like this has worked, so a number at the extremes would be a lie
+about what is known.
+
+**Cost:** two batched requests plus one Head call per judgement.
+
+**The card is pinned in the database**, not in session state, so it survives navigation, a refresh and a
+redeploy. The plan is written once at open: `Refresh` updates the live block only — current price, PnL in
+percent and in R, which targets have been reached — and cannot rewrite the thesis. `Re-judge` runs the
+desk again and opens a new card rather than editing the old one. `KILL` unpins it and stops its alerts.
+Several positions are tracked at once, each in its own card.
+
+## Alerts
+
+`core/alerts.py` detects what has happened to a pinned trade — a target reached, the stop reached, a trap
+developing on its levels, a monitoring checkpoint passing — and pushes it. Every event carries a dedup key
+behind a unique index, which is what makes an alert fire once rather than on every 30-second auto-refresh,
+and nothing is marked as sent unless a channel confirms delivery, so a refused send is retried rather than
+lost.
+
+**Telegram** and **Discord** are implemented and work as soon as `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID`
+or `DISCORD_WEBHOOK_URL` exist in the secrets. **Email and SMS are not wired up** — they need an SMTP
+account with a verified sender, and a paid gateway, neither of which exists here; they report themselves
+unconfigured rather than pretending to send.
+
+**Alerting only runs while the page is open.** Streamlit Cloud provides no scheduled worker, so continuous
+background alerting needs a cron host. That is a hosting decision, not something the code can supply for
+itself, and the tab says so rather than implying the alerts are always on.
+
 ## Accuracy report
 
 Every pinned summary is a prediction. When its candle closes it is scored once, against the price at that
@@ -234,6 +297,9 @@ tab shows hit rates with sample sizes; under 10 samples is labelled indicative.
 `.streamlit/secrets.toml` locally, Streamlit Cloud Secrets in production:
 
     TYPESAFE_API_KEY = "..."        # war-room rubric and trap audit (Jev); absent = Gemini fallback
+    TELEGRAM_BOT_TOKEN = "..."      # optional: trade alerts
+    TELEGRAM_CHAT_ID = "..."        # optional: trade alerts
+    DISCORD_WEBHOOK_URL = "..."     # optional: trade alerts
     GEMINI_API_KEY = "..."          # Director pipeline, and the rubric fallback
     OPENROUTER_API_KEY = "..."      # optional alternative to Gemini
     # optional overrides
@@ -246,8 +312,8 @@ tab shows hit rates with sample sizes; under 10 samples is labelled indicative.
 
 SQLite at `TI_DATA_DIR` (default `./data`, gitignored): anchored verdicts and their audit log, direction
 calls and report scores, per-category war-room anchors (`recon_anchors`), side notes
-(`recon_side_notes`), scored windows (`recon_scores`), anchored traps (`traps`), squeeze signals and
-futures samples. `STORE_VERSION` in `app.py` is passed to the cached `_store()` call, not defaulted:
+(`recon_side_notes`), scored windows (`recon_scores`), anchored traps (`traps`), pinned positions
+(`trades`) and what happened to them (`trade_events`), squeeze signals and futures samples. `STORE_VERSION` in `app.py` is passed to the cached `_store()` call, not defaulted:
 Streamlit hashes the arguments a call actually makes, so a version left as a default never reaches the
 cache key and a bump does nothing.
 
@@ -272,8 +338,12 @@ stops eating the candles. Dollar amounts in Markdown are escaped, because Stream
 
 ## Layout
 
-`core/data` providers → `core/indicators` pure functions (including `smc`, `liquidity`) →
-`core/agents` (rubric, judge, war room, profiles, LLM client, prompts, context, runner, report) →
-`core/store`, `core/anchors`, `core/accuracy`, `core/live_anchor`, `core/live_accuracy` (persistence,
-anchoring, scoring) → `ui/` renderers → `app.py` shell.
+`core/data` providers → `core/indicators` pure functions (including `smc`, `liquidity`, `fib_time`) →
+`core/traps` and `core/trades` (deterministic trap and trade arithmetic) →
+`core/agents` (rubric, judge, war room, profiles, trap desk, trade desk, LLM client, prompts, context,
+runner, report) → `core/store`, `core/anchors`, `core/accuracy`, `core/live_anchor`,
+`core/live_accuracy`, `core/alerts` (persistence, anchoring, scoring, notification) → `ui/` renderers
+→ `app.py` shell.
+
+Tabs: Live Recon, Intraday, Weekly, Monthly, TRAP Intelligence, Active Trade, War Room.
 Design spec and implementation plans live under `docs/superpowers/`.
