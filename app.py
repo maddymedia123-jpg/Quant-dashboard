@@ -42,6 +42,10 @@ from core.agents.settings import load_settings
 from core.agents.judge import Judge
 from core.agents.deck import sub_agent_deck
 from core.agents.trap_desk import judge_candidate, record, settle
+from core.agents.trade_desk import judge_trade
+from core.alerts import Dispatcher, Event, detect_events
+from core.indicators.fib_time import fib_time_zones
+from core import trades
 from core.traps import find_candidates
 from core.agents.live_recon import build_state, run_live_recon
 from core.agents.recon_profiles import LIVE, PROFILES
@@ -74,7 +78,7 @@ def _context():
 # Streamlit Cloud reloads the script on deploy but keeps cached resources, so a Store built from the
 # previous revision survives and is missing whatever that revision did not have. Keying the cache on a
 # version makes a deploy that changes core.store hand back a fresh Store instead of a stale one.
-STORE_VERSION = 6   # bump whenever core.store gains tables or methods, or changes how it matches rows
+STORE_VERSION = 7   # bump whenever core.store gains tables or methods, or changes how it matches rows
 
 
 @st.cache_resource(show_spinner=False)
@@ -89,7 +93,7 @@ def _live_store():
     `_store()` produced a cache key that never mentioned STORE_VERSION and a bump changed nothing. The
     hasattr probe stays as a second line of defence for a revision that forgets to bump."""
     s = _store(STORE_VERSION)
-    if not hasattr(s, "put_trap"):             # cached from an older revision
+    if not hasattr(s, "open_trade"):           # cached from an older revision
         _drop_store(s)
         s = _store(STORE_VERSION)
     return s
@@ -551,22 +555,240 @@ with tabs[4]:
                     st.caption(" · ".join(v.notes))
 
 # ---------- active trade ----------
+def _trade_price() -> float | None:
+    return m.spot.last or (next(iter(analyses.values())).price if analyses else None)
+
+
+def build_trade_plan(asset: str, side: str, entry: float, given_stop: float | None, category: str) -> dict:
+    """Everything the card needs, computed once at open: the stop, the targets, the guardrail, the plan.
+
+    Deterministic first and agents second, so a card still carries its levels when the model is down."""
+    profile = PROFILES[category]
+    ltf, mtf, htf = profile.timeframes
+    state = _desk_state(category, _data_stamp())
+    frame = m.spot.frames.get(mtf)
+    atr_value = (state.get("volatility", {}).get(mtf) or {}).get("atr")
+    atr = float(atr_value) if atr_value else entry * trades.DEFAULT_ATR_PCT
+    run_ms = int(time.time() * 1000)
+
+    stop = trades.verify_stop(state, side, entry, given_stop, mtf, atr)
+    fib = fib_time_zones(frame, atr_value=atr) if frame is not None and not frame.empty else None
+    targets = trades.timed_targets(state, side, entry, stop.stop, htf, atr, fib, run_ms)
+    pullback = trades.pullback_band(frame, side, timeframe=mtf)
+    schedule = trades.monitoring_schedule(run_ms, profile.timeframes, targets)
+
+    plan = {
+        "asset": asset, "side": side, "entry": entry, "category": category, "timeframe": mtf,
+        "horizon": profile.horizon, "atr": round(atr, 2), "built_ms": run_ms,
+        "stop_verdict": stop.verdict, "stop_reasons": list(stop.reasons),
+        "protects_at": stop.protects_at, "protects_kind": stop.protects_kind,
+        "targets": [{"name": t.name, "price": t.price, "basis": t.basis, "due_ms": t.due_ms,
+                     "due_from": t.due_from, "reward_r": t.reward_r} for t in targets],
+        "pullback": {"available": pullback.available, "note": pullback.note,
+                     "ordinary": pullback.ordinary, "edge": pullback.edge, "breaking": pullback.breaking,
+                     "horizon_bars": pullback.horizon_bars, "timeframe": pullback.timeframe,
+                     "levels": pullback.levels(side, entry) if pullback.available else {}},
+        "schedule": [{"timeframe": c.timeframe, "at_ms": c.at_ms, "reason": c.reason} for c in schedule],
+        "ok": False, "notes": [],
+    }
+
+    if settings is None:
+        plan["notes"] = ["No model provider is configured, so the ten sub-agents were not run. The levels "
+                         "above are deterministic and stand on their own."]
+        return plan, stop, targets
+
+    try:
+        judge = Judge(settings, typesafe_key=settings.typesafe_key, llm=LLMClient(settings))
+        verdict = asyncio.run(judge_trade(judge, state, side, entry, stop, targets, profile,
+                                         store=store, now_ms=run_ms, atr=atr))
+    except Exception as e:  # noqa: BLE001 - a card without a score is still a usable plan
+        plan["notes"] = [f"The trade desk could not be reached ({type(e).__name__}: {e}). The levels "
+                         "above are deterministic and stand on their own."]
+        return plan, stop, targets
+
+    plan.update({
+        "ok": verdict.ok, "score": verdict.score, "probability": verdict.probability,
+        "margin": verdict.margin, "for_points": verdict.for_points,
+        "against_points": verdict.against_points,
+        "for_domains": [{"key": d.key, "title": d.title, "points": d.points} for d in verdict.for_domains],
+        "against_domains": [{"key": d.key, "title": d.title, "points": d.points}
+                            for d in verdict.against_domains],
+        "head_call": verdict.head_call, "head_confidence": verdict.head_confidence,
+        "aligned": verdict.aligned,
+        "alignment": [{"category": a.category, "label": a.label, "bias": a.bias, "verdict": a.verdict,
+                       "note": a.note} for a in verdict.alignment],
+        "traps": [{"trap_id": t.trap_id, "side": t.side, "timeframe": t.timeframe, "level": t.level,
+                   "near": t.near, "distance": t.distance} for t in verdict.traps],
+        "notes": list(verdict.notes), "provider": verdict.provider,
+    })
+    return plan, stop, targets
+
+
+def trade_alert_pass(row: dict, prog) -> None:
+    """Detect what has happened to a pinned trade, log it once, and push whatever a channel accepts."""
+    plan = row.get("plan") or {}
+    checkpoints = [trades.Checkpoint(c.get("timeframe", ""), int(c.get("at_ms") or 0),
+                                     str(c.get("reason") or "")) for c in plan.get("schedule") or []]
+    traps = [type("T", (), {"trap_id": t.get("trap_id"), "side": t.get("side", ""),
+                            "timeframe": t.get("timeframe", ""), "near": t.get("near", ""),
+                            "distance": t.get("distance", 0.0)})() for t in plan.get("traps") or []]
+    events = detect_events(row, prog.price if prog else None, prog, traps, checkpoints, now_ms)
+    for e in events:
+        # the unique index decides what is new: the same target reached is one event, not one per refresh
+        store.add_trade_event(row["id"], now_ms, e.kind, e.dedup_key, e.headline, e.price)
+    pending = store.trade_events(row["id"], unnotified_only=True)
+    if not pending:
+        return
+    dispatcher = Dispatcher(dict(st.secrets) if hasattr(st, "secrets") else {})
+    to_send = [Event(p["kind"], p["dedup_key"], p["headline"], p.get("price")) for p in pending]
+    delivered, problems = dispatcher.send(to_send)
+    if delivered:
+        keys = {e.dedup_key for e in delivered}
+        store.mark_notified([p["id"] for p in pending if p["dedup_key"] in keys])
+    for note in problems[:1]:
+        st.caption(f"Alerts: {note}")
+
+
 with tabs[5]:
-    live, intraday = analyses.get("live"), analyses.get("intraday")
-    spot = m.spot.last or (live.price if live else 0.0)
-    with st.form("trade"):
-        c1, c2, c3, c4, c5 = st.columns(5)
-        t_dir = c1.selectbox("Direction", ["LONG", "SHORT"])
-        t_entry = c2.number_input("Entry ($)", value=float(round(spot, 2)), step=10.0)
-        t_lev = c3.number_input("Leverage (x)", min_value=1.0, max_value=125.0, value=10.0, step=1.0)
-        t_sl = c4.number_input("Stop loss ($)", value=float(round(spot * 0.98, 2)), step=10.0)
-        t_tp = c5.number_input("Take profit ($)", value=float(round(spot * 1.04, 2)), step=10.0)
-        go = st.form_submit_button("Run stress-test", width="stretch")
-    if go:
-        tm = map_trade({"dir": t_dir, "entry": t_entry, "lev": t_lev, "sl": t_sl, "tp": t_tp}, live, intraday, m.futures)
-        panels.render(panels.trade_result_html(tm))
-    else:
-        st.caption("Enter the position and run the stress-test. Structures come from the 15m and 1h EMAs and swing levels.")
+    st.markdown("### Active trade desk")
+    st.caption("Ten sub-agents on the position, the four category heads and the TRAP head consulted, and "
+               "a card that stays pinned until you kill it. Cards live in the database, so they survive a "
+               "refresh and a redeploy.")
+
+    spot = _trade_price()
+    with st.form("new_trade", clear_on_submit=False):
+        c1, c2, c3, c4 = st.columns([1.2, 1, 1, 1])
+        f_asset = c1.text_input("Asset", value="BTC/USDT")
+        f_side = c2.selectbox("Direction", ["LONG", "SHORT"])
+        f_entry = c3.number_input("Entry ($)", value=float(round(spot or 0.0, 2)), step=10.0,
+                                  help="Where you actually got in.")
+        f_stop = c4.number_input("Stop loss ($) - 0 to let the desk place it", value=0.0, step=10.0,
+                                 help="Leave at 0 and the engine derives a structural stop.")
+        f_cat = st.selectbox("Judge it over", list(PROFILES),
+                             format_func=lambda k: f"{CATEGORIES[k].label} ({PROFILES[k].horizon})", index=0)
+        opened = st.form_submit_button("Open and track this trade", width="stretch",
+                                       disabled=not spot)
+    if opened:
+        if not f_entry:
+            st.error("An entry price is needed.")
+        else:
+            with st.status("Active trade desk: ten sub-agents and two consultations...", expanded=False) as s_:
+                try:
+                    plan, stop_v, _t = build_trade_plan(f_asset.strip() or "BTC/USDT", f_side,
+                                                        float(f_entry),
+                                                        float(f_stop) if f_stop else None, f_cat)
+                    tid = store.open_trade(opened_ms=int(time.time() * 1000), asset=plan["asset"],
+                                           side=f_side, entry=float(f_entry), stop=stop_v.stop,
+                                           given_stop=float(f_stop) if f_stop else None,
+                                           stop_verdict=stop_v.verdict, category=f_cat, plan=plan)
+                    s_.update(label=f"Trade #{tid} pinned", state="complete")
+                except Exception as e:  # noqa: BLE001 - a failed open must not blank the tab
+                    s_.update(label=f"Could not open the trade: {type(e).__name__}: {e}", state="error")
+                    st.error(f"The trade was not pinned: {e}")
+
+    try:
+        open_trades = store.trades(status="open", limit=10)
+        closed_trades = store.trades(status="closed", limit=3)
+    except Exception as e:  # noqa: BLE001
+        open_trades, closed_trades = [], []
+        st.error(f"The trade ledger could not be read ({type(e).__name__}: {e}). "
+                 "Do not read this as 'no open positions'.")
+
+    if not open_trades:
+        st.caption("No position is being tracked. Open one above and it stays pinned here.")
+
+    price_now = _trade_price()
+    for row in open_trades:
+        plan = row.get("plan") or {}
+        target_objs = [trades.TimedTarget(t.get("name", ""), float(t.get("price") or 0.0),
+                                          str(t.get("basis") or ""), t.get("due_ms"),
+                                          float(t.get("reward_r") or 0.0), str(t.get("due_from") or ""))
+                       for t in plan.get("targets") or []]
+        prog = None
+        if price_now:
+            try:
+                prog = trades.progress(row["side"], float(row["entry"]), float(row["stop"]),
+                                       target_objs, float(price_now))
+            except Exception as e:  # noqa: BLE001
+                st.warning(f"Trade #{row['id']}: live numbers unavailable ({e}).")
+        try:
+            panels.render(panels.trade_card_html(row, prog, now_ms))
+        except Exception as e:  # noqa: BLE001 - one bad card must not remove the others
+            st.error(f"Trade #{row['id']} ({row.get('asset')} {row.get('side')}) could not be drawn "
+                     f"({type(e).__name__}: {e}). Its levels: entry {row.get('entry')}, "
+                     f"stop {row.get('stop')}.")
+        if prog is not None:
+            try:
+                trade_alert_pass(row, prog)
+            except Exception as e:  # noqa: BLE001
+                st.caption(f"Alerts unavailable for #{row['id']}: {e}")
+
+        b1, b2, b3 = st.columns(3)
+        if b1.button("Refresh", key=f"tr_refresh_{row['id']}",
+                     help="Updates the live numbers only. The thesis and the plan are not rewritten."):
+            store.touch_trade(row["id"], now_ms)
+            st.rerun()
+        if b2.button("Re-judge", key=f"tr_rejudge_{row['id']}", disabled=settings is None,
+                     help="Runs the ten sub-agents again and writes a new plan for this position."):
+            with st.status("Re-judging the position...", expanded=False) as s2:
+                try:
+                    fresh_plan, fresh_stop, _ = build_trade_plan(
+                        row["asset"], row["side"], float(row["entry"]),
+                        row.get("given_stop"), row.get("category") or "live")
+                    new_id = store.open_trade(opened_ms=int(time.time() * 1000), asset=row["asset"],
+                                              side=row["side"], entry=float(row["entry"]),
+                                              stop=fresh_stop.stop, given_stop=row.get("given_stop"),
+                                              stop_verdict=fresh_stop.verdict,
+                                              category=row.get("category") or "live", plan=fresh_plan)
+                    store.close_trade(row["id"], f"re-judged as #{new_id}", price_now, now_ms)
+                    s2.update(label=f"Re-judged as #{new_id}", state="complete")
+                except Exception as e:  # noqa: BLE001
+                    s2.update(label=f"Could not re-judge: {e}", state="error")
+            st.rerun()
+        if b3.button("KILL", key=f"tr_kill_{row['id']}", type="primary",
+                     help="Unpins the card and stops every alert for this position."):
+            store.close_trade(row["id"], "killed by the trader", price_now, now_ms)
+            st.rerun()
+
+    if closed_trades:
+        with st.expander(f"Recently closed ({len(closed_trades)})", expanded=False):
+            for row in closed_trades:
+                try:
+                    panels.render(panels.trade_card_html(row, None, now_ms))
+                except Exception as e:  # noqa: BLE001
+                    st.caption(f"#{row['id']} could not be drawn: {e}")
+
+    with st.expander("Leverage and liquidation stress-test", expanded=False):
+        st.caption("A separate question from the card above: how much room a given leverage leaves before "
+                   "liquidation, against the structures on the 15m and 1h.")
+        live_a, intraday_a = analyses.get("live"), analyses.get("intraday")
+        base = _trade_price() or (live_a.price if live_a else 0.0)
+        with st.form("stress_test"):
+            d1, d2, d3, d4, d5 = st.columns(5)
+            s_dir = d1.selectbox("Direction", ["LONG", "SHORT"], key="st_dir")
+            s_entry = d2.number_input("Entry ($)", value=float(round(base, 2)), step=10.0, key="st_entry")
+            s_lev = d3.number_input("Leverage (x)", min_value=1.0, max_value=125.0, value=10.0, step=1.0,
+                                    key="st_lev")
+            s_sl = d4.number_input("Stop loss ($)", value=float(round(base * 0.98, 2)), step=10.0,
+                                   key="st_sl")
+            s_tp = d5.number_input("Take profit ($)", value=float(round(base * 1.04, 2)), step=10.0,
+                                   key="st_tp")
+            run_stress = st.form_submit_button("Run stress-test", width="stretch")
+        if run_stress:
+            try:
+                tm = map_trade({"dir": s_dir, "entry": s_entry, "lev": s_lev, "sl": s_sl, "tp": s_tp},
+                               live_a, intraday_a, m.futures)
+                panels.render(panels.trade_result_html(tm))
+            except Exception as e:  # noqa: BLE001 - the stress-test must not blank the tab
+                st.warning(f"Stress-test unavailable: {e}")
+
+    channels = Dispatcher(dict(st.secrets) if hasattr(st, "secrets") else {}).channels
+    ready = [c.name for c in channels if c.configured]
+    missing = [f"{c.name} ({c.reason})" for c in channels if not c.configured]
+    st.caption(("Alerts go to: " + ", ".join(ready) + ". " if ready else "No alert channel is configured. ")
+               + "Not set up: " + "; ".join(missing)
+               + ". Alerts are detected and sent while this page is open - continuous background alerting "
+                 "needs a scheduled worker, which Streamlit Cloud does not provide.")
 
 # ---------- war room ----------
 with tabs[6]:
