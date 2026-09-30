@@ -186,9 +186,10 @@ if ((P.forecast || []).length) {
   const tag = document.createElement('span');
   tag.style.setProperty('--c', T.accent);
   tag.textContent = NARROW ? 'forecast' : (P.forecastLabel || 'forecast envelope');
-  tag.title = 'The volatility envelope over this desk\'s horizon, drawn per bar: the body spans half a '
-            + 'sigma either side of the drift path and the wicks a full sigma, widening as the square '
-            + 'root of the bars ahead. Not a prediction of any candle\'s shape.';
+  tag.title = "The volatility envelope over the horizon of this desk, drawn per bar: the body "
+            + "spans half a sigma either side of the drift path and the wicks a full sigma, "
+            + "widening as the square root of the bars ahead. Not a prediction of the shape of "
+            + "any candle.";
   legend.appendChild(tag);
 }
 ['upper', 'lower', 'mid'].forEach(k => {
