@@ -1,0 +1,1635 @@
+{
+ "markets": [
+  {
+   "id": "701552",
+   "question": "Will Ethereum dip to $1,500 by December 31, 2026?",
+   "slug": "will-ethereum-dip-to-1500-by-december-31-2026-865-787",
+   "category": "Crypto",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.064,
+    0.936
+   ],
+   "volume_24h": 235015.83958599996,
+   "volume_total": 2998136.885035,
+   "liquidity": 164176.23275,
+   "end_date": "2027-01-01T05:00:00Z",
+   "execution": {
+    "band": "fragile",
+    "label": "Fragile",
+    "score": 44.4,
+    "flags": [
+     "extreme price"
+    ],
+    "reason": "Quote can move or fill badly; verify depth before any sizing."
+   },
+   "uncertainty": 12.8,
+   "days_left": 92,
+   "polymarket_url": "https://polymarket.com/event/will-ethereum-dip-to-1500-by-december-31-2026-865-787?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/701552",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-ethereum-dip-to-1500-by-december-31-2026-865-787",
+   "updated_at": "2026-09-23T12:30:01.418138+00:00"
+  },
+  {
+   "id": "4797724",
+   "question": "Will Bitcoin dip to $82,500 in September?",
+   "slug": "will-bitcoin-dip-to-82pt5k-in-september-2026",
+   "category": "Crypto",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.0945,
+    0.9055
+   ],
+   "volume_24h": 226108.24316600003,
+   "volume_total": 717709.108399,
+   "liquidity": 53043.93176,
+   "end_date": "2026-10-01T04:00:00Z",
+   "execution": {
+    "band": "fragile",
+    "label": "Fragile",
+    "score": 32.4,
+    "flags": [
+     "near close"
+    ],
+    "reason": "Quote can move or fill badly; verify depth before any sizing."
+   },
+   "uncertainty": 18.9,
+   "days_left": 0,
+   "polymarket_url": "https://polymarket.com/event/will-bitcoin-dip-to-82pt5k-in-september-2026?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/4797724",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-bitcoin-dip-to-82pt5k-in-september-2026",
+   "updated_at": "2026-09-30T17:48:23.321587+00:00"
+  },
+  {
+   "id": "4052418",
+   "question": "Will Bitcoin reach $87,500 in September?",
+   "slug": "will-bitcoin-reach-87pt5k-in-september-2026",
+   "category": "Crypto",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.0115,
+    0.9885
+   ],
+   "volume_24h": 182498.459014,
+   "volume_total": 1435811.3814059994,
+   "liquidity": 106269.45859,
+   "end_date": "2026-10-01T04:00:00Z",
+   "execution": {
+    "band": "fragile",
+    "label": "Fragile",
+    "score": 14.8,
+    "flags": [
+     "extreme price",
+     "near close"
+    ],
+    "reason": "Quote can move or fill badly; verify depth before any sizing."
+   },
+   "uncertainty": 2.3,
+   "days_left": 0,
+   "polymarket_url": "https://polymarket.com/event/will-bitcoin-reach-87pt5k-in-september-2026?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/4052418",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-bitcoin-reach-87pt5k-in-september-2026",
+   "updated_at": "2026-09-30T17:48:26.421217+00:00"
+  },
+  {
+   "id": "4052450",
+   "question": "Will Ethereum reach $2,800 in September?",
+   "slug": "will-ethereum-reach-2800-in-september-2026",
+   "category": "Crypto",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.87,
+    0.13
+   ],
+   "volume_24h": 171047.42742099997,
+   "volume_total": 400910.90635400004,
+   "liquidity": 37335.1551,
+   "end_date": "2026-10-01T04:00:00Z",
+   "execution": {
+    "band": "fragile",
+    "label": "Fragile",
+    "score": 34.8,
+    "flags": [
+     "near close"
+    ],
+    "reason": "Quote can move or fill badly; verify depth before any sizing."
+   },
+   "uncertainty": 26.0,
+   "days_left": 0,
+   "polymarket_url": "https://polymarket.com/event/will-ethereum-reach-2800-in-september-2026?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/4052450",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-ethereum-reach-2800-in-september-2026",
+   "updated_at": "2026-09-21T20:14:57.332309+00:00"
+  },
+  {
+   "id": "4190831",
+   "question": "Will Bitcoin dip to $77,500 in September?",
+   "slug": "will-bitcoin-dip-to-77pt5k-in-september-2026-from-september-3",
+   "category": "Crypto",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.954,
+    0.046
+   ],
+   "volume_24h": 115026.76596200002,
+   "volume_total": 210865.611646,
+   "liquidity": 63807.54965,
+   "end_date": "2026-10-01T04:00:00Z",
+   "execution": {
+    "band": "fragile",
+    "label": "Fragile",
+    "score": 17.1,
+    "flags": [
+     "extreme price",
+     "near close"
+    ],
+    "reason": "Quote can move or fill badly; verify depth before any sizing."
+   },
+   "uncertainty": 9.2,
+   "days_left": 0,
+   "polymarket_url": "https://polymarket.com/event/will-bitcoin-dip-to-77pt5k-in-september-2026-from-september-3?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/4190831",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-bitcoin-dip-to-77pt5k-in-september-2026-from-september-3",
+   "updated_at": "2026-09-10T12:11:18.989803+00:00"
+  },
+  {
+   "id": "701496",
+   "question": "Will Bitcoin reach $100,000 by December 31, 2026?",
+   "slug": "will-bitcoin-reach-100000-by-december-31-2026-571-361-361",
+   "category": "Crypto",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.275,
+    0.725
+   ],
+   "volume_24h": 92631.374883,
+   "volume_total": 3228059.1633780003,
+   "liquidity": 93749.1136,
+   "end_date": "2027-01-01T05:00:00Z",
+   "execution": {
+    "band": "clean",
+    "label": "Cleaner",
+    "score": 64.7,
+    "flags": [],
+    "reason": "Better depth and less extreme pricing for research."
+   },
+   "uncertainty": 55.0,
+   "days_left": 92,
+   "polymarket_url": "https://polymarket.com/event/will-bitcoin-reach-100000-by-december-31-2026-571-361-361?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/701496",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-bitcoin-reach-100000-by-december-31-2026-571-361-361",
+   "updated_at": "2026-09-04T14:36:31.432972+00:00"
+  },
+  {
+   "id": "3865960",
+   "question": "Will Bitcoin dip to $70,000 by December 31, 2026?",
+   "slug": "will-bitcoin-dip-to-70000-by-december-31-2026-from-august-24",
+   "category": "Crypto",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.355,
+    0.645
+   ],
+   "volume_24h": 89437.220555,
+   "volume_total": 542263.028785,
+   "liquidity": 51198.3312,
+   "end_date": "2027-01-01T05:00:00Z",
+   "execution": {
+    "band": "clean",
+    "label": "Cleaner",
+    "score": 70.1,
+    "flags": [],
+    "reason": "Better depth and less extreme pricing for research."
+   },
+   "uncertainty": 71.0,
+   "days_left": 92,
+   "polymarket_url": "https://polymarket.com/event/will-bitcoin-dip-to-70000-by-december-31-2026-from-august-24?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/3865960",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-bitcoin-dip-to-70000-by-december-31-2026-from-august-24",
+   "updated_at": "2026-09-24T14:13:56.955010+00:00"
+  },
+  {
+   "id": "5062271",
+   "question": "Will Bitcoin reach $86,000 September 28-October 4?",
+   "slug": "will-bitcoin-reach-86k-september-28-october-4-2026",
+   "category": "Crypto",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.445,
+    0.555
+   ],
+   "volume_24h": 87378.862704,
+   "volume_total": 146465.81699099997,
+   "liquidity": 43630.8364,
+   "end_date": "2026-10-05T04:00:00Z",
+   "execution": {
+    "band": "clean",
+    "label": "Cleaner",
+    "score": 69.3,
+    "flags": [],
+    "reason": "Better depth and less extreme pricing for research."
+   },
+   "uncertainty": 89.0,
+   "days_left": 4,
+   "polymarket_url": "https://polymarket.com/event/will-bitcoin-reach-86k-september-28-october-4-2026?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/5062271",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-bitcoin-reach-86k-september-28-october-4-2026",
+   "updated_at": "2026-09-30T17:48:38.322515+00:00"
+  },
+  {
+   "id": "2467362",
+   "question": "Will Ethereum dip to $1,250 by December 31, 2026?",
+   "slug": "will-ethereum-dip-to-1250-by-december-31-2026-from-june-8",
+   "category": "Crypto",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.225,
+    0.775
+   ],
+   "volume_24h": 86495.23470799997,
+   "volume_total": 355457.9457100002,
+   "liquidity": 339855.5041,
+   "end_date": "2027-01-01T05:00:00Z",
+   "execution": {
+    "band": "clean",
+    "label": "Cleaner",
+    "score": 67.3,
+    "flags": [],
+    "reason": "Better depth and less extreme pricing for research."
+   },
+   "uncertainty": 45.0,
+   "days_left": 92,
+   "polymarket_url": "https://polymarket.com/event/will-ethereum-dip-to-1250-by-december-31-2026-from-june-8?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/2467362",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-ethereum-dip-to-1250-by-december-31-2026-from-june-8",
+   "updated_at": "2026-07-21T22:51:37.370091+00:00"
+  },
+  {
+   "id": "701493",
+   "question": "Will Bitcoin reach $130,000 by December 31, 2026?",
+   "slug": "will-bitcoin-reach-130000-by-december-31-2026-756-151-855",
+   "category": "Crypto",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.056,
+    0.944
+   ],
+   "volume_24h": 81360.014288,
+   "volume_total": 1922882.283089,
+   "liquidity": 78021.21749,
+   "end_date": "2027-01-01T05:00:00Z",
+   "execution": {
+    "band": "fragile",
+    "label": "Fragile",
+    "score": 37.8,
+    "flags": [
+     "extreme price"
+    ],
+    "reason": "Quote can move or fill badly; verify depth before any sizing."
+   },
+   "uncertainty": 11.2,
+   "days_left": 92,
+   "polymarket_url": "https://polymarket.com/event/will-bitcoin-reach-130000-by-december-31-2026-756-151-855?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/701493",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-bitcoin-reach-130000-by-december-31-2026-756-151-855",
+   "updated_at": "2026-09-30T01:12:55.760551+00:00"
+  },
+  {
+   "id": "2467206",
+   "question": "Will Bitcoin reach $95,000 by December 31, 2026?",
+   "slug": "will-bitcoin-reach-95000-by-december-31-2026-from-june-8",
+   "category": "Crypto",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.325,
+    0.675
+   ],
+   "volume_24h": 79652.750096,
+   "volume_total": 611874.0562110001,
+   "liquidity": 62926.9657,
+   "end_date": "2027-01-01T05:00:00Z",
+   "execution": {
+    "band": "clean",
+    "label": "Cleaner",
+    "score": 68.1,
+    "flags": [],
+    "reason": "Better depth and less extreme pricing for research."
+   },
+   "uncertainty": 65.0,
+   "days_left": 92,
+   "polymarket_url": "https://polymarket.com/event/will-bitcoin-reach-95000-by-december-31-2026-from-june-8?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/2467206",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-bitcoin-reach-95000-by-december-31-2026-from-june-8",
+   "updated_at": "2026-09-12T12:32:24.497628+00:00"
+  },
+  {
+   "id": "4052446",
+   "question": "Will Ethereum reach $3,200 in September?",
+   "slug": "will-ethereum-reach-3200-in-september-2026",
+   "category": "Crypto",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.052,
+    0.948
+   ],
+   "volume_24h": 79372.92046299999,
+   "volume_total": 653772.3981799998,
+   "liquidity": 42487.15505,
+   "end_date": "2026-10-01T04:00:00Z",
+   "execution": {
+    "band": "fragile",
+    "label": "Fragile",
+    "score": 11.5,
+    "flags": [
+     "extreme price",
+     "near close"
+    ],
+    "reason": "Quote can move or fill badly; verify depth before any sizing."
+   },
+   "uncertainty": 10.4,
+   "days_left": 0,
+   "polymarket_url": "https://polymarket.com/event/will-ethereum-reach-3200-in-september-2026?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/4052446",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-ethereum-reach-3200-in-september-2026",
+   "updated_at": "2026-09-22T18:29:07.770901+00:00"
+  },
+  {
+   "id": "4471006",
+   "question": "Will Ethereum reach $2,600 in September?",
+   "slug": "will-ethereum-reach-2600-in-september-2026-from-september-11",
+   "category": "Crypto",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.83,
+    0.17
+   ],
+   "volume_24h": 77057.458894,
+   "volume_total": 173967.56405000002,
+   "liquidity": 52638.3983,
+   "end_date": "2026-10-01T04:00:00Z",
+   "execution": {
+    "band": "fragile",
+    "label": "Fragile",
+    "score": 31.6,
+    "flags": [
+     "near close"
+    ],
+    "reason": "Quote can move or fill badly; verify depth before any sizing."
+   },
+   "uncertainty": 34.0,
+   "days_left": 0,
+   "polymarket_url": "https://polymarket.com/event/will-ethereum-reach-2600-in-september-2026-from-september-11?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/4471006",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-ethereum-reach-2600-in-september-2026-from-september-11",
+   "updated_at": "2026-09-14T19:59:29.922889+00:00"
+  },
+  {
+   "id": "4338638",
+   "question": "Will Bitcoin reach $80,000 in September?",
+   "slug": "will-bitcoin-reach-80k-in-september-2026-from-september-7",
+   "category": "Crypto",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.905,
+    0.095
+   ],
+   "volume_24h": 74211.65239800002,
+   "volume_total": 470621.0518780001,
+   "liquidity": 58344.1196,
+   "end_date": "2026-10-01T04:00:00Z",
+   "execution": {
+    "band": "fragile",
+    "label": "Fragile",
+    "score": 26.5,
+    "flags": [
+     "near close"
+    ],
+    "reason": "Quote can move or fill badly; verify depth before any sizing."
+   },
+   "uncertainty": 19.0,
+   "days_left": 0,
+   "polymarket_url": "https://polymarket.com/event/will-bitcoin-reach-80k-in-september-2026-from-september-7?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/4338638",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-bitcoin-reach-80k-in-september-2026-from-september-7",
+   "updated_at": "2026-09-18T13:49:02.963300+00:00"
+  },
+  {
+   "id": "701549",
+   "question": "Will Ethereum reach $3,500 by December 31, 2026?",
+   "slug": "will-ethereum-reach-3500-by-december-31-2026",
+   "category": "Crypto",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.345,
+    0.655
+   ],
+   "volume_24h": 72213.141619,
+   "volume_total": 890772.1013279997,
+   "liquidity": 52112.5856,
+   "end_date": "2027-01-01T05:00:00Z",
+   "execution": {
+    "band": "clean",
+    "label": "Cleaner",
+    "score": 69.5,
+    "flags": [],
+    "reason": "Better depth and less extreme pricing for research."
+   },
+   "uncertainty": 69.0,
+   "days_left": 92,
+   "polymarket_url": "https://polymarket.com/event/will-ethereum-reach-3500-by-december-31-2026?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/701549",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-ethereum-reach-3500-by-december-31-2026",
+   "updated_at": "2026-09-28T13:16:04.586455+00:00"
+  },
+  {
+   "id": "4844455",
+   "question": "Will Ethereum reach $2,800 in September?",
+   "slug": "will-ethereum-reach-2800-in-september-2026-from-september-22",
+   "category": "Crypto",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.013,
+    0.987
+   ],
+   "volume_24h": 70021.25894100001,
+   "volume_total": 211103.298855,
+   "liquidity": 59977.25297,
+   "end_date": "2026-10-01T04:00:00Z",
+   "execution": {
+    "band": "fragile",
+    "label": "Fragile",
+    "score": 8.9,
+    "flags": [
+     "extreme price",
+     "near close"
+    ],
+    "reason": "Quote can move or fill badly; verify depth before any sizing."
+   },
+   "uncertainty": 2.6,
+   "days_left": 0,
+   "polymarket_url": "https://polymarket.com/event/will-ethereum-reach-2800-in-september-2026-from-september-22?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/4844455",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-ethereum-reach-2800-in-september-2026-from-september-22",
+   "updated_at": "2026-09-30T17:29:42.112717+00:00"
+  },
+  {
+   "id": "4761842",
+   "question": "Will Ethereum dip to $2,600 in September?",
+   "slug": "will-ethereum-dip-to-2600-in-september-2026-from-september-20",
+   "category": "Crypto",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.0385,
+    0.9615
+   ],
+   "volume_24h": 69536.79134200001,
+   "volume_total": 337995.87018100003,
+   "liquidity": 51774.30379,
+   "end_date": "2026-10-01T04:00:00Z",
+   "execution": {
+    "band": "fragile",
+    "label": "Fragile",
+    "score": 10.6,
+    "flags": [
+     "extreme price",
+     "near close"
+    ],
+    "reason": "Quote can move or fill badly; verify depth before any sizing."
+   },
+   "uncertainty": 7.7,
+   "days_left": 0,
+   "polymarket_url": "https://polymarket.com/event/will-ethereum-dip-to-2600-in-september-2026-from-september-20?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/4761842",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-ethereum-dip-to-2600-in-september-2026-from-september-20",
+   "updated_at": "2026-09-30T17:48:44.521534+00:00"
+  },
+  {
+   "id": "2467208",
+   "question": "Will Bitcoin reach $80,000 by December 31, 2026?",
+   "slug": "will-bitcoin-reach-80000-by-december-31-2026-from-june-8",
+   "category": "Crypto",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.865,
+    0.135
+   ],
+   "volume_24h": 69249.66260199998,
+   "volume_total": 604018.088294,
+   "liquidity": 125191.4364,
+   "end_date": "2027-01-01T05:00:00Z",
+   "execution": {
+    "band": "clean",
+    "label": "Cleaner",
+    "score": 61.2,
+    "flags": [],
+    "reason": "Better depth and less extreme pricing for research."
+   },
+   "uncertainty": 27.0,
+   "days_left": 92,
+   "polymarket_url": "https://polymarket.com/event/will-bitcoin-reach-80000-by-december-31-2026-from-june-8?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/2467208",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-bitcoin-reach-80000-by-december-31-2026-from-june-8",
+   "updated_at": "2026-08-23T00:46:42.501616+00:00"
+  },
+  {
+   "id": "4589627",
+   "question": "Will Ethereum reach $2,600 in September?",
+   "slug": "will-ethereum-reach-2600-in-september-2026-from-september-15",
+   "category": "Crypto",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.465,
+    0.535
+   ],
+   "volume_24h": 67534.822304,
+   "volume_total": 137995.209793,
+   "liquidity": 40291.5733,
+   "end_date": "2026-10-01T04:00:00Z",
+   "execution": {
+    "band": "fragile",
+    "label": "Fragile",
+    "score": 51.6,
+    "flags": [
+     "near close"
+    ],
+    "reason": "Quote can move or fill badly; verify depth before any sizing."
+   },
+   "uncertainty": 93.0,
+   "days_left": 0,
+   "polymarket_url": "https://polymarket.com/event/will-ethereum-reach-2600-in-september-2026-from-september-15?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/4589627",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-ethereum-reach-2600-in-september-2026-from-september-15",
+   "updated_at": "2026-09-17T11:50:19.094985+00:00"
+  },
+  {
+   "id": "4678620",
+   "question": "Will Netherlands win on 2026-10-01?",
+   "slug": "unl-grc-nld-2026-10-01-nld",
+   "category": "Crypto",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.465,
+    0.535
+   ],
+   "volume_24h": 67527.67551699997,
+   "volume_total": 87727.308266,
+   "liquidity": 208241.5768,
+   "end_date": "2026-10-01T18:45:00Z",
+   "execution": {
+    "band": "fragile",
+    "label": "Fragile",
+    "score": 57.6,
+    "flags": [
+     "near close"
+    ],
+    "reason": "Quote can move or fill badly; verify depth before any sizing."
+   },
+   "uncertainty": 93.0,
+   "days_left": 1,
+   "polymarket_url": "https://polymarket.com/event/unl-grc-nld-2026-10-01-nld?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/4678620",
+   "voxodds_odds_url": "https://voxodds.com/odds/unl-grc-nld-2026-10-01-nld",
+   "updated_at": "2026-09-30T17:48:45.721523+00:00"
+  },
+  {
+   "id": "5062280",
+   "question": "Will Bitcoin dip to $78,000 September 28-October 4?",
+   "slug": "will-bitcoin-dip-to-78k-september-28-october-4-2026",
+   "category": "Crypto",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.06,
+    0.94
+   ],
+   "volume_24h": 66870.34629199999,
+   "volume_total": 112253.788948,
+   "liquidity": 41572.581,
+   "end_date": "2026-10-05T04:00:00Z",
+   "execution": {
+    "band": "fragile",
+    "label": "Fragile",
+    "score": 31.1,
+    "flags": [
+     "extreme price"
+    ],
+    "reason": "Quote can move or fill badly; verify depth before any sizing."
+   },
+   "uncertainty": 12.0,
+   "days_left": 4,
+   "polymarket_url": "https://polymarket.com/event/will-bitcoin-dip-to-78k-september-28-october-4-2026?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/5062280",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-bitcoin-dip-to-78k-september-28-october-4-2026",
+   "updated_at": "2026-09-30T17:29:43.912564+00:00"
+  },
+  {
+   "id": "701504",
+   "question": "Will Bitcoin dip to $25,000 by December 31, 2026?",
+   "slug": "will-bitcoin-dip-to-25000-by-december-31-2026-948-243-253-666-115-787-981-282-573-719-186-417-762-754-486-851-278-145-417-178-244",
+   "category": "Crypto",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.042,
+    0.958
+   ],
+   "volume_24h": 66861.305064,
+   "volume_total": 1081154.9708430003,
+   "liquidity": 86813.98147,
+   "end_date": "2027-01-01T05:00:00Z",
+   "execution": {
+    "band": "fragile",
+    "label": "Fragile",
+    "score": 36.9,
+    "flags": [
+     "extreme price"
+    ],
+    "reason": "Quote can move or fill badly; verify depth before any sizing."
+   },
+   "uncertainty": 8.4,
+   "days_left": 92,
+   "polymarket_url": "https://polymarket.com/event/will-bitcoin-dip-to-25000-by-december-31-2026-948-243-253-666-115-787-981-282-573-719-186-417-762-754-486-851-278-145-417-178-244?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/701504",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-bitcoin-dip-to-25000-by-december-31-2026-948-243-253-666-115-787-981-282-573-719-186-417-762-754-486-851-278-145-417-178-244",
+   "updated_at": "2026-07-24T16:36:06.823278+00:00"
+  },
+  {
+   "id": "701501",
+   "question": "Will Bitcoin dip to $55,000 by December 31, 2026?",
+   "slug": "will-bitcoin-dip-to-55000-by-december-31-2026-527-627-868-745-188-361-314-673-612-946-821-624-855-557-684-381-884-939-182-939-516",
+   "category": "Crypto",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.085,
+    0.915
+   ],
+   "volume_24h": 66741.608098,
+   "volume_total": 6433132.435146,
+   "liquidity": 194778.4909,
+   "end_date": "2027-01-01T05:00:00Z",
+   "execution": {
+    "band": "watch",
+    "label": "Watch",
+    "score": 57.8,
+    "flags": [],
+    "reason": "Usable for research, but needs confirmation or better depth."
+   },
+   "uncertainty": 17.0,
+   "days_left": 92,
+   "polymarket_url": "https://polymarket.com/event/will-bitcoin-dip-to-55000-by-december-31-2026-527-627-868-745-188-361-314-673-612-946-821-624-855-557-684-381-884-939-182-939-516?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/701501",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-bitcoin-dip-to-55000-by-december-31-2026-527-627-868-745-188-361-314-673-612-946-821-624-855-557-684-381-884-939-182-939-516",
+   "updated_at": "2026-09-28T20:19:42.213459+00:00"
+  },
+  {
+   "id": "4052445",
+   "question": "Will Ethereum reach $3,300 in September?",
+   "slug": "will-ethereum-reach-3300-in-september-2026",
+   "category": "Crypto",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.038,
+    0.962
+   ],
+   "volume_24h": 66009.84886799999,
+   "volume_total": 446307.29211200005,
+   "liquidity": 29850.37094,
+   "end_date": "2026-10-01T04:00:00Z",
+   "execution": {
+    "band": "fragile",
+    "label": "Fragile",
+    "score": 10.6,
+    "flags": [
+     "extreme price",
+     "near close"
+    ],
+    "reason": "Quote can move or fill badly; verify depth before any sizing."
+   },
+   "uncertainty": 7.6,
+   "days_left": 0,
+   "polymarket_url": "https://polymarket.com/event/will-ethereum-reach-3300-in-september-2026?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/4052445",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-ethereum-reach-3300-in-september-2026",
+   "updated_at": "2026-09-22T17:39:17.899052+00:00"
+  },
+  {
+   "id": "701494",
+   "question": "Will Bitcoin reach $120,000 by December 31, 2026?",
+   "slug": "will-bitcoin-reach-120000-by-december-31-2026-625-425-562",
+   "category": "Crypto",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.145,
+    0.855
+   ],
+   "volume_24h": 64783.24939700001,
+   "volume_total": 1954437.4136200005,
+   "liquidity": 57692.8998,
+   "end_date": "2027-01-01T05:00:00Z",
+   "execution": {
+    "band": "clean",
+    "label": "Cleaner",
+    "score": 55.9,
+    "flags": [],
+    "reason": "Better depth and less extreme pricing for research."
+   },
+   "uncertainty": 29.0,
+   "days_left": 92,
+   "polymarket_url": "https://polymarket.com/event/will-bitcoin-reach-120000-by-december-31-2026-625-425-562?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/701494",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-bitcoin-reach-120000-by-december-31-2026-625-425-562",
+   "updated_at": "2026-09-22T09:31:06.030990+00:00"
+  },
+  {
+   "id": "1339769",
+   "question": "Will Bitcoin dip to $30,000 by December 31, 2026?",
+   "slug": "will-bitcoin-dip-to-30000-by-december-31-2026-971-191-116-343-999-758-299-813-237",
+   "category": "Crypto",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.05,
+    0.95
+   ],
+   "volume_24h": 64000.706369,
+   "volume_total": 787700.1688519999,
+   "liquidity": 73793.6949,
+   "end_date": "2027-01-01T05:00:00Z",
+   "execution": {
+    "band": "fragile",
+    "label": "Fragile",
+    "score": 37.4,
+    "flags": [
+     "extreme price"
+    ],
+    "reason": "Quote can move or fill badly; verify depth before any sizing."
+   },
+   "uncertainty": 10.0,
+   "days_left": 92,
+   "polymarket_url": "https://polymarket.com/event/will-bitcoin-dip-to-30000-by-december-31-2026-971-191-116-343-999-758-299-813-237?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/1339769",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-bitcoin-dip-to-30000-by-december-31-2026-971-191-116-343-999-758-299-813-237",
+   "updated_at": "2026-08-21T05:32:23.204248+00:00"
+  },
+  {
+   "id": "701489",
+   "question": "Will Bitcoin reach $170,000 by December 31, 2026?",
+   "slug": "will-bitcoin-reach-170000-by-december-31-2026-335-688-943",
+   "category": "Crypto",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.0175,
+    0.9825
+   ],
+   "volume_24h": 61227.78047600001,
+   "volume_total": 429933.851508,
+   "liquidity": 119300.00352,
+   "end_date": "2027-01-01T05:00:00Z",
+   "execution": {
+    "band": "fragile",
+    "label": "Fragile",
+    "score": 41.2,
+    "flags": [
+     "extreme price"
+    ],
+    "reason": "Quote can move or fill badly; verify depth before any sizing."
+   },
+   "uncertainty": 3.5,
+   "days_left": 92,
+   "polymarket_url": "https://polymarket.com/event/will-bitcoin-reach-170000-by-december-31-2026-335-688-943?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/701489",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-bitcoin-reach-170000-by-december-31-2026-335-688-943",
+   "updated_at": "2026-08-27T09:25:28.509193+00:00"
+  },
+  {
+   "id": "701502",
+   "question": "Will Bitcoin dip to $45,000 by December 31, 2026?",
+   "slug": "will-bitcoin-dip-to-45000-by-december-31-2026-674-923-755-971-998-525-926-245-316-517-544-589-965-923-986-841-815-224-586-231-289-533-573",
+   "category": "Crypto",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.042,
+    0.958
+   ],
+   "volume_24h": 60662.76308799999,
+   "volume_total": 7978083.212155,
+   "liquidity": 245127.81443,
+   "end_date": "2027-01-01T05:00:00Z",
+   "execution": {
+    "band": "fragile",
+    "label": "Fragile",
+    "score": 42.9,
+    "flags": [
+     "extreme price"
+    ],
+    "reason": "Quote can move or fill badly; verify depth before any sizing."
+   },
+   "uncertainty": 8.4,
+   "days_left": 92,
+   "polymarket_url": "https://polymarket.com/event/will-bitcoin-dip-to-45000-by-december-31-2026-674-923-755-971-998-525-926-245-316-517-544-589-965-923-986-841-815-224-586-231-289-533-573?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/701502",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-bitcoin-dip-to-45000-by-december-31-2026-674-923-755-971-998-525-926-245-316-517-544-589-965-923-986-841-815-224-586-231-289-533-573",
+   "updated_at": "2026-09-23T15:07:49.422056+00:00"
+  },
+  {
+   "id": "4797723",
+   "question": "Will Bitcoin dip to $85,000 in September?",
+   "slug": "will-bitcoin-dip-to-85k-in-september-2026",
+   "category": "Crypto",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.849,
+    0.151
+   ],
+   "volume_24h": 59992.49285499998,
+   "volume_total": 88079.27958399999,
+   "liquidity": 47443.15876,
+   "end_date": "2026-10-01T04:00:00Z",
+   "execution": {
+    "band": "fragile",
+    "label": "Fragile",
+    "score": 30.3,
+    "flags": [
+     "near close"
+    ],
+    "reason": "Quote can move or fill badly; verify depth before any sizing."
+   },
+   "uncertainty": 30.2,
+   "days_left": 0,
+   "polymarket_url": "https://polymarket.com/event/will-bitcoin-dip-to-85k-in-september-2026?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/4797723",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-bitcoin-dip-to-85k-in-september-2026",
+   "updated_at": "2026-09-23T08:02:14.826472+00:00"
+  },
+  {
+   "id": "3866000",
+   "question": "Will Ethereum dip to $2,250 by December 31, 2026?",
+   "slug": "will-ethereum-dip-to-2250-by-december-31-2026",
+   "category": "Crypto",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.29,
+    0.71
+   ],
+   "volume_24h": 58839.539261000005,
+   "volume_total": 1213332.3650630005,
+   "liquidity": 33225.9094,
+   "end_date": "2027-01-01T05:00:00Z",
+   "execution": {
+    "band": "clean",
+    "label": "Cleaner",
+    "score": 65.7,
+    "flags": [],
+    "reason": "Better depth and less extreme pricing for research."
+   },
+   "uncertainty": 58.0,
+   "days_left": 92,
+   "polymarket_url": "https://polymarket.com/event/will-ethereum-dip-to-2250-by-december-31-2026?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/3866000",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-ethereum-dip-to-2250-by-december-31-2026",
+   "updated_at": "2026-09-28T22:07:26.810189+00:00"
+  },
+  {
+   "id": "3865999",
+   "question": "Will Ethereum dip to $2,000 by December 31, 2026?",
+   "slug": "will-ethereum-dip-to-2000-by-december-31-2026-from-august-24",
+   "category": "Crypto",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.175,
+    0.825
+   ],
+   "volume_24h": 58199.02,
+   "volume_total": 533842.045645,
+   "liquidity": 36687.3756,
+   "end_date": "2027-01-01T05:00:00Z",
+   "execution": {
+    "band": "clean",
+    "label": "Cleaner",
+    "score": 57.9,
+    "flags": [],
+    "reason": "Better depth and less extreme pricing for research."
+   },
+   "uncertainty": 35.0,
+   "days_left": 92,
+   "polymarket_url": "https://polymarket.com/event/will-ethereum-dip-to-2000-by-december-31-2026-from-august-24?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/3865999",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-ethereum-dip-to-2000-by-december-31-2026-from-august-24",
+   "updated_at": "2026-09-29T02:49:42.594930+00:00"
+  },
+  {
+   "id": "3387867",
+   "question": "Will Ethereum dip to $1,750 by December 31, 2026?",
+   "slug": "will-ethereum-dip-to-1750-by-december-31-2026-20260806184731889",
+   "category": "Crypto",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.205,
+    0.795
+   ],
+   "volume_24h": 56952.77550099998,
+   "volume_total": 403149.4437099999,
+   "liquidity": 27506.1206,
+   "end_date": "2027-01-01T05:00:00Z",
+   "execution": {
+    "band": "clean",
+    "label": "Cleaner",
+    "score": 59.9,
+    "flags": [],
+    "reason": "Better depth and less extreme pricing for research."
+   },
+   "uncertainty": 41.0,
+   "days_left": 92,
+   "polymarket_url": "https://polymarket.com/event/will-ethereum-dip-to-1750-by-december-31-2026-20260806184731889?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/3387867",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-ethereum-dip-to-1750-by-december-31-2026-20260806184731889",
+   "updated_at": "2026-08-26T14:52:19.728416+00:00"
+  },
+  {
+   "id": "4797725",
+   "question": "Will Ethereum dip to $2,700 in September?",
+   "slug": "will-ethereum-dip-to-2700-in-september-2026",
+   "category": "Crypto",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.961,
+    0.039
+   ],
+   "volume_24h": 56032.078757,
+   "volume_total": 60813.66274299999,
+   "liquidity": 41442.86169,
+   "end_date": "2026-10-01T04:00:00Z",
+   "execution": {
+    "band": "fragile",
+    "label": "Fragile",
+    "score": 10.7,
+    "flags": [
+     "extreme price",
+     "near close"
+    ],
+    "reason": "Quote can move or fill badly; verify depth before any sizing."
+   },
+   "uncertainty": 7.8,
+   "days_left": 0,
+   "polymarket_url": "https://polymarket.com/event/will-ethereum-dip-to-2700-in-september-2026?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/4797725",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-ethereum-dip-to-2700-in-september-2026",
+   "updated_at": "2026-09-23T14:06:02.969885+00:00"
+  },
+  {
+   "id": "4052425",
+   "question": "Will Bitcoin dip to $72,500 in September?",
+   "slug": "will-bitcoin-dip-to-72pt5k-in-september-2026",
+   "category": "Crypto",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.0255,
+    0.9745
+   ],
+   "volume_24h": 55885.516547,
+   "volume_total": 580852.5271920002,
+   "liquidity": 100726.05594,
+   "end_date": "2026-10-01T04:00:00Z",
+   "execution": {
+    "band": "fragile",
+    "label": "Fragile",
+    "score": 15.7,
+    "flags": [
+     "extreme price",
+     "near close"
+    ],
+    "reason": "Quote can move or fill badly; verify depth before any sizing."
+   },
+   "uncertainty": 5.1,
+   "days_left": 0,
+   "polymarket_url": "https://polymarket.com/event/will-bitcoin-dip-to-72pt5k-in-september-2026?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/4052425",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-bitcoin-dip-to-72pt5k-in-september-2026",
+   "updated_at": "2026-09-24T15:27:39.169107+00:00"
+  },
+  {
+   "id": "701553",
+   "question": "Will Ethereum dip to $1,000 by December 31, 2026?",
+   "slug": "will-ethereum-dip-to-1000-by-december-31-2026-273-175",
+   "category": "Crypto",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.055,
+    0.945
+   ],
+   "volume_24h": 55074.51526399999,
+   "volume_total": 2175675.28878,
+   "liquidity": 79629.3965,
+   "end_date": "2027-01-01T05:00:00Z",
+   "execution": {
+    "band": "fragile",
+    "label": "Fragile",
+    "score": 37.7,
+    "flags": [
+     "extreme price"
+    ],
+    "reason": "Quote can move or fill badly; verify depth before any sizing."
+   },
+   "uncertainty": 11.0,
+   "days_left": 92,
+   "polymarket_url": "https://polymarket.com/event/will-ethereum-dip-to-1000-by-december-31-2026-273-175?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/701553",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-ethereum-dip-to-1000-by-december-31-2026-273-175",
+   "updated_at": "2026-09-21T16:04:33.949011+00:00"
+  },
+  {
+   "id": "4052427",
+   "question": "Will Bitcoin dip to $70,000 in September?",
+   "slug": "will-bitcoin-dip-to-70k-in-september-2026",
+   "category": "Crypto",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.0165,
+    0.9835
+   ],
+   "volume_24h": 54355.49561199999,
+   "volume_total": 686877.986462,
+   "liquidity": 94509.27196,
+   "end_date": "2026-10-01T04:00:00Z",
+   "execution": {
+    "band": "fragile",
+    "label": "Fragile",
+    "score": 9.1,
+    "flags": [
+     "extreme price",
+     "near close"
+    ],
+    "reason": "Quote can move or fill badly; verify depth before any sizing."
+   },
+   "uncertainty": 3.3,
+   "days_left": 0,
+   "polymarket_url": "https://polymarket.com/event/will-bitcoin-dip-to-70k-in-september-2026?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/4052427",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-bitcoin-dip-to-70k-in-september-2026",
+   "updated_at": "2026-09-25T07:03:49.672387+00:00"
+  },
+  {
+   "id": "1339767",
+   "question": "Will Bitcoin dip to $50,000 by December 31, 2026?",
+   "slug": "will-bitcoin-dip-to-50000-by-december-31-2026-454-325-222-878-949-487-451-853-523-111",
+   "category": "Crypto",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.075,
+    0.925
+   ],
+   "volume_24h": 54297.76319299999,
+   "volume_total": 4015707.268614,
+   "liquidity": 194255.6954,
+   "end_date": "2027-01-01T05:00:00Z",
+   "execution": {
+    "band": "fragile",
+    "label": "Fragile",
+    "score": 45.1,
+    "flags": [
+     "extreme price"
+    ],
+    "reason": "Quote can move or fill badly; verify depth before any sizing."
+   },
+   "uncertainty": 15.0,
+   "days_left": 92,
+   "polymarket_url": "https://polymarket.com/event/will-bitcoin-dip-to-50000-by-december-31-2026-454-325-222-878-949-487-451-853-523-111?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/1339767",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-bitcoin-dip-to-50000-by-december-31-2026-454-325-222-878-949-487-451-853-523-111",
+   "updated_at": "2026-09-27T00:34:35.427953+00:00"
+  },
+  {
+   "id": "2467207",
+   "question": "Will Bitcoin reach $85,000 by December 31, 2026?",
+   "slug": "will-bitcoin-reach-85000-by-december-31-2026-from-june-8",
+   "category": "Crypto",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.555,
+    0.445
+   ],
+   "volume_24h": 54212.273674000004,
+   "volume_total": 868918.1717459996,
+   "liquidity": 59844.5068,
+   "end_date": "2027-01-01T05:00:00Z",
+   "execution": {
+    "band": "clean",
+    "label": "Cleaner",
+    "score": 76.3,
+    "flags": [],
+    "reason": "Better depth and less extreme pricing for research."
+   },
+   "uncertainty": 89.0,
+   "days_left": 92,
+   "polymarket_url": "https://polymarket.com/event/will-bitcoin-reach-85000-by-december-31-2026-from-june-8?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/2467207",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-bitcoin-reach-85000-by-december-31-2026-from-june-8",
+   "updated_at": "2026-09-15T22:33:26.003163+00:00"
+  },
+  {
+   "id": "948958",
+   "question": "Bitcoin all time high by December 31, 2026?",
+   "slug": "bitcoin-all-time-high-by-december-31-2026",
+   "category": "Crypto",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.0325,
+    0.9675
+   ],
+   "volume_24h": 53294.82,
+   "volume_total": 1658470.6066900007,
+   "liquidity": 202946.65359,
+   "end_date": "2027-01-01T05:00:00Z",
+   "execution": {
+    "band": "fragile",
+    "label": "Fragile",
+    "score": 42.2,
+    "flags": [
+     "extreme price"
+    ],
+    "reason": "Quote can move or fill badly; verify depth before any sizing."
+   },
+   "uncertainty": 6.5,
+   "days_left": 92,
+   "polymarket_url": "https://polymarket.com/event/bitcoin-all-time-high-by-december-31-2026?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/948958",
+   "voxodds_odds_url": "https://voxodds.com/odds/bitcoin-all-time-high-by-december-31-2026",
+   "updated_at": "2026-08-19T07:01:04.362128+00:00"
+  },
+  {
+   "id": "701503",
+   "question": "Will Bitcoin dip to $35,000 by December 31, 2026?",
+   "slug": "will-bitcoin-dip-to-35000-by-december-31-2026-744-877-748-219-467-465-646-211-122-947-537-552-555-361-972-954-635-887-657-996-643",
+   "category": "Crypto",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.027,
+    0.973
+   ],
+   "volume_24h": 52816.840000000004,
+   "volume_total": 3343801.4297639993,
+   "liquidity": 162313.60312,
+   "end_date": "2027-01-01T05:00:00Z",
+   "execution": {
+    "band": "fragile",
+    "label": "Fragile",
+    "score": 41.8,
+    "flags": [
+     "extreme price"
+    ],
+    "reason": "Quote can move or fill badly; verify depth before any sizing."
+   },
+   "uncertainty": 5.4,
+   "days_left": 92,
+   "polymarket_url": "https://polymarket.com/event/will-bitcoin-dip-to-35000-by-december-31-2026-744-877-748-219-467-465-646-211-122-947-537-552-555-361-972-954-635-887-657-996-643?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/701503",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-bitcoin-dip-to-35000-by-december-31-2026-744-877-748-219-467-465-646-211-122-947-537-552-555-361-972-954-635-887-657-996-643",
+   "updated_at": "2026-09-20T07:03:06.976351+00:00"
+  },
+  {
+   "id": "4689737",
+   "question": "Will Ethereum dip to $2,500 in September?",
+   "slug": "will-ethereum-dip-to-2500-in-september-2026-from-september-18",
+   "category": "Crypto",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.0285,
+    0.9715
+   ],
+   "volume_24h": 52786.794437,
+   "volume_total": 262723.096853,
+   "liquidity": 44380.77372,
+   "end_date": "2026-10-01T04:00:00Z",
+   "execution": {
+    "band": "fragile",
+    "label": "Fragile",
+    "score": 9.9,
+    "flags": [
+     "extreme price",
+     "near close"
+    ],
+    "reason": "Quote can move or fill badly; verify depth before any sizing."
+   },
+   "uncertainty": 5.7,
+   "days_left": 0,
+   "polymarket_url": "https://polymarket.com/event/will-ethereum-dip-to-2500-in-september-2026-from-september-18?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/4689737",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-ethereum-dip-to-2500-in-september-2026-from-september-18",
+   "updated_at": "2026-09-29T22:07:34.873732+00:00"
+  },
+  {
+   "id": "1144471",
+   "question": "Will Satoshi move any Bitcoin in 2026?",
+   "slug": "will-satoshi-move-any-bitcoin-in-2026",
+   "category": "Crypto",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.0545,
+    0.9455
+   ],
+   "volume_24h": 52044.854201999995,
+   "volume_total": 4605080.966849998,
+   "liquidity": 74221.56916,
+   "end_date": "2027-01-01T05:00:00Z",
+   "execution": {
+    "band": "fragile",
+    "label": "Fragile",
+    "score": 37.7,
+    "flags": [
+     "extreme price"
+    ],
+    "reason": "Quote can move or fill badly; verify depth before any sizing."
+   },
+   "uncertainty": 10.9,
+   "days_left": 92,
+   "polymarket_url": "https://polymarket.com/event/will-satoshi-move-any-bitcoin-in-2026?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/1144471",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-satoshi-move-any-bitcoin-in-2026",
+   "updated_at": "2026-08-03T04:57:48.473567+00:00"
+  },
+  {
+   "id": "4641295",
+   "question": "Will Ethereum dip to $2,400 in September?",
+   "slug": "will-ethereum-dip-to-2400-in-september-2026-from-september-17",
+   "category": "Crypto",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.021,
+    0.979
+   ],
+   "volume_24h": 51724.13112299999,
+   "volume_total": 101863.3791,
+   "liquidity": 46707.94402,
+   "end_date": "2026-10-01T04:00:00Z",
+   "execution": {
+    "band": "fragile",
+    "label": "Fragile",
+    "score": 9.4,
+    "flags": [
+     "extreme price",
+     "near close"
+    ],
+    "reason": "Quote can move or fill badly; verify depth before any sizing."
+   },
+   "uncertainty": 4.2,
+   "days_left": 0,
+   "polymarket_url": "https://polymarket.com/event/will-ethereum-dip-to-2400-in-september-2026-from-september-17?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/4641295",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-ethereum-dip-to-2400-in-september-2026-from-september-17",
+   "updated_at": "2026-09-29T03:21:56.193115+00:00"
+  },
+  {
+   "id": "701554",
+   "question": "Will Ethereum dip to $800 by December 31, 2026?",
+   "slug": "will-ethereum-dip-to-800-by-december-31-2026-568",
+   "category": "Crypto",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.045,
+    0.955
+   ],
+   "volume_24h": 50884.75580700001,
+   "volume_total": 1609610.6218839998,
+   "liquidity": 110469.301,
+   "end_date": "2027-01-01T05:00:00Z",
+   "execution": {
+    "band": "fragile",
+    "label": "Fragile",
+    "score": 43.1,
+    "flags": [
+     "extreme price"
+    ],
+    "reason": "Quote can move or fill badly; verify depth before any sizing."
+   },
+   "uncertainty": 9.0,
+   "days_left": 92,
+   "polymarket_url": "https://polymarket.com/event/will-ethereum-dip-to-800-by-december-31-2026-568?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/701554",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-ethereum-dip-to-800-by-december-31-2026-568",
+   "updated_at": "2026-08-24T04:00:34.153152+00:00"
+  },
+  {
+   "id": "3865961",
+   "question": "Will Bitcoin dip to $75,000 by December 31, 2026?",
+   "slug": "will-bitcoin-dip-to-75000-by-december-31-2026-from-august-24",
+   "category": "Crypto",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.795,
+    0.205
+   ],
+   "volume_24h": 50833.513617,
+   "volume_total": 200989.84110099997,
+   "liquidity": 58897.6783,
+   "end_date": "2027-01-01T05:00:00Z",
+   "execution": {
+    "band": "clean",
+    "label": "Cleaner",
+    "score": 59.9,
+    "flags": [],
+    "reason": "Better depth and less extreme pricing for research."
+   },
+   "uncertainty": 41.0,
+   "days_left": 92,
+   "polymarket_url": "https://polymarket.com/event/will-bitcoin-dip-to-75000-by-december-31-2026-from-august-24?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/3865961",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-bitcoin-dip-to-75000-by-december-31-2026-from-august-24",
+   "updated_at": "2026-09-08T19:02:45.494969+00:00"
+  },
+  {
+   "id": "3865962",
+   "question": "Will Bitcoin dip to $65,000 by December 31, 2026?",
+   "slug": "will-bitcoin-dip-to-65000-by-december-31-2026-from-august-24",
+   "category": "Crypto",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.2,
+    0.8
+   ],
+   "volume_24h": 50831.988674,
+   "volume_total": 400637.04644500004,
+   "liquidity": 49049.6747,
+   "end_date": "2027-01-01T05:00:00Z",
+   "execution": {
+    "band": "clean",
+    "label": "Cleaner",
+    "score": 59.6,
+    "flags": [],
+    "reason": "Better depth and less extreme pricing for research."
+   },
+   "uncertainty": 40.0,
+   "days_left": 92,
+   "polymarket_url": "https://polymarket.com/event/will-bitcoin-dip-to-65000-by-december-31-2026-from-august-24?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/3865962",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-bitcoin-dip-to-65000-by-december-31-2026-from-august-24",
+   "updated_at": "2026-09-28T09:35:44.700866+00:00"
+  },
+  {
+   "id": "701495",
+   "question": "Will Bitcoin reach $110,000 by December 31, 2026?",
+   "slug": "will-bitcoin-reach-110000-by-december-31-2026-658-339-969",
+   "category": "Crypto",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.17,
+    0.83
+   ],
+   "volume_24h": 49965.830344,
+   "volume_total": 1878485.1065350003,
+   "liquidity": 95990.6999,
+   "end_date": "2027-01-01T05:00:00Z",
+   "execution": {
+    "band": "clean",
+    "label": "Cleaner",
+    "score": 57.6,
+    "flags": [],
+    "reason": "Better depth and less extreme pricing for research."
+   },
+   "uncertainty": 34.0,
+   "days_left": 92,
+   "polymarket_url": "https://polymarket.com/event/will-bitcoin-reach-110000-by-december-31-2026-658-339-969?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/701495",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-bitcoin-reach-110000-by-december-31-2026-658-339-969",
+   "updated_at": "2026-09-27T05:50:07.864006+00:00"
+  },
+  {
+   "id": "3013350",
+   "question": "Will Bitcoin dip to $60,000 by December 31, 2026?",
+   "slug": "will-bitcoin-dip-to-60k-by-december-31-2026-from-july-21",
+   "category": "Crypto",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.155,
+    0.845
+   ],
+   "volume_24h": 47658.56599799999,
+   "volume_total": 963312.3003860001,
+   "liquidity": 112265.4698,
+   "end_date": "2027-01-01T05:00:00Z",
+   "execution": {
+    "band": "clean",
+    "label": "Cleaner",
+    "score": 62.5,
+    "flags": [],
+    "reason": "Better depth and less extreme pricing for research."
+   },
+   "uncertainty": 31.0,
+   "days_left": 92,
+   "polymarket_url": "https://polymarket.com/event/will-bitcoin-dip-to-60k-by-december-31-2026-from-july-21?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/3013350",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-bitcoin-dip-to-60k-by-december-31-2026-from-july-21",
+   "updated_at": "2026-09-25T03:07:22.596037+00:00"
+  },
+  {
+   "id": "701547",
+   "question": "Will Ethereum reach $4,500 by December 31, 2026?",
+   "slug": "will-ethereum-reach-4500-by-december-31-2026",
+   "category": "Crypto",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.075,
+    0.925
+   ],
+   "volume_24h": 46501.16,
+   "volume_total": 432694.83128799987,
+   "liquidity": 116257.5198,
+   "end_date": "2027-01-01T05:00:00Z",
+   "execution": {
+    "band": "fragile",
+    "label": "Fragile",
+    "score": 45.1,
+    "flags": [
+     "extreme price"
+    ],
+    "reason": "Quote can move or fill badly; verify depth before any sizing."
+   },
+   "uncertainty": 15.0,
+   "days_left": 92,
+   "polymarket_url": "https://polymarket.com/event/will-ethereum-reach-4500-by-december-31-2026?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/701547",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-ethereum-reach-4500-by-december-31-2026",
+   "updated_at": "2026-09-28T07:36:56.286862+00:00"
+  },
+  {
+   "id": "4052447",
+   "question": "Will Ethereum reach $3,100 in September?",
+   "slug": "will-ethereum-reach-3100-in-september-2026",
+   "category": "Crypto",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.107,
+    0.893
+   ],
+   "volume_24h": 46383.075784,
+   "volume_total": 106726.715994,
+   "liquidity": 40776.9364,
+   "end_date": "2026-10-01T04:00:00Z",
+   "execution": {
+    "band": "fragile",
+    "label": "Fragile",
+    "score": 27.3,
+    "flags": [
+     "near close"
+    ],
+    "reason": "Quote can move or fill badly; verify depth before any sizing."
+   },
+   "uncertainty": 21.4,
+   "days_left": 0,
+   "polymarket_url": "https://polymarket.com/event/will-ethereum-reach-3100-in-september-2026?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/4052447",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-ethereum-reach-3100-in-september-2026",
+   "updated_at": "2026-09-14T09:07:26.633635+00:00"
+  }
+ ],
+ "count": 50,
+ "source": "voxodds.com",
+ "retrieved_at": "2026-09-30T17:53:26.779185+00:00",
+ "attribution": "Data from Polymarket. Powered by VoxOdds."
+}

@@ -33,7 +33,9 @@ Hyperliquid composite, Kraken Futures, and finally values derived from our own s
 Hyperliquid funding and OI · CoinLobster 24h liquidations, $100K+ whale trades and unusual-flow radar ·
 Deribit options for max pain, put/call and IV skew · DefiLlama stablecoin supply · alternative.me Fear &
 Greed · Forex Factory weekly economic calendar (high-impact USD prints with forecast/previous; drives the
-macro-window trigger).
+macro-window trigger) · CoinDesk and Cointelegraph RSS for headlines · goldprice.dev for XAU/USD spot
+(gold only; silver and copper are plan-gated) · Polymarket odds via voxodds.com, with an execution-quality
+band per market.
 
 Binance and Bybit geo-block US egress, and Streamlit Cloud is US-hosted, which is why Gate.io sits in the
 chain — the live site sources futures from it. Whichever provider answered is labelled in the sidebar.
@@ -255,6 +257,46 @@ unconfigured rather than pretending to send.
 background alerting needs a cron host. That is a hosting decision, not something the code can supply for
 itself, and the tab says so rather than implying the alerts are always on.
 
+## Macro and news engines (spec section 2)
+
+Three keyless feeds, on their own tab because none of them is a read on one timeframe. All three were
+chosen by calling them, not by reading a directory's Auth column, and each hid something:
+
+- **Headlines — publisher RSS** (CoinDesk, Cointelegraph). Every news API in the public directories needs
+  a key; the two that do not are an Indian news aggregator and a host that no longer resolves. RSS needs
+  no key, account or quota, and parses with the standard library, so it adds no dependency. *The trap:*
+  CoinDesk 308-redirects from the trailing-slash URL and httpx does not follow redirects unless told to,
+  which silently cost one publisher until a live call showed it. One publisher down is now a degraded
+  feed that names the gap, not a missing one.
+- **Gold — `api.goldprice.dev`**. *Two traps:* `symbols=` (plural) is not the parameter and returns XAU
+  quoted in **AUD** with HTTP 200 and no warning, so the response's own `symbol` and `quote_currency` are
+  checked against what was asked for and a mismatch is treated as no data — a silently wrong gold price
+  is worse than a missing one, because a dash cannot be traded on by mistake. And silver and copper are
+  plan-gated on the free tier, so only gold is fetched and nothing implies the others are available. The
+  feed reports `is_stale` and `computed_at` itself; both are carried through, and a print older than
+  half an hour is treated as stale even when the feed calls it fresh.
+- **Prediction markets — Polymarket via `voxodds.com`**. Polymarket's own Gamma API is keyless too, but a
+  top-volume query returns everything (a Dota 2 match, in testing) and says nothing about whether a quote
+  can be filled. VoxOdds filters by category and scores each market's execution quality — `clean`,
+  `watch` or `fragile`, with the flags behind it. That distinction matters: on the recorded sample only
+  13 of 40 crypto markets carried a quote worth quoting. A 6% probability on a market flagged "extreme
+  price" is a printed number, not a forecast, and the panel says so. Attribution ("Data from Polymarket.
+  Powered by VoxOdds") is required by the feed and is rendered, not dropped.
+
+Headlines are **tagged, not judged**: topic and impact come from keyword matching over the headline text,
+which cannot tell a rumour from a confirmation. They are shown as tags so the list can be sorted, and the
+card states outright that they are not a read on the market.
+
+**Remote XML is parsed behind a guard.** Measured on this runtime the standard library already refuses
+both attacks that matter — an external entity fails with "undefined entity", and expat 2.7.3 refuses an
+entity bomb with "limit on input amplification factor breached" — but that second guarantee comes from
+expat 2.4.1 or newer and the deploy host's build is not ours to choose. A news feed needs no document
+type declaration, so one is refused outright, which removes the entity-expansion class without taking on
+a dependency for it. There is a size cap too.
+
+**Fixtures are recorded from the live feeds**, not hand-written, because a hand-made payload only tests
+one's idea of the payload. `TI_OFFLINE_FIXTURES=1` serves them and labels every source "fixture".
+
 ## Accuracy report
 
 Every pinned summary is a prediction. When its candle closes it is scored once, against the price at that
@@ -345,5 +387,5 @@ runner, report) → `core/store`, `core/anchors`, `core/accuracy`, `core/live_an
 `core/live_accuracy`, `core/alerts` (persistence, anchoring, scoring, notification) → `ui/` renderers
 → `app.py` shell.
 
-Tabs: Live Recon, Intraday, Weekly, Monthly, TRAP Intelligence, Active Trade, War Room.
+Tabs: Live Recon, Intraday, Weekly, Monthly, TRAP Intelligence, Active Trade, War Room, Macro & News.
 Design spec and implementation plans live under `docs/superpowers/`.

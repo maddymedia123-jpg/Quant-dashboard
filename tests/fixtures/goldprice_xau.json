@@ -1,0 +1,13 @@
+{
+ "symbols": [
+  {
+   "symbol": "XAU",
+   "quote_currency": "USD",
+   "unit": "troy_ounce",
+   "contract_type": "spot",
+   "price": "4148.55",
+   "is_stale": false,
+   "computed_at": "2026-09-30T17:53:24.743636Z"
+  }
+ ]
+}

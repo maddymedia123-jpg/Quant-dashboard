@@ -14,15 +14,22 @@ from core.data.coinlobster import parse_liquidations, parse_whales
 from core.data.deribit_options import parse_book_summary
 from core.data.hyperliquid import parse_meta
 from core.data.kraken_spot import parse_ohlc, parse_ticker
+from core.data.metals import parse_gold
+from core.data.news import merge, parse_feed
+from core.data.prediction import parse_markets
 from core.data.sentiment import parse_fng
 from core.data.stablecoins import parse_stablecoins
-from core.data.types import MarketSnapshot, SpotSnapshot
+from core.data.types import MarketSnapshot, NewsSnapshot, SpotSnapshot
 
 FX = pathlib.Path(__file__).resolve().parents[2] / "tests" / "fixtures"
 
 
 def _load(name: str):
     return json.loads((FX / name).read_text(encoding="utf-8"))
+
+
+def _load_text(name: str) -> str:
+    return (FX / name).read_text(encoding="utf-8")
 
 
 def _mark(snapshot):
@@ -54,7 +61,17 @@ def fixture_context() -> dict:
         "whales": whales,
         "stablecoins": _mark(parse_stablecoins(_load("defillama_stablecoins.json"))),
         "calendar": _mark(parse_calendar(_load("ff_calendar_thisweek.json"))),
+        "news": _mark(_fixture_news()),
+        "metals": _mark(parse_gold(_load("goldprice_xau.json"))),
+        "predictions": _mark(parse_markets(_load("voxodds_crypto.json"))),
     }
+
+
+def _fixture_news() -> NewsSnapshot:
+    """Both recorded feeds, merged exactly as the live path merges them."""
+    feeds = [parse_feed("CoinDesk", _load_text("coindesk_rss.xml")),
+             parse_feed("Cointelegraph", _load_text("cointelegraph_rss.xml"))]
+    return NewsSnapshot(source="fixture", headlines=merge(feeds))
 
 
 def fixture_market() -> MarketSnapshot:

@@ -928,3 +928,122 @@ def trade_card_html(trade: dict, prog=None, now_ms: int = 0) -> str:
     tone = "neutral" if closed else ("down" if (prog is not None and prog.stopped) or traps else "warn")
     title = f"{asset} {side}" + ("" if not closed else " (closed)")
     return card_html(title, body, tone)
+
+
+# ---------- macro and news engines (spec section 2) ----------
+IMPACT_TONE = {"high": "down", "medium": "warn", "low": "neutral"}
+BAND_TONE = {"clean": "up", "watch": "warn", "fragile": "down", "unknown": "neutral"}
+
+
+def _age(ms, now_ms: int) -> str:
+    if not ms:
+        return "undated"
+    mins = max(0, (int(now_ms) - int(ms)) // 60_000)
+    if mins < 60:
+        return f"{mins}m ago"
+    return f"{mins // 60}h ago" if mins < 1440 else f"{mins // 1440}d ago"
+
+
+def news_html(news, now_ms: int, limit: int = 12) -> str:
+    """Headlines, newest first, with the keyword tags shown as tags.
+
+    The topic and impact labels are keyword matches, not judgments - a headline can be mislabelled by a
+    word used in passing - so the card says so rather than letting "high impact" read as a verdict."""
+    if not getattr(news, "available", False):
+        return card_html("News", f"<p class='muted'>No headline feed: "
+                                 f"{html.escape(str(getattr(news, 'error', '') or 'unavailable'))}.</p>",
+                         "neutral")
+    headlines = list(getattr(news, "headlines", []) or [])
+    high = [h for h in headlines if h.get("impact") == "high"]
+    body = (f"<p><strong>{len(headlines)} headlines</strong> from "
+            f"{html.escape(str(getattr(news, 'source', '')))}"
+            + (f" · <span class='ti-chip down'>{len(high)} high-impact</span>" if high else "")
+            + "</p>")
+    if getattr(news, "error", None):
+        body += (f"<p class='muted'>Partial feed: {html.escape(str(news.error))[:160]} - the count above "
+                 "is what did arrive, not everything published.</p>")
+    body += "<table><thead><tr><th>When</th><th>Topic</th><th>Headline</th></tr></thead><tbody>"
+    for h in headlines[:limit]:
+        assets = " ".join(str(a) for a in (h.get("assets") or [])[:3])
+        tone = IMPACT_TONE.get(str(h.get("impact")), "neutral")
+        title = html.escape(str(h.get("title") or ""))[:150]
+        url = str(h.get("url") or "")
+        # only an http(s) link is rendered as one: a feed controls this string
+        linked = (f"<a href='{html.escape(url)}' target='_blank' rel='noopener noreferrer'>{title}</a>"
+                  if url.startswith(("https://", "http://")) else title)
+        body += (f"<tr><td class='muted'>{html.escape(_age(h.get('published_ms'), now_ms))}</td>"
+                 f"<td><span class='ti-chip {tone}'>{html.escape(str(h.get('topic') or ''))}</span></td>"
+                 f"<td>{linked}"
+                 + (f" <span class='muted'>{html.escape(assets)}</span>" if assets else "")
+                 + f" <span class='muted'>· {html.escape(str(h.get('source') or ''))}</span></td></tr>")
+    body += "</tbody></table>"
+    body += ("<p class='muted'>Topic and impact are keyword tags over the headline text, not a judgment "
+             "of the story. Treat them as a way to sort the list, not as a read on the market.</p>")
+    return card_html("News", body, "down" if high else "neutral")
+
+
+def gold_html(metals, now_ms: int) -> str:
+    """Gold spot, with the feed's own freshness carried through."""
+    if not getattr(metals, "available", False):
+        return card_html("Gold (XAU/USD)",
+                         f"<p class='muted'>No gold feed: "
+                         f"{html.escape(str(getattr(metals, 'error', '') or 'unavailable'))}.</p>", "neutral")
+    price = getattr(metals, "xau_usd", None)
+    body = (f"<p><strong>{fmt_num(price, 2, '$')}</strong> per "
+            f"{html.escape(str(getattr(metals, 'unit', 'troy_ounce')).replace('_', ' '))}")
+    bid, ask = getattr(metals, "bid", None), getattr(metals, "ask", None)
+    if bid is not None and ask is not None:
+        body += f" <span class='muted'>· bid {fmt_num(bid, 2, '$')} / ask {fmt_num(ask, 2, '$')}</span>"
+    body += "</p>"
+    if getattr(metals, "is_stale", False):
+        body += ("<p><span class='ti-chip down'>stale</span> The feed reports this print as stale, so it "
+                 "is not the current price.</p>")
+    else:
+        body += (f"<p class='muted'>Computed {html.escape(_age(getattr(metals, 'computed_ms', None), now_ms))}"
+                 f" · {html.escape(str(getattr(metals, 'source', '')))}</p>")
+    body += ("<p class='muted'>Gold only: silver and copper are gated behind a paid tier on this feed, so "
+             "they are not shown rather than guessed at.</p>")
+    return card_html("Gold (XAU/USD)", body, "warn" if getattr(metals, "is_stale", False) else "neutral")
+
+
+def predictions_html(preds, now_ms: int, asset: str | None = None, limit: int = 8) -> str:
+    """What the crowd is pricing, and whether the quote can actually be filled."""
+    if not getattr(preds, "available", False):
+        return card_html("Prediction markets",
+                         f"<p class='muted'>No odds feed: "
+                         f"{html.escape(str(getattr(preds, 'error', '') or 'unavailable'))}.</p>", "neutral")
+    markets = list(getattr(preds, "markets", []) or [])
+    if asset:
+        markets = [m for m in markets if asset in (m.get("assets") or [])]
+    tradeable = [m for m in markets if m.get("band") in ("clean", "watch")]
+    body = (f"<p><strong>{len(markets)} market(s)</strong>"
+            + (f" mentioning {html.escape(asset)}" if asset else "")
+            + f" · {len(tradeable)} with a quote worth quoting</p>")
+    body += ("<table><thead><tr><th>Probability</th><th>Execution</th><th>24h volume</th><th>Ends</th>"
+             "<th>Market</th></tr></thead><tbody>")
+    for m in markets[:limit]:
+        band = str(m.get("band") or "unknown")
+        tone = BAND_TONE.get(band, "neutral")
+        question = html.escape(str(m.get("question") or ""))[:120]
+        url = str(m.get("url") or "")
+        linked = (f"<a href='{html.escape(url)}' target='_blank' rel='noopener noreferrer'>{question}</a>"
+                  if url.startswith("https://") else question)
+        days = m.get("days_left")
+        body += (f"<tr><td><strong>{fmt_num((m.get('probability') or 0) * 100, 1, suffix='%')}</strong></td>"
+                 f"<td><span class='ti-chip {tone}'>{html.escape(band)}</span>"
+                 + (f" <span class='muted'>{fmt_num(m.get('band_score'), 0)}</span>"
+                    if m.get("band_score") is not None else "")
+                 + f"</td><td>{fmt_num(m.get('volume_24h'), 0, '$')}</td>"
+                 f"<td class='muted'>{fmt_num(days, 0) if days is not None else '—'}d</td>"
+                 f"<td>{linked}</td></tr>")
+    body += "</tbody></table>"
+    fragile = [m for m in markets[:limit] if m.get("band") == "fragile"]
+    if fragile:
+        reason = next((str(m.get("band_reason")) for m in fragile if m.get("band_reason")), "")
+        body += (f"<p class='muted'><strong>{len(fragile)} of these are fragile.</strong> "
+                 + html.escape(reason or "The quote can move or fill badly.")
+                 + " A probability on a fragile market is a printed number, not a forecast.</p>")
+    attribution = str(getattr(preds, "attribution", "") or "")
+    if attribution:
+        body += f"<p class='muted'>{html.escape(attribution)}</p>"
+    return card_html("Prediction markets", body, "neutral")

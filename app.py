@@ -357,7 +357,8 @@ st.markdown("<p class='ti-title'>BTC / USD · Trap Intelligence Terminal</p>"
 if not m.spot.available:
     st.error(f"Spot data unavailable from {m.spot.source}: {m.spot.error}. Nothing to analyse.")
 
-tab_labels = [c.label for c in CATEGORIES.values()] + ["TRAP Intelligence", "Active Trade", "War Room"]
+tab_labels = ([c.label for c in CATEGORIES.values()]
+              + ["TRAP Intelligence", "Active Trade", "War Room", "Macro & News"])
 tabs = st.tabs(tab_labels)
 
 
@@ -829,3 +830,39 @@ with tabs[6]:
             st.dataframe(df_log, width="stretch", hide_index=True)
         else:
             st.caption("No anchor changes recorded yet.")
+
+
+# ---------- macro and news engines (spec section 2) ----------
+with tabs[7]:
+    st.markdown("### Macro and news")
+    st.caption("The global engines: publisher headlines, gold, and what the prediction markets are "
+               "pricing. Global rather than per-desk, because none of it is a read on one timeframe.")
+
+    left, right = st.columns([1, 1])
+    with left:
+        try:
+            panels.render(panels.gold_html(m.metals, now_ms))
+        except Exception as e:  # noqa: BLE001 - one panel must not blank the tab
+            st.warning(f"Gold unavailable: {e}")
+    with right:
+        try:
+            panels.render(panels.calendar_html(m, now_ms))
+        except Exception as e:  # noqa: BLE001
+            st.warning(f"Calendar unavailable: {e}")
+
+    try:
+        panels.render(panels.news_html(m.news, now_ms, limit=14))
+    except Exception as e:  # noqa: BLE001
+        st.error(f"The headline feed could not be drawn ({type(e).__name__}: {e}). "
+                 "Do not read this as 'no news'.")
+
+    odds_asset = st.selectbox("Prediction markets for", ["BTC", "ETH", "SOL", "everything"], index=0,
+                              key="odds_asset")
+    try:
+        panels.render(panels.predictions_html(m.predictions, now_ms,
+                                              asset=None if odds_asset == "everything" else odds_asset,
+                                              limit=10))
+    except Exception as e:  # noqa: BLE001
+        st.error(f"The odds feed could not be drawn ({type(e).__name__}: {e}).")
+    st.caption("Odds come from Polymarket through VoxOdds, which scores whether each quote is actually "
+               "fillable. A probability on a market flagged fragile is a printed number, not a forecast.")
