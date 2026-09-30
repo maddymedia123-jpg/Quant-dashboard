@@ -333,6 +333,28 @@ a dependency for it. There is a size cap too.
 **Fixtures are recorded from the live feeds**, not hand-written, because a hand-made payload only tests
 one's idea of the payload. `TI_OFFLINE_FIXTURES=1` serves them and labels every source "fixture".
 
+## Time zones
+
+**Pakistan time on screen, UTC underneath.** The sidebar carries a live clock showing both, and every
+time a trader acts on - target due dates, the monitoring schedule, a card's open and close times - reads
+`17:00 PKT Thu 01 Oct / 12:00 UTC`. PKT first because it is the zone the trader lives in; UTC kept because
+the candle closes those times come from are UTC closes, and dropping it would hide which candle a
+checkpoint refers to. When the two fall on different dates, both dates are shown.
+
+**No boundary arithmetic was converted, deliberately.** Exchange candles are UTC-aligned - the 4h opens at
+00:00/04:00/08:00 UTC, the daily at 00:00 UTC, the weekly Monday 00:00 UTC. Moving "day" to PKT midnight
+would mean our daily window matched no exchange's daily candle, the anchored summary would anchor to
+something that is not a candle, and the accuracy ledger - which scores at exact candle closes - would be
+comparing against prices that are not closes. So `window_open`, `window_close`, `next_close`, the settle
+logic, every stored `*_ms` and everything the agents read all stay UTC.
+
+Pakistan has had no daylight saving since 2009, so the offset is a fixed `+5:00` rather than a `zoneinfo`
+lookup: no timezone database to ship, no DST transitions to get wrong, and no undeclared dependency
+(`tzdata` is not in requirements). Durations - ages, countdowns - need no conversion and get none.
+
+The clock is a self-contained ticking component rather than a rendered string, because Streamlit only
+redraws on a rerun and a server-rendered clock would sit frozen at the page-load time.
+
 ## Accuracy report
 
 Every pinned summary is a prediction. When its candle closes it is scored once, against the price at that

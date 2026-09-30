@@ -13,7 +13,7 @@ opinion, so all of it lives here in code and none of it is asked of a model:
 * *The pullback band.* Measured, not assumed: the distribution of adverse excursions over the lookback,
   so the card can say which drawdown is ordinary and which one breaks the thesis. This is the number that
   stops a trader closing a good position during a normal retracement.
-* *The monitoring schedule.* The exact candle closes to look at, in UTC, from the same window arithmetic
+* *The monitoring schedule.* The exact candle closes to look at, in PKT and UTC, from the same arithmetic
   the war rooms anchor to.
 
 Nothing here decides whether a trade is good; that is the trade desk's ten sub-agents and their Head."""
@@ -50,16 +50,37 @@ PULLBACK_PCTILES = (50, 80, 95)
 TF_MS = {"15m": 15 * 60_000, "1h": HOUR_MS, "4h": 4 * HOUR_MS, "1d": DAY_MS, "1w": WEEK_MS}
 
 
+# Pakistan Standard Time is UTC+5 and has had no daylight saving since 2009, so a fixed offset is exact
+# for every date. Deliberately not `zoneinfo`: that needs a timezone database, which is an undeclared
+# dependency here, and a missing one on the deploy host would be a crash rather than a wrong label.
+LOCAL_OFFSET_MS = 5 * HOUR_MS
+LOCAL_LABEL = "PKT"
+
+
 def _utc(ms: int) -> datetime:
     return datetime.fromtimestamp(ms / 1000, timezone.utc)
 
 
-def fmt_when(ms: int | None) -> str:
-    """A time a trader can set an alarm by, always in UTC because every candle close here is."""
+def _local(ms: int) -> datetime:
+    """The same instant, read in PKT. Display only - every boundary in this module stays UTC, because
+    the exchange candles it aligns to are UTC candles."""
+    return _utc(ms + LOCAL_OFFSET_MS)
+
+
+def fmt_when(ms: int | None, both: bool = True) -> str:
+    """A time a trader can set an alarm by.
+
+    Shown in PKT first, with the UTC time after it: the candle closes this schedule is built from are
+    UTC-aligned, so dropping UTC entirely would hide which candle a checkpoint actually refers to, and
+    dropping PKT leaves the trader adding five hours in their head at the moment they least want to."""
     if ms is None:
         return "no date"
-    d = _utc(ms)
-    return f"{d:%H:%M} UTC {d:%a %d %b}"
+    local, utc = _local(ms), _utc(ms)
+    if not both:
+        return f"{local:%H:%M} {LOCAL_LABEL} {local:%a %d %b}"
+    same_day = local.strftime("%d %b") == utc.strftime("%d %b")
+    tail = f"{utc:%H:%M} UTC" if same_day else f"{utc:%H:%M} UTC {utc:%a %d %b}"
+    return f"{local:%H:%M} {LOCAL_LABEL} {local:%a %d %b} / {tail}"
 
 
 # ---------- the stop ----------

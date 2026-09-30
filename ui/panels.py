@@ -9,7 +9,7 @@ import streamlit as st
 from core.data.types import MarketSnapshot
 from core.indicators.category import CategoryAnalysis
 from core.indicators.trade_map import TradeMap
-from ui.theme import card_html, chip, fmt_num, fmt_pct, tone_for_direction
+from ui.theme import card_html, chip, fmt_num, fmt_pct, palette, tone_for_direction
 
 
 def render(markup: str) -> None:
@@ -1067,3 +1067,33 @@ def predictions_html(preds, now_ms: int, asset: str | None = None, limit: int = 
     if attribution:
         body += f"<p class='muted'>{html.escape(attribution)}</p>"
     return card_html("Prediction markets", body, "neutral")
+
+
+# ---------- the sidebar clock ----------
+# Rendered as a self-contained ticking component rather than a formatted string: Streamlit only redraws
+# on a rerun, so a server-rendered clock sits frozen at the page-load time, which is worse than none.
+CLOCK_HTML = """<div id="ti-clock" style="font:12px Inter,system-ui,sans-serif;color:__TEXT__;
+line-height:1.5"><span id="ti-pkt" style="font-weight:600"></span><br>
+<span id="ti-utc" style="opacity:.7"></span></div>
+<script>
+function pad(n){return String(n).padStart(2,'0')}
+function tick(){
+  var now = new Date();
+  // PKT is UTC+5 with no daylight saving, so a fixed offset is exact for every date
+  var pkt = new Date(now.getTime() + 5*3600*1000);
+  var days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  var mons = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  document.getElementById('ti-pkt').textContent =
+    pad(pkt.getUTCHours())+':'+pad(pkt.getUTCMinutes())+':'+pad(pkt.getUTCSeconds())+' PKT  '
+    + days[pkt.getUTCDay()]+' '+pad(pkt.getUTCDate())+' '+mons[pkt.getUTCMonth()];
+  document.getElementById('ti-utc').textContent =
+    pad(now.getUTCHours())+':'+pad(now.getUTCMinutes())+':'+pad(now.getUTCSeconds())+' UTC  (PKT is UTC+5)';
+}
+tick(); setInterval(tick, 1000);
+</script>"""
+
+
+def clock_html(dark: bool) -> str:
+    """Both zones, ticking. PKT first because it is the one the trader lives in; UTC second because
+    every candle boundary in this system is a UTC boundary."""
+    return CLOCK_HTML.replace("__TEXT__", palette(dark)["text"])

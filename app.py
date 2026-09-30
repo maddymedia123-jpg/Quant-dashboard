@@ -11,6 +11,7 @@ import types
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 
 def _drop_stale_modules() -> None:
@@ -168,6 +169,9 @@ except Exception as e:  # noqa: BLE001 - derived fields are optional
 
 st.sidebar.markdown("---")
 st.sidebar.markdown(panels.data_status_html(m), unsafe_allow_html=True)
+with st.sidebar:
+    # a ticking component, not a rendered string: the page only redraws on a rerun
+    components.html(panels.clock_html(dark), height=48)
 st.sidebar.caption(f"Updated {m.generated_at.astimezone(timezone.utc):%H:%M:%S} UTC · spot {TTL['spot']}s · context {TTL['context']}s")
 
 # ---------- analyses ----------
