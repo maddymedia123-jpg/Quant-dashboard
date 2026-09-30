@@ -781,16 +781,27 @@ ALIGN_WORD = {"supports": "supports this trade", "opposes": "against this trade"
               "neutral": "no directional call", "silent": "no live verdict"}
 
 
-def _when(ms, now_ms: int) -> str:
-    """A date a trader can set an alarm by, with a note when it has already gone past."""
+def _when(ms, now_ms: int, future: bool = True) -> str:
+    """A date a trader can set an alarm by.
+
+    `future=True` is for dates that are meant to be ahead of us - a target's due time, a monitoring
+    checkpoint - where having gone past is news. It was applied to `opened_ms` and `refreshed_ms` too,
+    which are past by definition, so every card permanently read "opened 19:37 UTC (passed)"."""
     if not ms:
         return "no date"
     from core.trades import fmt_when
-    return fmt_when(int(ms)) + (" (passed)" if int(ms) <= now_ms else "")
+    try:
+        stamp = int(ms)
+    except (TypeError, ValueError):
+        return "no date"
+    return fmt_when(stamp) + (" (passed)" if future and stamp <= now_ms else "")
 
 
-def trade_card_html(trade: dict, prog=None, now_ms: int = 0) -> str:
-    """One pinned position: the plan as it was written, and where it stands now."""
+def trade_card_html(trade: dict, prog=None, now_ms: int = 0, price_now: float | None = None) -> str:
+    """One pinned position: the plan as it was written, and where it stands now.
+
+    `price_now` lets the card tell "no price this refresh" apart from "there is a price but this
+    position's arithmetic failed" - it used to blame the feed for both."""
     plan = trade.get("plan") or {}
     side = str(trade.get("side") or "")
     asset = str(trade.get("asset") or "")
@@ -805,21 +816,30 @@ def trade_card_html(trade: dict, prog=None, now_ms: int = 0) -> str:
                  f"{fmt_num(plan.get('probability'), 0, suffix='%')} confluence estimate</span>")
     else:
         head += " <span class='muted'>· unscored: the sub-agents did not answer</span>"
-    head += f" <span class='muted'>· opened {_when(trade.get('opened_ms'), now_ms)}</span></p>"
+    head += f" <span class='muted'>· opened {_when(trade.get('opened_ms'), now_ms, future=False)}</span></p>"
     body = head
 
     # --- live block: the only part a Refresh changes ---
     if closed:
-        body += (f"<p class='muted'>Closed {_when(trade.get('closed_ms'), now_ms)} at "
+        body += (f"<p class='muted'>Closed {_when(trade.get('closed_ms'), now_ms, future=False)} at "
                  f"{fmt_num(trade.get('closed_price'), 0, '$')} - "
                  f"{html.escape(str(trade.get('closed_reason') or 'no reason recorded'))}.</p>")
     elif prog is not None:
         hit = ", ".join(prog.hit) if prog.hit else "none yet"
+        # the price is recomputed on every rerun, so it is stamped with now, not with the last time
+        # the Refresh button was pressed - which used to sit under a live number and make it look stale.
+        # `refreshed_ms` is reported separately, and only when it really happened.
         body += (f"<p>Now {fmt_num(prog.price, 0, '$')} · <strong>{prog.pnl_pct:+.2f}%</strong> "
                  f"({prog.pnl_r:+.2f}R) · targets reached: {html.escape(hit)}"
                  + (" · <strong>the stop has been reached</strong>" if prog.stopped else "")
-                 + f" <span class='muted'>· refreshed {_when(trade.get('refreshed_ms') or now_ms, now_ms)}"
-                 f"</span></p>")
+                 + f" <span class='muted'>· as of {_when(now_ms, now_ms, future=False)}"
+                 + (f", last manual refresh {_when(trade.get('refreshed_ms'), now_ms, future=False)}"
+                    if trade.get("refreshed_ms") else "")
+                 + "</span></p>")
+    elif price_now:
+        body += (f"<p class='muted'>Price is {fmt_num(price_now, 0, '$')}, but this position's live "
+                 "numbers could not be calculated - see the warning above. The plan below is unaffected."
+                 "</p>")
     else:
         body += "<p class='muted'>No live price this refresh, so the numbers below are the plan only.</p>"
 

@@ -179,11 +179,14 @@ def category_alignment(store, side: str, now_ms: int) -> tuple[DeskAlignment, ..
             continue
         bias = str(anchor.get("bias") or "")
         stale = bool(anchor.get("window_close_ms") and anchor["window_close_ms"] <= now_ms)
-        supports = ("BULL" in bias and long) or ("BEAR" in bias and not long)
-        opposes = ("BEAR" in bias and long) or ("BULL" in bias and not long)
-        # a trap-risk verdict on the trade's own side is a warning, not an endorsement
-        if "TRAP RISK" in bias:
-            supports, opposes = False, supports or opposes
+        # A trap-risk verdict inverts the desk's direction rather than cancelling it: BULL TRAP RISK
+        # means the desk expects the up-move to fail, so it is a bearish read - it opposes a long and
+        # supports a short. Collapsing both to "opposes" reported the desk as against the very trade it
+        # favoured, and tilted the probability the wrong way.
+        leaning_up = ("BULL" in bias) != ("TRAP RISK" in bias)
+        directional = ("BULL" in bias) or ("BEAR" in bias)
+        supports = directional and (leaning_up == long)
+        opposes = directional and (leaning_up != long)
         verdict = "silent" if stale else ("supports" if supports else "opposes" if opposes else "neutral")
         out.append(DeskAlignment(category, profile.label, bias, verdict,
                                  anchor.get("confidence"), stale,

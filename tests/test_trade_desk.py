@@ -254,11 +254,30 @@ def test_a_desk_whose_candle_has_closed_does_not_vote(store):
     assert "not current" in only.note
 
 
-def test_a_trap_risk_verdict_is_not_read_as_support(store):
-    """BULL TRAP RISK means the desk expects the long to fail, so it cannot count for a long."""
+def test_a_trap_risk_verdict_inverts_the_desk_rather_than_cancelling_it(store):
+    """BULL TRAP RISK means the desk expects the up-move to fail: that is a bearish read. It opposes a
+    long AND supports a short. Collapsing both to "opposes" reported the desk as against the very trade
+    it favoured, and tilted the probability the wrong way."""
     anchor(store, "live", "BULL TRAP RISK")
-    only = {a.category: a for a in td.category_alignment(store, LONG, NOW)}["live"]
-    assert only.verdict == "opposes"
+    assert {a.category: a for a in td.category_alignment(store, LONG, NOW)}["live"].verdict == "opposes"
+    assert {a.category: a for a in td.category_alignment(store, SHORT, NOW)}["live"].verdict == "supports"
+
+
+def test_a_bear_trap_risk_verdict_supports_a_long(store):
+    anchor(store, "live", "BEAR TRAP RISK")
+    assert {a.category: a for a in td.category_alignment(store, LONG, NOW)}["live"].verdict == "supports"
+    assert {a.category: a for a in td.category_alignment(store, SHORT, NOW)}["live"].verdict == "opposes"
+
+
+def test_a_plain_verdict_is_unaffected_by_the_inversion(store):
+    for bias, long_verdict, short_verdict in (("BULL", "supports", "opposes"),
+                                              ("BEAR", "opposes", "supports"),
+                                              ("BALANCED", "neutral", "neutral")):
+        s2 = Store(":memory:")
+        anchor(s2, "live", bias)
+        assert {a.category: a for a in td.category_alignment(s2, LONG, NOW)}["live"].verdict == long_verdict
+        assert {a.category: a for a in td.category_alignment(s2, SHORT, NOW)}["live"].verdict == short_verdict
+        s2.close()
 
 
 def test_the_alignment_summary_reads_in_plain_english(store):

@@ -198,3 +198,73 @@ def test_the_settled_history_is_still_newest_first(store):
     for i in range(3):
         store.add_trade_event(tid, NOW + i * 1_000, "target", f"k{i}", f"event {i}", 1.0)
     assert [e["dedup_key"] for e in store.trade_events(tid)] == ["k2", "k1", "k0"]
+
+
+# ---------- a database written by an older revision ----------
+def test_a_trades_table_missing_a_column_is_upgraded_on_open(tmp_path):
+    """CREATE TABLE IF NOT EXISTS adds a missing table but never a missing column, so an older file
+    opened fine and then died at the first write: touch_trade is the Refresh button."""
+    import sqlite3
+
+    path = tmp_path / "old.sqlite"
+    con = sqlite3.connect(path)
+    con.executescript("""
+        CREATE TABLE trades (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, opened_ms INTEGER NOT NULL, asset TEXT NOT NULL,
+            side TEXT NOT NULL, entry REAL NOT NULL, stop REAL NOT NULL, given_stop REAL,
+            stop_verdict TEXT NOT NULL, category TEXT NOT NULL, plan TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'open');
+    """)
+    con.execute("INSERT INTO trades (opened_ms, asset, side, entry, stop, stop_verdict, category, plan) "
+                "VALUES (1000,'BTC/USDT','LONG',80000,79000,'supplied','live','{}')")
+    con.commit()
+    con.close()
+
+    s = Store(path)
+    try:
+        s.touch_trade(1, NOW)                      # the Refresh button; used to raise "no such column"
+        assert s.trade(1)["refreshed_ms"] == NOW
+        assert s.close_trade(1, "killed by the trader", 80_100.0, NOW + 1) is True
+        assert s.trade(1)["closed_reason"] == "killed by the trader"
+    finally:
+        s.close()
+
+
+def test_a_trade_events_table_missing_notified_is_upgraded_on_open(tmp_path):
+    """Without the column, the whole alert dispatch died: both the pending query and mark_notified."""
+    import sqlite3
+
+    path = tmp_path / "old_events.sqlite"
+    con = sqlite3.connect(path)
+    con.executescript("""
+        CREATE TABLE trade_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, trade_id INTEGER NOT NULL, ts_ms INTEGER NOT NULL,
+            kind TEXT NOT NULL, dedup_key TEXT NOT NULL, headline TEXT NOT NULL);
+    """)
+    con.execute("INSERT INTO trade_events (trade_id, ts_ms, kind, dedup_key, headline) "
+                "VALUES (1, 1000, 'target', 'target:TP1', 'TP1 reached')")
+    con.commit()
+    con.close()
+
+    s = Store(path)
+    try:
+        pending = s.trade_events(1, unnotified_only=True)
+        assert [e["dedup_key"] for e in pending] == ["target:TP1"], "the existing row defaults to unsent"
+        assert s.mark_notified([pending[0]["id"]]) == 1
+        assert s.trade_events(1, unnotified_only=True) == []
+    finally:
+        s.close()
+
+
+def test_a_current_database_is_untouched_by_the_upgrade(tmp_path):
+    path = tmp_path / "current.sqlite"
+    first = Store(path)
+    tid = open_one(first)
+    first.close()
+
+    again = Store(path)
+    try:
+        assert again.trade(tid)["plan"]["thesis"] == "the original thesis"
+        assert again.touch_trade(tid, NOW) is None
+    finally:
+        again.close()

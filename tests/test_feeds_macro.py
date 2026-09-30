@@ -643,6 +643,12 @@ def test_a_timeout_gives_a_named_reason_not_an_empty_one():
     preds = _run(prediction.fetch_predictions(httpx.AsyncClient(transport=httpx.MockTransport(boom2))))
     assert "ConnectError" in (preds.error or "")
 
+    # and the news leg, where all three sources reported themselves as "CoinDesk: ; Cointelegraph: "
+    snap = _run(news.fetch_news(httpx.AsyncClient(transport=httpx.MockTransport(boom))))
+    assert not snap.available
+    assert (snap.error or "").count("ReadTimeout") == 3, snap.error
+    assert ": ;" not in (snap.error or ""), "no source reports itself as nothing"
+
 
 def test_the_news_legs_are_fetched_concurrently():
     """Awaited one after another, this single leg could hold the page for three read timeouts in a row -

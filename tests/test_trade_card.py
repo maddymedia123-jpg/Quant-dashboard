@@ -216,3 +216,54 @@ def test_a_card_renders_with_an_empty_plan():
     assert panels.trade_card_html(row(plan={}), None, NOW)
     assert panels.trade_card_html({"id": 2, "side": SHORT, "asset": "ETH/USDT", "status": "open"},
                                   None, NOW)
+
+
+# ---------- the card telling the truth about its own freshness ----------
+def test_the_open_time_is_not_labelled_as_passed():
+    """"(passed)" is for dates meant to be ahead of us - a target's due time. Applied to the open time,
+    which is past by definition, every card permanently read "opened ... (passed)"."""
+    h = panels.trade_card_html(row(), None, NOW)
+    opened = h.split("opened ")[1][:40]
+    assert "(passed)" not in opened, opened
+
+
+def test_a_closed_time_is_not_labelled_as_passed():
+    h = panels.trade_card_html(row(status="closed", closed_ms=NOW - HOUR, closed_price=78_400.0,
+                                   closed_reason="killed by the trader"), None, NOW)
+    assert "(passed)" not in h.split("Closed ")[1][:40]
+
+
+def test_a_target_due_date_that_has_gone_past_is_still_labelled():
+    """The case the label exists for."""
+    h = panels.trade_card_html(row(plan=plan(targets=[target(due_ms=NOW - HOUR)])), None, NOW)
+    assert "(passed)" in h
+
+
+def test_no_refresh_is_claimed_for_a_card_that_was_never_refreshed():
+    """open_trade does not write refreshed_ms, so the old `or now_ms` fallback printed a refresh that
+    never happened."""
+    prog = progress(LONG, 78_000.0, 77_600.0, targets_as_objects(plan()["targets"]), 78_100.0)
+    h = panels.trade_card_html(row(refreshed_ms=None), prog, NOW)
+    assert "last manual refresh" not in h
+    assert "as of" in h, "the price still carries the time it was read"
+
+
+def test_a_real_refresh_is_reported_separately_from_the_price_time():
+    """After one Refresh the stamp used to be pinned to that click while the price kept updating on
+    every rerun, so a live number sat under an old time."""
+    prog = progress(LONG, 78_000.0, 77_600.0, targets_as_objects(plan()["targets"]), 78_100.0)
+    h = panels.trade_card_html(row(refreshed_ms=NOW - 2 * HOUR), prog, NOW)
+    assert "last manual refresh" in h
+    price_stamp = h.split("as of ")[1][:30]
+    assert "(passed)" not in price_stamp
+
+
+def test_a_failed_calculation_is_not_reported_as_a_missing_feed():
+    """When progress raises, the caller leaves prog=None - the card used to blame the feed for it while
+    a price existed."""
+    with_price = panels.trade_card_html(row(), None, NOW, price_now=78_100.0)
+    assert "could not be calculated" in with_price and "$78,100" in with_price
+    assert "No live price this refresh" not in with_price
+
+    without = panels.trade_card_html(row(), None, NOW, price_now=None)
+    assert "No live price this refresh" in without

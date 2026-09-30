@@ -6,9 +6,11 @@ Path comes from TI_DATA_DIR (default ./data). ":memory:" is supported for tests.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import pathlib
 import sqlite3
+from typing import ClassVar
 import threading
 
 # Live Recon anchors were pinned before every category had a war room. They carry over as "live",
@@ -98,6 +100,9 @@ def _rows(cur) -> list[dict]:
     return [dict(r) for r in cur.fetchall()]
 
 
+log = logging.getLogger(__name__)
+
+
 class Store:
     def __init__(self, path: str | os.PathLike | None = None):
         if path == ":memory:":
@@ -111,10 +116,42 @@ class Store:
         self._lock = threading.Lock()
         with self._lock:
             self._conn.executescript(SCHEMA)
+            self._add_missing_columns()
             self._conn.executescript(MIGRATE)
             self._conn.commit()
 
     # ---- anchors ----
+    # CREATE TABLE IF NOT EXISTS adds a missing table but never a missing column, so a database written
+    # by an older revision opened without complaint and then failed at the first write: touch_trade - the
+    # Refresh button - and the whole alert dispatch died with "no such column". Streamlit Cloud wipes the
+    # file on reboot so it would not show there, but any persistent volume keeps it.
+    EXPECTED_COLUMNS: ClassVar[dict[str, dict[str, str]]] = {
+        "trades": {"refreshed_ms": "INTEGER", "closed_ms": "INTEGER", "closed_reason": "TEXT",
+                   "closed_price": "REAL", "given_stop": "REAL"},
+        "trade_events": {"notified": "INTEGER NOT NULL DEFAULT 0", "price": "REAL"},
+        "traps": {"resolved_ms": "INTEGER", "resolved_price": "REAL", "notes": "TEXT", "score": "REAL",
+                  "head_call": "TEXT"},
+    }
+
+    def _add_missing_columns(self) -> None:
+        """Bring an older file's columns up to what the code expects. Caller holds the lock."""
+        for table, columns in self.EXPECTED_COLUMNS.items():
+            try:
+                have = {r["name"] for r in self._conn.execute(f"PRAGMA table_info({table})")}
+            except sqlite3.Error:
+                continue
+            if not have:
+                continue                 # the table does not exist; SCHEMA has just created it
+            for name, decl in columns.items():
+                if name in have:
+                    continue
+                try:
+                    self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+                    log.warning("store: added missing column %s.%s", table, name)
+                except sqlite3.Error as e:  # noqa: PERF203 - one per column, and rare
+                    log.error("store: could not add %s.%s (%s)", table, name, e)
+        self._conn.commit()
+
     def get_anchor(self, category: str) -> dict | None:
         with self._lock:
             r = self._conn.execute("SELECT payload, since_ms FROM anchors WHERE category=?", (category,)).fetchone()

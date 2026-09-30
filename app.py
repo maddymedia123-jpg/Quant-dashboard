@@ -728,7 +728,7 @@ with tabs[5]:
             except Exception as e:  # noqa: BLE001
                 st.warning(f"Trade #{row['id']}: live numbers unavailable ({e}).")
         try:
-            panels.render(panels.trade_card_html(row, prog, now_ms))
+            panels.render(panels.trade_card_html(row, prog, now_ms, price_now))
         except Exception as e:  # noqa: BLE001 - one bad card must not remove the others
             st.error(f"Trade #{row['id']} ({row.get('asset')} {row.get('side')}) could not be drawn "
                      f"({type(e).__name__}: {e}). Its levels: entry {row.get('entry')}, "
