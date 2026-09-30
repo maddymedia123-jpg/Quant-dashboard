@@ -7,6 +7,7 @@ import math
 import streamlit.components.v1 as components
 
 from core.config import CATEGORIES, LIGHTWEIGHT_CHARTS_URL, TF_MINUTES
+from core.indicators import volatility as vol
 from core.indicators.category import CategoryAnalysis
 from ui.theme import palette
 
@@ -97,6 +98,14 @@ def chart_payload(a: CategoryAnalysis, dark: bool) -> dict:
         "mid": [{"time": last_t, "value": price}, {"time": proj_end, "value": mid_end}],
     }
 
+    # The spec gives each desk a forecast timeframe and horizon ("Forecast: 1h candles / 4h horizon").
+    # These are the volatility envelope drawn as candles, not predicted OHLC - see volatility.forecast_candles.
+    drift = sign * float(a.direction.confidence or 0.0)
+    bars = vol.forecast_candles(price, _f(a.vol.sigma_pct), horizon, drift,
+                                max_bars=min(future_n, 24))
+    forecast = [{"time": last_t + b["step"] * interval, "open": b["open"], "high": b["high"],
+                 "low": b["low"], "close": b["close"]} for b in bars]
+
     rvals = a.rsi.tolist()
     rsi_data = [{"time": t[i], "value": _f(rvals[i])} for i in range(n) if _f(rvals[i]) is not None]
     markers = []
@@ -112,6 +121,7 @@ def chart_payload(a: CategoryAnalysis, dark: bool) -> dict:
         "title": f"{a.label} · {a.chart_tf}",
         "candles": candles, "whitespace": whitespace, "emas": emas, "levels": levels,
         "trendlines": trendlines, "fibs": fibs, "now": last_t, "projection": projection,
+        "forecast": forecast, "forecastLabel": f"{a.chart_tf} forecast envelope / {a.vol.horizon_label}",
         "retracements": retracements, "patterns": patterns,
         "rsi": {"data": rsi_data, "markers": markers},
         "visibleBars": 140,
@@ -163,6 +173,24 @@ P.trendlines.forEach(t => {
   const s = chart.addSeries(LW.LineSeries, { color: t.color, lineWidth: 1, lineStyle: LW.LineStyle.Dotted, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
   s.setData(t.data);
 });
+// The spec's forecast candles. Hollow and translucent on purpose: these are the volatility envelope
+// drawn as bars, not a prediction of any bar's shape, and they must not read as real candles.
+if ((P.forecast || []).length) {
+  const fc = chart.addSeries(LW.CandlestickSeries, {
+    upColor: 'rgba(0,0,0,0)', downColor: 'rgba(0,0,0,0)',
+    borderUpColor: T.accent, borderDownColor: T.muted,
+    wickUpColor: T.accent, wickDownColor: T.muted,
+    borderVisible: true, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+  });
+  fc.setData(P.forecast);
+  const tag = document.createElement('span');
+  tag.style.setProperty('--c', T.accent);
+  tag.textContent = NARROW ? 'forecast' : (P.forecastLabel || 'forecast envelope');
+  tag.title = 'The volatility envelope over this desk\'s horizon, drawn per bar: the body spans half a '
+            + 'sigma either side of the drift path and the wicks a full sigma, widening as the square '
+            + 'root of the bars ahead. Not a prediction of any candle\'s shape.';
+  legend.appendChild(tag);
+}
 ['upper', 'lower', 'mid'].forEach(k => {
   const s = chart.addSeries(LW.LineSeries, { color: P.projection.color, lineWidth: k === 'mid' ? 2 : 1, lineStyle: LW.LineStyle.Dashed,
     priceLineVisible: false, lastValueVisible: k !== 'mid', crosshairMarkerVisible: false, title: k === 'mid' ? 'projection' : '' });

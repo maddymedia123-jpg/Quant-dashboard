@@ -119,6 +119,28 @@ measures 0.50 give or take 0.03 on the history we hold, so the neutral band is t
 wide: above 0.56 trends persist, below 0.44 moves mean-revert, and inside that band the reading claims
 nothing. Tests hold it to series whose behaviour is known by construction.
 
+## Forecast envelope (spec: "Forecast: 1h candles / 4h horizon")
+
+His architecture tree gives every desk a forecast timeframe and horizon, and his sketch draws them as
+"Futuristic Projected Candles (Dotted Outlines)". Each desk now draws them on its own chart timeframe
+over its own horizon.
+
+**They are not predicted candles, and nothing here forecasts a candle's shape.** Each bar is the
+volatility envelope drawn *as* a bar: the body spans half a sigma either side of the drift path, the
+wicks span a full sigma, and sigma widens as the square root of the bars ahead - the random-walk scaling
+the Hurst reading measures departures from. The drift is the direction engine's own confidence, capped at
+the body width, so **even total confidence leaves the opposite side of the envelope open**: an envelope
+that cannot go against the call is an advert, not a forecast. Every bar opens where the last one closed,
+and with no measured sigma nothing is drawn at all.
+
+They are rendered hollow, outlined in the accent colour and never in the live candle colours, and the
+legend entry carries a tooltip saying what they are - a filled bar in the up/down colours would read as a
+real candle, which is the one thing these must never do. A long horizon is compressed into at most 24
+bars rather than truncated, so the far edge still shows the full horizon sigma.
+
+Drawn with the existing TradingView lightweight-charts engine. His sketch is Plotly; adding it back would
+have put two charting stacks and two visual languages on one page, and this engine draws the series fine.
+
 ## SMC and liquidity protocols
 
 The rubric asks about structure and order flow, so both are computed from candles rather than left to a

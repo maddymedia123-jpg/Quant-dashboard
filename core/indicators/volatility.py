@@ -218,3 +218,49 @@ def matrix_summary(df: pd.DataFrame, timeframe: str, options=None) -> dict:
         "bands": {k: r(val) for k, val in m.bands.items()},
         "note": m.note,
     }
+
+
+# ---------- the forecast envelope, drawn as candles (spec: "Forecast: 1h candles / 4h horizon") ----------
+# The body spans half a sigma either side of the drift path, the wicks a full sigma. Sigma widens as the
+# square root of the steps ahead, which is the random-walk scaling the Hurst work above measures
+# departures from - so a trending market's envelope is honest about being wider than sqrt(k) suggests
+# only insofar as the horizon sigma already reflects it.
+FORECAST_BODY_SIGMA = 0.5
+FORECAST_WICK_SIGMA = 1.0
+
+
+def forecast_candles(price: float | None, sigma_pct: float | None, horizon_bars: int,
+                     drift: float = 0.0, max_bars: int = 24) -> list[dict]:
+    """The volatility envelope over the horizon, one entry per bar.
+
+    `sigma_pct` is the standard deviation over the WHOLE horizon, as `volatility_profile` computes it,
+    so the k-th bar of n gets sigma * sqrt(k/n). `drift` is a signed fraction of one horizon sigma - the
+    direction engine's confidence, not a forecast of price.
+
+    Returns dicts of {step, open, high, low, close}; the caller attaches the timestamps, because only it
+    knows the chart's interval. An empty list means there is nothing honest to draw."""
+    if not price or not sigma_pct or horizon_bars < 1:
+        return []
+    sigma = price * (float(sigma_pct) / 100.0)
+    if sigma <= 0:
+        return []
+    steps = max(1, min(int(horizon_bars), int(max_bars)))
+    out: list[dict] = []
+    previous_close = float(price)
+    for k in range(1, steps + 1):
+        scale = math.sqrt(k / steps)
+        spread = sigma * scale
+        # the drift is capped at the body width, so even total confidence leaves the opposite side
+        # of the envelope open: at drift 1.0 the centre sits half a sigma up and the low is still
+        # half a sigma below the entry. An envelope that cannot go against the call is an advert.
+        centre = float(price) + float(drift) * sigma * scale * FORECAST_BODY_SIGMA
+        body = spread * FORECAST_BODY_SIGMA
+        wick = spread * FORECAST_WICK_SIGMA
+        close = centre + (body if drift >= 0 else -body)
+        out.append({"step": k,
+                    "open": round(previous_close, 2),
+                    "close": round(close, 2),
+                    "high": round(centre + wick, 2),
+                    "low": round(centre - wick, 2)})
+        previous_close = close
+    return out
