@@ -26,6 +26,9 @@ import numpy as np
 import pandas as pd
 
 from core.agents.recon_profiles import DAY_MS, HOUR_MS, MONDAY_OFFSET_MS, WEEK_MS
+# one definition, imported rather than repeated: app.py reached for trades.DEFAULT_ATR_PCT on the
+# no-ATR path and got an AttributeError, because the constant only existed in core.traps
+from core.traps import DEFAULT_ATR_PCT
 
 LONG, SHORT = "LONG", "SHORT"
 # A stop has to sit beyond the structure that protects it, by enough that the wick which takes the

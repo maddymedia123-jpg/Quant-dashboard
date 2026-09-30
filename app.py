@@ -556,6 +556,19 @@ with tabs[4]:
                     st.caption(" · ".join(v.notes))
 
 # ---------- active trade ----------
+def _secrets() -> dict:
+    """Streamlit secrets, or an empty mapping when there is no secrets file.
+
+    `hasattr(st, "secrets")` is always True - the attribute exists whether or not a file does - so the
+    old guard was dead and `dict(st.secrets)` raised on any deploy or fresh clone without one, aborting
+    the script mid-tab and taking every tab after it down with it. core/agents/settings.py already
+    handled this correctly; this is the same pattern."""
+    try:
+        return dict(st.secrets)
+    except Exception:  # noqa: BLE001 - not running under streamlit, or no secrets file
+        return {}
+
+
 def _trade_price() -> float | None:
     return m.spot.last or (next(iter(analyses.values())).price if analyses else None)
 
@@ -640,7 +653,7 @@ def trade_alert_pass(row: dict, prog) -> None:
     pending = store.trade_events(row["id"], unnotified_only=True)
     if not pending:
         return
-    dispatcher = Dispatcher(dict(st.secrets) if hasattr(st, "secrets") else {})
+    dispatcher = Dispatcher(_secrets())
     to_send = [Event(p["kind"], p["dedup_key"], p["headline"], p.get("price")) for p in pending]
     delivered, problems = dispatcher.send(to_send)
     if delivered:
@@ -783,7 +796,7 @@ with tabs[5]:
             except Exception as e:  # noqa: BLE001 - the stress-test must not blank the tab
                 st.warning(f"Stress-test unavailable: {e}")
 
-    channels = Dispatcher(dict(st.secrets) if hasattr(st, "secrets") else {}).channels
+    channels = Dispatcher(_secrets()).channels
     ready = [c.name for c in channels if c.configured]
     missing = [f"{c.name} ({c.reason})" for c in channels if not c.configured]
     st.caption(("Alerts go to: " + ", ".join(ready) + ". " if ready else "No alert channel is configured. ")

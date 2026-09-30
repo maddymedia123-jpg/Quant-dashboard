@@ -104,14 +104,22 @@ def safe_xml(raw: str | bytes) -> ET.Element:
 
     Measured on this runtime, the standard library already refuses both attacks that matter here: an
     external entity fails with "undefined entity", and expat 2.7.3 refuses an entity bomb with "limit on
-    input amplification factor breached". But that second guarantee comes from expat 2.4.1 or newer, and
-    the deploy host's build is not ours to choose - so the guard below does not depend on it. A feed needs
-    no document type declaration, so refusing one removes the whole entity-expansion class outright, and
-    the size cap bounds the rest. Cheaper and more verifiable than taking on a dependency for it."""
+    input amplification factor breached". The second of those comes from expat 2.4.1 or newer and the
+    deploy host's build is not ours to choose, so the guard below is what has to hold on its own.
+
+    It scans the entire buffer. An earlier version scanned only the first 4096 bytes, which a hostile
+    feed defeats with a legal comment in the prolog: measured, a 5 KB comment put the DOCTYPE at byte
+    5028, this function accepted the document, and the expanded entity reached a rendered headline. A
+    feed needs no document type declaration, so refusing one outright removes the entity-expansion
+    class, and the size cap bounds the rest."""
     data = raw.encode("utf-8", errors="replace") if isinstance(raw, str) else raw
     if len(data) > MAX_FEED_BYTES:
         raise ValueError(f"feed is {len(data) / 1_048_576:.1f} MB, over the {MAX_FEED_BYTES // 1_048_576} MB cap")
-    if DOCTYPE_RE.search(data[:4096]):
+    # the WHOLE buffer, not a prefix: XML allows comments and processing instructions in the prolog,
+    # so a hostile feed can pad past any window and still have its entities honoured. Measured: a
+    # 5 KB comment put the DOCTYPE at byte 5028, the guard missed it, and the entity expanded into a
+    # headline. Scanning 4 MB of bytes for this regex costs microseconds.
+    if DOCTYPE_RE.search(data):
         raise ValueError("feed declares a DOCTYPE or ENTITY, which a news feed has no need of")
     return ET.fromstring(data)
 
