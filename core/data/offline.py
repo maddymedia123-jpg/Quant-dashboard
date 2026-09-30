@@ -15,7 +15,7 @@ from core.data.deribit_options import parse_book_summary
 from core.data.hyperliquid import parse_meta
 from core.data.kraken_spot import parse_ohlc, parse_ticker
 from core.data.metals import parse_gold
-from core.data.news import merge, parse_feed
+from core.data.news import merge, parse_aggregator, parse_feed
 from core.data.prediction import parse_markets
 from core.data.sentiment import parse_fng
 from core.data.stablecoins import parse_stablecoins
@@ -68,9 +68,11 @@ def fixture_context() -> dict:
 
 
 def _fixture_news() -> NewsSnapshot:
-    """Both recorded feeds, merged exactly as the live path merges them."""
+    """All three recorded sources, merged exactly as the live path merges them - publisher feeds first,
+    so a story carried by both keeps the direct copy."""
     feeds = [parse_feed("CoinDesk", _load_text("coindesk_rss.xml")),
-             parse_feed("Cointelegraph", _load_text("cointelegraph_rss.xml"))]
+             parse_feed("Cointelegraph", _load_text("cointelegraph_rss.xml")),
+             parse_aggregator(_load("cryptocv_breaking.json"))]
     return NewsSnapshot(source="fixture", headlines=merge(feeds))
 
 

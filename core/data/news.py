@@ -1,8 +1,15 @@
-"""Crypto headlines from publisher RSS (keyless): the news half of the spec's macro/news engine.
+"""Crypto headlines, keyless: the news half of the spec's macro/news engine.
 
-Why RSS rather than a news API: every news API in the public directories needs a key, and the two that
-do not are an Indian news aggregator and a dead host. RSS needs no key, no account and no quota, and it
-is what the publishers themselves maintain. Parsed with the standard library, so this adds no dependency.
+Two publisher RSS feeds read directly, plus the cryptocurrency.cv aggregator for breadth - fourteen more
+publishers than the direct feeds alone reach. The direct feeds are kept rather than replaced, because the
+aggregator is one operator's hosted service: measuring it found `/api/news` serving three items from a
+near-empty cache and every AI endpoint returning 429 from an exhausted upstream quota. RSS comes straight
+from the publisher and cannot go down with one operator, so it is merged first and a story carried by both
+keeps the direct copy.
+
+Why not a conventional news API: every one in the public directories needs a key, and the two that do not
+are an Indian news aggregator and a dead host. RSS needs no key, no account and no quota, and it is what
+the publishers themselves maintain. Parsed with the standard library, so this adds no dependency.
 
 Headlines are *tagged*, not judged. The topic and impact below come from keyword matching, which is a
 crude instrument: it cannot tell a rumour from a confirmation, and it will mislabel a headline that uses
@@ -146,10 +153,76 @@ def merge(feeds: list[list[dict]]) -> list[dict]:
     return merged
 
 
+# ---------- aggregator: cryptocurrency.cv (keyless) ----------
+# Its /api/breaking endpoint, not /api/news: measured, /api/news returned three items from a near-empty
+# cache (a 7 ms response) while /api/breaking returned twenty from fourteen publishers. The AI and
+# sentiment endpoints are not used - they answered 429 from an exhausted upstream quota, and judgment
+# here belongs to the desk agents anyway.
+AGGREGATOR = ("cryptocurrency.cv", "https://cryptocurrency.cv/api/breaking")
+AGGREGATOR_LIMIT = 40
+# Its wider feed carries bot-generated ticker lines ("ETH Gas: ... Gwei") among the real stories. They do
+# not appear on /api/breaking, but the filter costs nothing and a gas readout is not a headline.
+TICKER_MARKERS = ("gas:", "gwei", "⛽")
+
+
+def _is_ticker(title: str) -> bool:
+    low = title.lower()
+    return sum(marker in low for marker in TICKER_MARKERS) >= 2
+
+
+def _published_ms_from(raw) -> int | None:
+    """The aggregator dates in ISO 8601, the feeds in RFC 822. Both end up in epoch milliseconds."""
+    if not raw:
+        return None
+    text = str(raw).strip()
+    for parse in (lambda t: datetime.fromisoformat(t.replace("Z", "+00:00")), parsedate_to_datetime):
+        try:
+            d = parse(text)
+            if d.tzinfo is None:
+                d = d.replace(tzinfo=timezone.utc)
+            return int(d.timestamp() * 1000)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def parse_aggregator(payload: dict) -> list[dict]:
+    """The aggregator's articles, in the same shape the publisher feeds produce.
+
+    Its own `category` is a different taxonomy from ours and its `credibility` was a flat 0.6 on every
+    article sampled, so neither is carried: topic and impact come from the same `classify` the publisher
+    feeds use, which keeps one vocabulary across all three sources."""
+    if not isinstance(payload, dict):
+        raise ValueError(f"unexpected payload {type(payload).__name__}")
+    articles = payload.get("articles")
+    if not isinstance(articles, list):
+        raise ValueError("no articles array in the response")
+    out: list[dict] = []
+    for row in articles[:AGGREGATOR_LIMIT]:
+        if not isinstance(row, dict):
+            continue
+        title = _clean(row.get("title"))
+        if not title or _is_ticker(title):
+            continue
+        summary = _clean(row.get("description"))
+        topic, impact, assets = classify(title, summary)
+        out.append({"title": title, "url": str(row.get("link") or "").strip(),
+                    # the publisher, not the aggregator: Decrypt is the source, cryptocurrency.cv is
+                    # only the route it arrived by
+                    "source": str(row.get("source") or AGGREGATOR[0]).strip() or AGGREGATOR[0],
+                    "published_ms": _published_ms_from(row.get("pubDate")),
+                    "summary": summary, "topic": topic, "impact": impact, "assets": assets,
+                    "via": AGGREGATOR[0], "kind": str(row.get("contentType") or "").strip()})
+    return out
+
+
 async def fetch_news(client: httpx.AsyncClient) -> NewsSnapshot:
-    """Both feeds. One publisher being down is a degraded feed, not a missing one, so it is named."""
+    """Publisher feeds plus the aggregator, merged. Any one source being down is a degraded feed rather
+    than a missing one, so whatever failed is named and the rest still render."""
     collected: list[list[dict]] = []
     problems: list[str] = []
+    ok_sources: list[str] = []
+
     for source, url in FEEDS:
         try:
             # publishers move feeds: CoinDesk 308s from the trailing-slash form, and httpx does not
@@ -157,10 +230,30 @@ async def fetch_news(client: httpx.AsyncClient) -> NewsSnapshot:
             r = await client.get(url, headers=HEADERS, follow_redirects=True)
             r.raise_for_status()
             collected.append(parse_feed(source, r.content))
+            ok_sources.append(source)
         except Exception as e:  # noqa: BLE001 - provider boundary, per feed
             log.warning("news feed %s unavailable: %s", source, e)
             problems.append(f"{source}: {e}")
+
+    name, url = AGGREGATOR
+    try:
+        r = await client.get(url, params={"limit": AGGREGATOR_LIMIT}, headers=HEADERS,
+                             follow_redirects=True)
+        r.raise_for_status()
+        articles = parse_aggregator(r.json())
+        if articles:
+            collected.append(articles)
+            ok_sources.append(name)
+        else:
+            problems.append(f"{name}: returned no usable articles")
+    except Exception as e:  # noqa: BLE001 - provider boundary
+        log.warning("news aggregator %s unavailable: %s", name, e)
+        problems.append(f"{name}: {e}")
+
     if not collected:
-        return NewsSnapshot.unavailable(",".join(s for s, _ in FEEDS), "; ".join(problems))
-    return NewsSnapshot(source=",".join(s for s, _ in FEEDS), headlines=merge(collected),
+        return NewsSnapshot.unavailable(",".join([s for s, _ in FEEDS] + [AGGREGATOR[0]]),
+                                        "; ".join(problems))
+    # the publisher feeds are merged first, so a story carried by both keeps the copy that came straight
+    # from the publisher rather than the relayed one
+    return NewsSnapshot(source=",".join(ok_sources), headlines=merge(collected),
                         error="; ".join(problems) or None)

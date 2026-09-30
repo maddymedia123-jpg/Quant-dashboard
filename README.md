@@ -33,7 +33,7 @@ Hyperliquid composite, Kraken Futures, and finally values derived from our own s
 Hyperliquid funding and OI · CoinLobster 24h liquidations, $100K+ whale trades and unusual-flow radar ·
 Deribit options for max pain, put/call and IV skew · DefiLlama stablecoin supply · alternative.me Fear &
 Greed · Forex Factory weekly economic calendar (high-impact USD prints with forecast/previous; drives the
-macro-window trigger) · CoinDesk and Cointelegraph RSS for headlines · goldprice.dev for XAU/USD spot
+macro-window trigger) · CoinDesk and Cointelegraph RSS plus the cryptocurrency.cv aggregator for headlines · goldprice.dev for XAU/USD spot
 (gold only; silver and copper are plan-gated) · Polymarket odds via voxodds.com, with an execution-quality
 band per market.
 
@@ -262,7 +262,16 @@ itself, and the tab says so rather than implying the alerts are always on.
 Three keyless feeds, on their own tab because none of them is a read on one timeframe. All three were
 chosen by calling them, not by reading a directory's Auth column, and each hid something:
 
-- **Headlines — publisher RSS** (CoinDesk, Cointelegraph). Every news API in the public directories needs
+- **Headlines — publisher RSS** (CoinDesk, Cointelegraph) **plus the cryptocurrency.cv aggregator**,
+  merged. The aggregator adds twelve more publishers (The Block, Decrypt, CNBC Crypto, CryptoSlate and
+  the rest), taking the feed from 55 headlines across 2 publishers to 74 across 14. It is keyless and its
+  hosted API is stated to be free to use; its *code* is all rights reserved, so none of it is copied and
+  it is not self-hosted. The direct feeds are kept rather than replaced, because measuring the aggregator
+  found its `/api/news` serving three items from a near-empty cache and every AI endpoint returning 429
+  from an exhausted upstream quota — so `/api/breaking` is the endpoint used, the AI and sentiment
+  endpoints are not, and publisher RSS stays as the leg that cannot go down with one operator. Publisher
+  feeds merge first, so a story carried by both keeps the direct copy, and each headline is credited to
+  its publisher rather than to the relay. Every news API in the public directories needs
   a key; the two that do not are an Indian news aggregator and a host that no longer resolves. RSS needs
   no key, account or quota, and parses with the standard library, so it adds no dependency. *The trap:*
   CoinDesk 308-redirects from the trailing-slash URL and httpx does not follow redirects unless told to,

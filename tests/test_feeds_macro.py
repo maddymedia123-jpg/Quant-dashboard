@@ -157,13 +157,16 @@ def test_a_redirected_feed_is_followed(monkeypatch):
 
     def handler(request: httpx.Request):
         seen.append(str(request.url))
+        if "cryptocurrency.cv" in str(request.url):
+            return httpx.Response(200, json=load("cryptocv_breaking.json"))
         if request.url.path == "/feed/":
             return httpx.Response(308, headers={"Location": "https://www.coindesk.com/feed"})
         return httpx.Response(200, content=load("coindesk_rss.xml").encode())
 
     snap = _run(news.fetch_news(httpx.AsyncClient(transport=httpx.MockTransport(handler))))
     assert snap.available and len(snap.headlines) >= 20, "the redirect target was never read"
-    assert seen[-1] == "https://www.coindesk.com/feed", "the request followed through to the new URL"
+    # not seen[-1]: the aggregator is called after the feeds, so it is the last request either way
+    assert "https://www.coindesk.com/feed" in seen, "the request followed through to the new URL"
     assert snap.error is None
 
 
@@ -376,3 +379,165 @@ def test_a_market_snapshot_defaults_all_three_to_unavailable():
         assert name in m.unavailable()
     assert isinstance(m.news, NewsSnapshot) and isinstance(m.metals, MetalsSnapshot)
     assert isinstance(m.predictions, PredictionSnapshot)
+
+
+# ---------- the aggregator leg ----------
+def test_the_recorded_aggregator_payload_parses_into_headlines():
+    items = news.parse_aggregator(load("cryptocv_breaking.json"))
+    assert len(items) >= 15
+    first = items[0]
+    assert first["title"] and first["url"].startswith("https://")
+    assert isinstance(first["published_ms"], int) and first["published_ms"] > 1_700_000_000_000
+    assert first["via"] == "cryptocurrency.cv"
+
+
+def test_the_aggregator_reaches_publishers_the_direct_feeds_do_not():
+    """The whole reason for adding it. Two feeds read directly reach two publishers; this reaches many."""
+    items = news.parse_aggregator(load("cryptocv_breaking.json"))
+    publishers = {i["source"] for i in items}
+    assert len(publishers) >= 8, publishers
+    assert publishers - {"CoinDesk", "Cointelegraph"}, "it must add publishers, not repeat ours"
+
+
+def test_a_headline_is_credited_to_its_publisher_not_to_the_aggregator():
+    """Decrypt is the source; cryptocurrency.cv is only the route it arrived by. Crediting the relay
+    would misreport where a story came from."""
+    items = news.parse_aggregator({"articles": [
+        {"title": "CFTC sends the White House new rules", "link": "https://decrypt.co/x",
+         "source": "Decrypt", "pubDate": "2026-09-30T18:00:00.000Z", "contentType": "news"}]})
+    assert items[0]["source"] == "Decrypt"
+    assert items[0]["via"] == "cryptocurrency.cv"
+
+
+def test_the_aggregator_dates_parse_from_iso_8601():
+    """The feeds date in RFC 822 and the aggregator in ISO 8601; both have to land in epoch ms."""
+    import datetime as dt
+
+    items = news.parse_aggregator({"articles": [
+        {"title": "A story", "link": "https://x.test", "source": "S",
+         "pubDate": "2026-09-30T18:00:00.000Z"}]})
+    # computed independently rather than pasted as a literal, which is how the first version got it wrong
+    expected = int(dt.datetime(2026, 9, 30, 18, 0, tzinfo=dt.timezone.utc).timestamp() * 1000)
+    assert items[0]["published_ms"] == expected
+
+
+def test_a_bot_ticker_line_is_not_a_headline():
+    """Its wider feed carries gas-price readouts among real stories."""
+    items = news.parse_aggregator({"articles": [
+        {"title": "\u26fd ETH Gas: 0.42 | 0.43 | 0.48 Gwei", "link": "https://etherscan.io/gastracker",
+         "source": "Etherscan", "pubDate": "2026-09-30T19:01:00.000Z"},
+        {"title": "Bitcoin ETFs extend win streak to nine days", "link": "https://decrypt.co/y",
+         "source": "Decrypt", "pubDate": "2026-09-30T18:30:00.000Z"}]})
+    assert [i["source"] for i in items] == ["Decrypt"]
+
+
+def test_a_gas_story_that_is_actually_news_is_kept():
+    """The filter needs two markers, so a genuine story that merely mentions gas fees survives it."""
+    items = news.parse_aggregator({"articles": [
+        {"title": "Ethereum gas: how the Cobalt upgrade changes fee markets", "link": "https://x.test",
+         "source": "The Block", "pubDate": "2026-09-30T18:00:00.000Z"}]})
+    assert len(items) == 1
+
+
+def test_aggregator_headlines_are_tagged_with_our_own_vocabulary():
+    """Its `category` is a different taxonomy and its `credibility` was a flat 0.6 on every article
+    sampled, so neither is carried - one vocabulary across all three sources."""
+    items = news.parse_aggregator({"articles": [
+        {"title": "SEC sues a major exchange over unregistered offerings", "link": "https://x.test",
+         "source": "The Block", "pubDate": "2026-09-30T18:00:00.000Z",
+         "category": "policy", "credibility": 0.6, "reputation": 50}]})
+    assert (items[0]["topic"], items[0]["impact"]) == ("regulation", "high")
+    assert "credibility" not in items[0] and "reputation" not in items[0]
+
+
+@pytest.mark.parametrize("payload", [{}, {"articles": "lots"}, [], "text"])
+def test_a_malformed_aggregator_payload_raises_for_the_caller_to_handle(payload):
+    with pytest.raises(ValueError):
+        news.parse_aggregator(payload)
+
+
+def test_articles_without_a_title_are_skipped():
+    items = news.parse_aggregator({"articles": [
+        {"title": "", "link": "https://a"}, {"link": "https://b"}, "not a dict",
+        {"title": "A real story", "link": "https://c", "source": "S",
+         "pubDate": "2026-09-30T18:00:00.000Z"}]})
+    assert [i["title"] for i in items] == ["A real story"]
+
+
+# ---------- all three merged ----------
+def test_all_three_sources_merge_with_the_direct_copy_winning():
+    """A story both a publisher feed and the aggregator carry should keep the copy that came straight
+    from the publisher, because the relay can go down and the publisher's own name should be on it."""
+    direct = [{"title": "Bitcoin ETFs extend win streak", "url": "https://coindesk.com/a",
+               "source": "CoinDesk", "published_ms": 1_759_255_200_000, "summary": "",
+               "topic": "etf", "impact": "high", "assets": ["BTC"]}]
+    relayed = news.parse_aggregator({"articles": [
+        {"title": "Bitcoin ETFs Extend Win Streak!", "link": "https://decrypt.co/a", "source": "Decrypt",
+         "pubDate": "2026-09-30T18:00:00.000Z"},
+        {"title": "A story only the aggregator has", "link": "https://theblock.co/b",
+         "source": "The Block", "pubDate": "2026-09-30T18:05:00.000Z"}]})
+    merged = news.merge([direct, relayed])
+    assert len(merged) == 2, "the duplicate collapses"
+    kept = next(h for h in merged if "win streak" in h["title"].lower())
+    assert kept["source"] == "CoinDesk" and "via" not in kept, "the direct copy survived"
+
+
+def test_the_aggregator_being_down_still_leaves_the_publisher_feeds():
+    def handler(request: httpx.Request):
+        if "cryptocurrency.cv" in str(request.url):
+            return httpx.Response(503)
+        body = ("coindesk_rss.xml" if "coindesk" in str(request.url) else "cointelegraph_rss.xml")
+        return httpx.Response(200, content=load(body).encode())
+
+    snap = _run(news.fetch_news(httpx.AsyncClient(transport=httpx.MockTransport(handler))))
+    assert snap.available and len(snap.headlines) >= 40
+    assert snap.error and "cryptocurrency.cv" in snap.error, "the gap is named"
+    assert not any(h.get("via") for h in snap.headlines)
+    assert "cryptocurrency.cv" not in snap.source, "and it is not credited as a live source"
+
+
+def test_the_publisher_feeds_being_down_still_leaves_the_aggregator():
+    def handler(request: httpx.Request):
+        if "cryptocurrency.cv" in str(request.url):
+            return httpx.Response(200, json=load("cryptocv_breaking.json"))
+        return httpx.Response(503)
+
+    snap = _run(news.fetch_news(httpx.AsyncClient(transport=httpx.MockTransport(handler))))
+    assert snap.available and snap.headlines
+    assert all(h.get("via") == "cryptocurrency.cv" for h in snap.headlines)
+    assert snap.source == "cryptocurrency.cv"
+    assert "CoinDesk" in (snap.error or "") and "Cointelegraph" in (snap.error or "")
+
+
+def test_an_aggregator_that_answers_with_nothing_usable_is_reported():
+    def handler(request: httpx.Request):
+        if "cryptocurrency.cv" in str(request.url):
+            return httpx.Response(200, json={"articles": []})     # what /api/news actually does
+        return httpx.Response(200, content=load("coindesk_rss.xml").encode())
+
+    snap = _run(news.fetch_news(httpx.AsyncClient(transport=httpx.MockTransport(handler))))
+    assert snap.available and snap.headlines
+    assert "no usable articles" in (snap.error or "")
+
+
+def test_every_source_failing_is_unavailable():
+    snap = _run(news.fetch_news(httpx.AsyncClient(transport=httpx.MockTransport(
+        lambda r: httpx.Response(500)))))
+    assert not snap.available and snap.headlines == []
+    for name in ("CoinDesk", "Cointelegraph", "cryptocurrency.cv"):
+        assert name in (snap.error or "")
+
+
+def test_the_aggregator_request_asks_for_the_breaking_endpoint_with_a_limit():
+    """Not /api/news: measured, that endpoint served three items from a near-empty cache."""
+    seen = {}
+
+    def handler(request: httpx.Request):
+        if "cryptocurrency.cv" in str(request.url):
+            seen["url"] = str(request.url)
+            return httpx.Response(200, json=load("cryptocv_breaking.json"))
+        return httpx.Response(200, content=load("coindesk_rss.xml").encode())
+
+    _run(news.fetch_news(httpx.AsyncClient(transport=httpx.MockTransport(handler))))
+    assert "/api/breaking" in seen["url"] and "/api/news" not in seen["url"]
+    assert f"limit={news.AGGREGATOR_LIMIT}" in seen["url"]
