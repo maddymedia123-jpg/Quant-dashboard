@@ -43,17 +43,36 @@ TRADE_CHOICES = {
                    "of the evidence.",
 }
 
-DOMAIN_QUESTIONS = {
-    "quant": "Volatility and timeframe statistics support a {side} from {entry:,.0f} over {horizon}: "
-             "the regime and the sigma channels are behind the move rather than stretched against it.",
-    "auction": "The auction supports a {side} from {entry:,.0f}: value is being accepted in the "
-               "direction of the trade rather than rejected back through the entry.",
-    "delta": "Order flow supports a {side} from {entry:,.0f}: delta is confirming the move rather than "
-             "absorbing it, so the position is with the aggressor.",
-    "ict": "Liquidity and structure support a {side} from {entry:,.0f}: structure agrees with the trade "
-           "and the stop at {stop:,.0f} sits beyond the liquidity price would reach for first.",
-    "derivs": "Positioning supports a {side} from {entry:,.0f}: funding, open interest and liquidations "
-              "put the crowd on the other side of this trade rather than alongside it.",
+# Each domain asks the same question of two opposed directions, the way the war-room rubric does with
+# "point UP" and "point DOWN". That mirroring is what makes the two team scores a case FOR and a case
+# AGAINST rather than two readings of the same proposition - see _items for why it has to be direction
+# and not "the trade" that flips.
+DOMAIN_QUESTIONS: dict[str, tuple[str, str]] = {
+    "quant": (
+        "Volatility and timeframe statistics favour upside from {entry:,.0f} over {horizon}: the regime "
+        "and the sigma channels leave room to travel higher rather than being stretched above value.",
+        "Volatility and timeframe statistics favour downside from {entry:,.0f} over {horizon}: the regime "
+        "and the sigma channels leave room to travel lower rather than being stretched below value."),
+    "auction": (
+        "The auction favours upside from {entry:,.0f}: value is being accepted higher, and attempts to "
+        "trade below it are being rejected.",
+        "The auction favours downside from {entry:,.0f}: value is being accepted lower, and attempts to "
+        "trade above it are being rejected."),
+    "delta": (
+        "Order flow favours upside from {entry:,.0f}: delta is confirming buying rather than being "
+        "absorbed by sellers.",
+        "Order flow favours downside from {entry:,.0f}: delta is confirming selling rather than being "
+        "absorbed by buyers."),
+    "ict": (
+        "Liquidity and structure favour upside from {entry:,.0f}: structure is bullish on the higher "
+        "timeframe, and the liquidity price is most likely to reach for next sits above.",
+        "Liquidity and structure favour downside from {entry:,.0f}: structure is bearish on the higher "
+        "timeframe, and the liquidity price is most likely to reach for next sits below."),
+    "derivs": (
+        "Positioning favours upside from {entry:,.0f}: funding, open interest and liquidations leave the "
+        "crowd short and the fuel for a squeeze higher.",
+        "Positioning favours downside from {entry:,.0f}: funding, open interest and liquidations leave "
+        "the crowd long and the fuel for a squeeze lower."),
 }
 
 
@@ -140,13 +159,31 @@ class TradeVerdict:
         return "the desks have no live verdict"
 
 
-def _items(side: str, entry: float, stop: float, horizon: str) -> tuple[RubricItem, ...]:
-    """One question per domain, phrased for this position. The side being scored decides whose case it
-    is, so the text is the same for both teams - that is what makes the two scores comparable."""
+def _items(entry: float, horizon: str) -> tuple[RubricItem, ...]:
+    """One question per domain, asked of both directions.
+
+    A `RubricItem` carries two phrasings and `judge.score` picks by side: the bullish team is asked the
+    first, the bearish team the second. Mirroring on *direction* therefore gives the for-and-against
+    symmetry for free, on both sides of the market:
+
+        LONG   supporting = bullish -> "favours upside"   = the case FOR the trade
+               opposing   = bearish -> "favours downside" = the case AGAINST it
+        SHORT  supporting = bearish -> "favours downside" = the case FOR the trade
+               opposing   = bullish -> "favours upside"   = the case AGAINST it
+
+    The earlier version handed the *same* string to both teams, phrased in favour of the position, so
+    `against_points` was the opposing persona's probability that the trade was supported - not the case
+    against it. The score, being their difference, measured disagreement between two prompt preambles
+    rather than for-versus-against, which meant a strong trade and a hopeless one could both read 50.
+
+    The stop is deliberately not in the question text: it is side-specific, so putting it there would
+    break the mirror. The judge gets it in `state["active_trade"]` instead, along with the targets."""
     out = []
     for key in DOMAIN_KEYS:
-        text = DOMAIN_QUESTIONS[key].format(side=side.lower(), entry=entry, stop=stop, horizon=horizon)
-        out.append(RubricItem(f"trade_{key}", POINTS_PER_DOMAIN, text, text))
+        up, down = DOMAIN_QUESTIONS[key]
+        out.append(RubricItem(f"trade_{key}", POINTS_PER_DOMAIN,
+                              up.format(entry=entry, horizon=horizon),
+                              down.format(entry=entry, horizon=horizon)))
     return tuple(out)
 
 
@@ -230,7 +267,7 @@ async def judge_trade(judge: Judge, state: dict, side: str, entry: float, stop: 
                     for t in targets],
         "horizon": profile.horizon,
     }
-    items = _items(side, entry, stop.stop, profile.horizon)
+    items = _items(entry, profile.horizon)
     supporting = BULLISH if side == LONG else BEARISH
     opposing = BEARISH if side == LONG else BULLISH
 

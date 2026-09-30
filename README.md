@@ -217,10 +217,15 @@ model is unreachable:
 - **The monitoring schedule**: the exact candle closes to look at, in UTC.
 
 **The agents** (`core/agents/trade_desk.py`): five bullish and five bearish sub-agents across the same
-five domains, both sides asked about the same position, because a trade has a case for it and a case
-against it. The score is the difference, so a position whose opposite is equally well supported reads 50 —
-which is also the condition a trap is built in, and the card says so. The Head then calls it take, wait or
-stand aside.
+five domains. Each domain asks the same question of two opposed directions — "favours upside" and
+"favours downside" — the way the war-room rubric mirrors "point UP" and "point DOWN". Because
+`judge.score` picks the phrasing by side, that gives the for-and-against symmetry on both sides of the
+market: a long's supporting case is the upside one, a short's is the downside one. The score is the
+difference between them, so a position whose opposite is equally well supported reads 50 — which is also
+the condition a trap is built in, and the card says so. The Head then calls it take, wait or stand aside.
+
+The stop is deliberately absent from the question text, because it is side-specific and would break the
+mirror; the judge gets it in the state payload alongside the targets.
 
 **Both handshakes are deterministic.** The four category heads are consulted from the verdicts they have
 already published rather than by asking a model again, which would cost more and could contradict what is

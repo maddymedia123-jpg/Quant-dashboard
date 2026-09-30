@@ -96,7 +96,10 @@ def test_each_sub_agent_is_asked_about_its_own_domain():
     for qid, word in (("trade_quant", "volatility"), ("trade_auction", "value"), ("trade_delta", "delta"),
                       ("trade_ict", "structure"), ("trade_derivs", "funding")):
         assert word in texts[qid].lower(), f"{qid} is not asking about {word}"
-    assert "80,000" in texts["trade_ict"] and "79,000" in texts["trade_ict"], "the position is in the question"
+    assert "80,000" in texts["trade_ict"], "the entry is in the question"
+    # the stop is deliberately NOT in the text: it is side-specific, so it would break the mirror. The
+    # judge gets it in state["active_trade"] instead, which test_the_position_is_handed_to_the_model pins.
+    assert "79,000" not in texts["trade_ict"]
 
 
 def test_the_position_is_handed_to_the_model():
@@ -376,3 +379,66 @@ def test_an_unsound_stop_is_flagged_and_the_score_is_for_the_corrected_one():
                                    stop(verdict="would be hunted", given=79_200.0, proposed=78_600.0),
                                    targets(), LIVE))
     assert any("would be hunted" in n and "corrected stop" in n for n in v.notes)
+
+
+# ---------- the case against is actually the case against ----------
+def test_each_domain_asks_two_opposed_questions():
+    """The invariant nothing checked. Handing both teams the same pro-trade string made
+    `against_points` the opposing persona's probability that the trade was *supported*, so the score -
+    their difference - measured disagreement between two prompt preambles, and a strong trade and a
+    hopeless one could both read 50."""
+    from core.agents.rubric import BEARISH as BEAR, BULLISH as BULL
+
+    items = td._items(80_000.0, "four hours")
+    assert len(items) == 5
+    for item in items:
+        up, down = item.question(BULL), item.question(BEAR)
+        assert up != down, f"{item.id} asks both teams the same thing"
+        assert "upside" in up and "downside" in down, item.id
+        assert "downside" not in up and "upside" not in down, item.id
+
+
+def test_the_supporting_team_is_asked_the_case_for_the_trade():
+    """A long's supporting case is the upside one; a short's is the downside one. The mirror has to work
+    on both sides of the market, not just for longs."""
+    seen = []
+    asyncio.run(td.judge_trade(judge_with(responder(seen=seen)), {"spot": {"price": ENTRY}}, LONG,
+                               ENTRY, stop(), targets(), LIVE))
+    noul = [b for b in seen if all(q["type"] == "noul" for q in b["questions"].values())]
+    first, second = noul[0]["questions"]["trade_delta"], noul[1]["questions"]["trade_delta"]
+    assert "favours upside" in first["instructions"], "the long is scored for by the upside case"
+    assert "favours downside" in second["instructions"], "and against by the downside case"
+
+    seen.clear()
+    asyncio.run(td.judge_trade(judge_with(responder(seen=seen)), {"spot": {"price": ENTRY}}, SHORT,
+                               ENTRY, StopVerdict(SHORT, 81_000.0, 81_000.0, "sound", None, "", ()),
+                               targets(), LIVE))
+    noul = [b for b in seen if all(q["type"] == "noul" for q in b["questions"].values())]
+    first, second = noul[0]["questions"]["trade_delta"], noul[1]["questions"]["trade_delta"]
+    assert "favours downside" in first["instructions"], "the short is scored for by the downside case"
+    assert "favours upside" in second["instructions"], "and against by the upside case"
+
+
+def test_the_two_teams_answer_opposed_questions_so_agreement_is_not_a_high_score():
+    """A judge that reads the tape as bullish should score a long well and a short badly. With one text
+    for both teams the same tape produced the same score either way; now the two are complements."""
+    bullish_tape_for, bullish_tape_against = 0.9, 0.2
+
+    long_v = asyncio.run(td.judge_trade(
+        judge_with(responder(for_p=bullish_tape_for, against_p=bullish_tape_against)),
+        {"spot": {"price": ENTRY}}, LONG, ENTRY, stop(), targets(), LIVE))
+    # the same tape, read for a short: the supporting (downside) case is the weak one
+    short_v = asyncio.run(td.judge_trade(
+        judge_with(responder(for_p=bullish_tape_against, against_p=bullish_tape_for)),
+        {"spot": {"price": ENTRY}}, SHORT, ENTRY,
+        StopVerdict(SHORT, 81_000.0, 81_000.0, "sound", None, "", ()), targets(), LIVE))
+
+    assert long_v.score == 85.0 and short_v.score == 15.0
+    assert long_v.score + short_v.score == 100.0, "opposed readings of one tape are complements"
+
+
+def test_the_question_text_does_not_depend_on_the_trade_side():
+    """The items are built from the entry and the horizon only, so the same market question is put to
+    both teams whichever way the trader is positioned - the side decides which phrasing each one gets."""
+    assert td._items(80_000.0, "four hours") == td._items(80_000.0, "four hours")
+    assert td._items(80_000.0, "four hours") != td._items(81_000.0, "four hours")
