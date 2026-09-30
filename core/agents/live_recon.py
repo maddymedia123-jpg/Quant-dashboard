@@ -15,9 +15,10 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from core.agents.context import common_payload
+from core.agents.context import common_payload, derivatives_payload
 from core.agents.recon_profiles import LIVE, ReconProfile
 from core.indicators import liquidity as lq
+from core.indicators import volatility as vol
 from core.indicators import smc
 from core.agents.judge import ChoiceResult, Judge, JudgeResult
 from core.agents.rubric import (
@@ -137,17 +138,25 @@ def build_state(m, analyses: dict, now_ms: int | None = None, profile: ReconProf
     state["war_room"] = profile.label
     state["horizon"] = profile.horizon
 
+    state["derivatives"], derivs_missing = derivatives_payload(m)
+    state["derivatives"]["unavailable"] = derivs_missing
+    # every feed that failed, not only the derivatives ones: a judge reading an empty list assumes
+    # sentiment and the calendar are present
+    state["unavailable"] = sorted(set(m.unavailable()) | set(derivs_missing))
+
     now = now_ms if now_ms is not None else int(m.generated_at.timestamp() * 1000)
     oi_history = list(getattr(m.futures, "oi_history", []) or [])
-    state["smc"], state["liquidity"] = {}, {}
+    state["smc"], state["liquidity"], state["volatility"] = {}, {}, {}
     for tf in profile.timeframes:
         df = m.spot.frames.get(tf)
         if df is None or df.empty:
             state["smc"][tf] = {"available": False, "note": f"no {tf} candles"}
             state["liquidity"][tf] = {"available": False, "note": f"no {tf} candles"}
+            state["volatility"][tf] = {"available": False, "note": f"no {tf} candles"}
             continue
         state["smc"][tf] = smc.summarise(df)
         state["liquidity"][tf] = lq.summarise(df, oi_history, now, windows=profile.timeframes)
+        state["volatility"][tf] = vol.matrix_summary(df, tf, m.options)
     return state
 
 

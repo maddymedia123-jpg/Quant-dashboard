@@ -6,9 +6,11 @@ Path comes from TI_DATA_DIR (default ./data). ":memory:" is supported for tests.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import pathlib
 import sqlite3
+from typing import ClassVar
 import threading
 
 # Live Recon anchors were pinned before every category had a war room. They carry over as "live",
@@ -55,11 +57,30 @@ CREATE TABLE IF NOT EXISTS recon_side_notes (
     ts_ms INTEGER NOT NULL, kind TEXT NOT NULL, dedup_key TEXT NOT NULL, headline TEXT NOT NULL,
     detail TEXT, price REAL);
 CREATE INDEX IF NOT EXISTS idx_recon_notes ON recon_side_notes (category, window_open_ms, ts_ms);
+CREATE TABLE IF NOT EXISTS traps (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, category TEXT NOT NULL, side TEXT NOT NULL,
+    timeframe TEXT NOT NULL, level REAL NOT NULL, invalidation REAL NOT NULL, plays_out REAL NOT NULL,
+    declared_ms INTEGER NOT NULL, score REAL, head_call TEXT, evidence TEXT NOT NULL, notes TEXT,
+    status TEXT NOT NULL DEFAULT 'active', resolved_ms INTEGER, resolved_price REAL);
+CREATE INDEX IF NOT EXISTS idx_traps_open ON traps (status, category, level);
+CREATE INDEX IF NOT EXISTS idx_traps_live ON traps (status, side, timeframe, level);
 CREATE TABLE IF NOT EXISTS recon_scores (
     category TEXT NOT NULL, window_open_ms INTEGER NOT NULL, scored_ms INTEGER NOT NULL,
     open_price REAL NOT NULL, close_price REAL NOT NULL, move_pct REAL NOT NULL, realised TEXT NOT NULL,
     bias TEXT NOT NULL, direction_hit INTEGER NOT NULL, trap TEXT, trap_hit INTEGER,
     bull_brier REAL, bear_brier REAL, PRIMARY KEY (category, window_open_ms));
+CREATE TABLE IF NOT EXISTS trades (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, opened_ms INTEGER NOT NULL, asset TEXT NOT NULL,
+    side TEXT NOT NULL, entry REAL NOT NULL, stop REAL NOT NULL, given_stop REAL,
+    stop_verdict TEXT NOT NULL, category TEXT NOT NULL, plan TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'open', closed_ms INTEGER, closed_reason TEXT, closed_price REAL,
+    refreshed_ms INTEGER);
+CREATE INDEX IF NOT EXISTS idx_trades_open ON trades (status, opened_ms);
+CREATE TABLE IF NOT EXISTS trade_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, trade_id INTEGER NOT NULL, ts_ms INTEGER NOT NULL,
+    kind TEXT NOT NULL, dedup_key TEXT NOT NULL, headline TEXT NOT NULL, price REAL,
+    notified INTEGER NOT NULL DEFAULT 0);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_trade_events_once ON trade_events (trade_id, dedup_key);
 CREATE TABLE IF NOT EXISTS signals (
     id INTEGER PRIMARY KEY AUTOINCREMENT, ts_ms INTEGER NOT NULL, category TEXT NOT NULL,
     squeeze_score INTEGER, price REAL);
@@ -79,6 +100,9 @@ def _rows(cur) -> list[dict]:
     return [dict(r) for r in cur.fetchall()]
 
 
+log = logging.getLogger(__name__)
+
+
 class Store:
     def __init__(self, path: str | os.PathLike | None = None):
         if path == ":memory:":
@@ -92,10 +116,42 @@ class Store:
         self._lock = threading.Lock()
         with self._lock:
             self._conn.executescript(SCHEMA)
+            self._add_missing_columns()
             self._conn.executescript(MIGRATE)
             self._conn.commit()
 
     # ---- anchors ----
+    # CREATE TABLE IF NOT EXISTS adds a missing table but never a missing column, so a database written
+    # by an older revision opened without complaint and then failed at the first write: touch_trade - the
+    # Refresh button - and the whole alert dispatch died with "no such column". Streamlit Cloud wipes the
+    # file on reboot so it would not show there, but any persistent volume keeps it.
+    EXPECTED_COLUMNS: ClassVar[dict[str, dict[str, str]]] = {
+        "trades": {"refreshed_ms": "INTEGER", "closed_ms": "INTEGER", "closed_reason": "TEXT",
+                   "closed_price": "REAL", "given_stop": "REAL"},
+        "trade_events": {"notified": "INTEGER NOT NULL DEFAULT 0", "price": "REAL"},
+        "traps": {"resolved_ms": "INTEGER", "resolved_price": "REAL", "notes": "TEXT", "score": "REAL",
+                  "head_call": "TEXT"},
+    }
+
+    def _add_missing_columns(self) -> None:
+        """Bring an older file's columns up to what the code expects. Caller holds the lock."""
+        for table, columns in self.EXPECTED_COLUMNS.items():
+            try:
+                have = {r["name"] for r in self._conn.execute(f"PRAGMA table_info({table})")}
+            except sqlite3.Error:
+                continue
+            if not have:
+                continue                 # the table does not exist; SCHEMA has just created it
+            for name, decl in columns.items():
+                if name in have:
+                    continue
+                try:
+                    self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+                    log.warning("store: added missing column %s.%s", table, name)
+                except sqlite3.Error as e:  # noqa: PERF203 - one per column, and rare
+                    log.error("store: could not add %s.%s (%s)", table, name, e)
+        self._conn.commit()
+
     def get_anchor(self, category: str) -> dict | None:
         with self._lock:
             r = self._conn.execute("SELECT payload, since_ms FROM anchors WHERE category=?", (category,)).fetchone()
@@ -306,6 +362,209 @@ class Store:
         for r in rows:
             r["payload"] = json.loads(r["payload"])
         return rows
+
+    # ---- TRAP desk: a declared trap is anchored until price settles it ----
+    def put_trap(self, category: str, side: str, timeframe: str, level: float, invalidation: float,
+                 plays_out: float, declared_ms: int, score: float | None, head_call: str,
+                 evidence: list[str], notes: list[str] | None = None) -> int:
+        """Declare a trap, or return the id of the live one it repeats.
+
+        A trap is a market event, not a desk's opinion of one: the same 4h raid is the same raid whether
+        the Live or the Weekly desk found it, so identity is side, timeframe and level. `category` records
+        which desk declared it, for provenance, and does not take part in the match.
+
+        The level is matched on the trap's own scale rather than to the cent. `invalidation` sits half an
+        ATR from `level`, so that distance *is* the volatility of this timeframe; half of it - a quarter
+        ATR - absorbs the drift in a recomputed level while keeping genuinely separate levels apart. This
+        matters on real data: a value-area edge moved $14.79 across five consecutive 1h refreshes, 1,476
+        times the one-cent window this used to allow, so one raid anchored twice.
+
+        The read and the insert share one IMMEDIATE transaction, because the lock above is per-Store and
+        two Store objects on the same file would otherwise both pass the read and both insert."""
+        tolerance = max(abs(invalidation - level) / 2.0, 0.01)
+        with self._lock:
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                existing = self._conn.execute(
+                    "SELECT id FROM traps WHERE status='active' AND side=? AND timeframe=? "
+                    "AND abs(level - ?) <= ?", (side, timeframe, level, tolerance)).fetchone()
+                if existing:
+                    self._conn.commit()
+                    return int(existing["id"])
+                cur = self._conn.execute(
+                    "INSERT INTO traps (category, side, timeframe, level, invalidation, plays_out, "
+                    "declared_ms, score, head_call, evidence, notes, status) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,'active')",
+                    (category, side, timeframe, level, invalidation, plays_out, declared_ms, score,
+                     head_call, json.dumps(evidence), json.dumps(notes or [])))
+                self._conn.commit()
+                return int(cur.lastrowid)
+            except BaseException:
+                self._conn.rollback()
+                raise
+
+    def traps(self, category: str | None = None, status: str | None = None, limit: int = 100,
+              timeframes: tuple[str, ...] | list[str] | None = None) -> list[dict]:
+        """Traps, newest first. `timeframes` is how a desk asks for the traps it can actually see: a 4h
+        trap belongs on every desk that reads the 4h, not only on the one that happened to declare it."""
+        sql = "SELECT * FROM traps"
+        where, args = [], []
+        if category:
+            where.append("category=?")
+            args.append(category)
+        if timeframes:
+            where.append("timeframe IN (%s)" % ",".join("?" * len(timeframes)))
+            args.extend(timeframes)
+        if status:
+            where.append("status=?")
+            args.append(status)
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY declared_ms DESC LIMIT ?"
+        args.append(limit)
+        with self._lock:
+            return _rows(self._conn.execute(sql, tuple(args)))
+
+    def resolve_trap(self, trap_id: int, status: str, price: float, now_ms: int) -> bool:
+        """Settle a trap once. Returns False if it was already settled, so a refresh cannot double-report."""
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE traps SET status=?, resolved_price=?, resolved_ms=? WHERE id=? AND status='active'",
+                (status, price, now_ms, trap_id))
+            self._conn.commit()
+        return cur.rowcount > 0
+
+
+    # ---------- active trades (spec sections 3 and 4) ----------
+    def open_trade(self, *, opened_ms: int, asset: str, side: str, entry: float, stop: float,
+                   given_stop: float | None, stop_verdict: str, category: str, plan: dict) -> int:
+        """Pin a trade. The plan is written once here and never rewritten, so Refresh cannot quietly
+        change the thesis a trader is holding against."""
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO trades (opened_ms, asset, side, entry, stop, given_stop, stop_verdict, "
+                "category, plan, status) VALUES (?,?,?,?,?,?,?,?,?,'open')",
+                (opened_ms, asset, side, float(entry), float(stop),
+                 None if given_stop is None else float(given_stop), stop_verdict, category,
+                 # default=str, as set_anchor already does: a value the plan picked up from numpy or
+                 # datetime should not be able to make opening a trade fail
+                 json.dumps(plan, default=str)))
+            self._conn.commit()
+            return int(cur.lastrowid)
+
+    def trades(self, status: str | None = "open", limit: int = 20) -> list[dict]:
+        sql = "SELECT * FROM trades"
+        args: list = []
+        if status:
+            sql += " WHERE status=?"
+            args.append(status)
+        sql += " ORDER BY opened_ms DESC LIMIT ?"
+        args.append(limit)
+        with self._lock:
+            rows = _rows(self._conn.execute(sql, tuple(args)))
+        for r in rows:
+            r["plan"] = json.loads(r["plan"]) if r.get("plan") else {}
+        return rows
+
+    def trade(self, trade_id: int) -> dict | None:
+        with self._lock:
+            r = self._conn.execute("SELECT * FROM trades WHERE id=?", (trade_id,)).fetchone()
+        if not r:
+            return None
+        d = dict(r)
+        d["plan"] = json.loads(d["plan"]) if d.get("plan") else {}
+        return d
+
+    def touch_trade(self, trade_id: int, now_ms: int) -> None:
+        """Record a Refresh. The plan is untouched; only the fact that it was looked at is stored."""
+        with self._lock:
+            self._conn.execute("UPDATE trades SET refreshed_ms=? WHERE id=?", (now_ms, trade_id))
+            self._conn.commit()
+
+    def close_trade(self, trade_id: int, reason: str, price: float | None, now_ms: int) -> bool:
+        """The KILL button, and anything else that ends tracking. Once only, so a rerun cannot re-close
+        a trade and overwrite why it ended."""
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE trades SET status='closed', closed_reason=?, closed_price=?, closed_ms=? "
+                "WHERE id=? AND status='open'", (reason, price, now_ms, trade_id))
+            self._conn.commit()
+        return cur.rowcount > 0
+
+    def rejudge_trade(self, old_id: int, *, opened_ms: int, asset: str, side: str, entry: float,
+                      stop: float, given_stop: float | None, stop_verdict: str, category: str,
+                      plan: dict) -> int:
+        """Replace a pinned trade's plan: open its successor and close it, in one transaction.
+
+        As two separate calls, a failure between them left two rows with status 'open' for one real
+        position - two pinned cards, two alert streams, and the stop alerted twice. Either both happen
+        or neither does. Returns the new trade id, and raises if the old trade was not open."""
+        with self._lock:
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                cur = self._conn.execute(
+                    "INSERT INTO trades (opened_ms, asset, side, entry, stop, given_stop, stop_verdict, "
+                    "category, plan, status) VALUES (?,?,?,?,?,?,?,?,?,'open')",
+                    (opened_ms, asset, side, float(entry), float(stop),
+                     None if given_stop is None else float(given_stop), stop_verdict, category,
+                     json.dumps(plan, default=str)))
+                new_id = int(cur.lastrowid)
+                closed = self._conn.execute(
+                    "UPDATE trades SET status='closed', closed_reason=?, closed_price=?, closed_ms=? "
+                    "WHERE id=? AND status='open'",
+                    (f"re-judged as #{new_id}", None, opened_ms, old_id))
+                if closed.rowcount == 0:
+                    raise ValueError(f"trade #{old_id} was not open, so it was not replaced")
+                self._conn.commit()
+                return new_id
+            except BaseException:
+                self._conn.rollback()
+                raise
+
+    def add_trade_event(self, trade_id: int, ts_ms: int, kind: str, dedup_key: str, headline: str,
+                        price: float | None) -> int | None:
+        """Log something that happened to a trade, once. Returns the row id, or None if already logged.
+
+        The unique index is what makes an alert fire once rather than on every refresh: the same target
+        being hit is the same event however many times the page reloads."""
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT OR IGNORE INTO trade_events (trade_id, ts_ms, kind, dedup_key, headline, price) "
+                "VALUES (?,?,?,?,?,?)", (trade_id, ts_ms, kind, dedup_key, headline, price))
+            self._conn.commit()
+            return int(cur.lastrowid) if cur.rowcount else None
+
+    def trade_events(self, trade_id: int | None = None, unnotified_only: bool = False,
+                     limit: int = 100) -> list[dict]:
+        sql = "SELECT * FROM trade_events"
+        where, args = [], []
+        if trade_id is not None:
+            where.append("trade_id=?")
+            args.append(trade_id)
+        if unnotified_only:
+            where.append("notified=0")
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        # Pending events oldest-first, everything else newest-first. Newest-first with a limit meant a
+        # backlog larger than the limit permanently hid the OLDEST unsent alerts - a stop among them -
+        # and oldest-first is also the order they should be delivered in. The id breaks ties, because a
+        # whole pass of events is written with the same ts_ms.
+        sql += (" ORDER BY ts_ms ASC, id ASC LIMIT ?" if unnotified_only
+                else " ORDER BY ts_ms DESC, id DESC LIMIT ?")
+        args.append(limit)
+        with self._lock:
+            return _rows(self._conn.execute(sql, tuple(args)))
+
+    def mark_notified(self, event_ids: list[int]) -> int:
+        """Whatever the dispatcher actually delivered. Nothing is marked until a channel confirms it."""
+        if not event_ids:
+            return 0
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE trade_events SET notified=1 WHERE notified=0 AND id IN (%s)"
+                % ",".join("?" * len(event_ids)), tuple(event_ids))
+            self._conn.commit()
+        return cur.rowcount
 
     def close(self) -> None:
         with self._lock:

@@ -118,10 +118,66 @@ class CalendarSnapshot(Availability):
                 and rank.get(e.get("impact"), 0) >= need and (not countries or e.get("country") in countries)]
 
 
+class NewsSnapshot(Availability):
+    """Publisher headlines: each {title, url, source, published_ms, summary, topic, impact, assets}.
+
+    `topic` and `impact` come from keyword matching, not from a judgment, so they are tags rather than
+    verdicts. `error` can be set while `available` is True: one publisher down is a degraded feed, and
+    naming it is better than silently halving the coverage."""
+    headlines: list[dict[str, Any]] = Field(default_factory=list)
+
+    def recent(self, now_ms: int, within_ms: int, min_impact: str = "low",
+               asset: str | None = None) -> list[dict[str, Any]]:
+        rank = {"low": 1, "medium": 2, "high": 3}
+        need = rank.get(min_impact, 1)
+        out = []
+        for h in self.headlines:
+            ts = h.get("published_ms")
+            if ts is None or not (now_ms - within_ms <= ts <= now_ms + 3_600_000):
+                continue
+            if rank.get(h.get("impact"), 0) < need:
+                continue
+            if asset and asset not in (h.get("assets") or []):
+                continue
+            out.append(h)
+        return out
+
+
+class MetalsSnapshot(Availability):
+    """Gold spot. `is_stale` and `computed_ms` are the feed's own freshness reporting, kept rather than
+    flattened away, so a stale print is never rendered as the current price."""
+    xau_usd: Optional[float] = None
+    bid: Optional[float] = None
+    ask: Optional[float] = None
+    unit: str = "troy_ounce"
+    is_stale: bool = False
+    computed_ms: Optional[int] = None
+
+    @property
+    def usable(self) -> bool:
+        return bool(self.available and self.xau_usd and not self.is_stale)
+
+
+class PredictionSnapshot(Availability):
+    """Polymarket crypto markets: each {question, probability, band, flags, volume_24h, ...}.
+
+    `band` is the execution quality - clean, watch, fragile or unknown - which decides whether a
+    probability is a forecast or just a printed number."""
+    markets: list[dict[str, Any]] = Field(default_factory=list)
+    attribution: str = ""
+    retrieved_ms: Optional[int] = None
+
+    def tradeable(self, asset: str | None = None, bands: tuple[str, ...] = ("clean", "watch")) -> list[dict[str, Any]]:
+        """Markets whose quote is worth quoting. A fragile market is still shown on the panel, labelled,
+        but it is not what anything downstream should reason from."""
+        return [m for m in self.markets
+                if m.get("band") in bands and (not asset or asset in (m.get("assets") or []))]
+
+
 class MarketSnapshot(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    SOURCES: ClassVar[tuple[str, ...]] = ("spot", "futures", "options", "sentiment", "hyperliquid", "liquidations", "whales", "stablecoins", "calendar")
+    SOURCES: ClassVar[tuple[str, ...]] = ("spot", "futures", "options", "sentiment", "hyperliquid", "liquidations", "whales", "stablecoins", "calendar", "news", "metals", "predictions")
 
     spot: SpotSnapshot
     futures: FuturesSnapshot
@@ -132,6 +188,9 @@ class MarketSnapshot(BaseModel):
     whales: WhalesSnapshot = Field(default_factory=lambda: WhalesSnapshot.unavailable("coinlobster", "not fetched"))
     stablecoins: StablecoinSnapshot = Field(default_factory=lambda: StablecoinSnapshot.unavailable("defillama", "not fetched"))
     calendar: CalendarSnapshot = Field(default_factory=lambda: CalendarSnapshot.unavailable("forexfactory", "not fetched"))
+    news: NewsSnapshot = Field(default_factory=lambda: NewsSnapshot.unavailable("rss", "not fetched"))
+    metals: MetalsSnapshot = Field(default_factory=lambda: MetalsSnapshot.unavailable("goldprice.dev", "not fetched"))
+    predictions: PredictionSnapshot = Field(default_factory=lambda: PredictionSnapshot.unavailable("voxodds", "not fetched"))
     generated_at: datetime = Field(default_factory=_now)
 
     def unavailable(self) -> list[str]:

@@ -33,7 +33,9 @@ Hyperliquid composite, Kraken Futures, and finally values derived from our own s
 Hyperliquid funding and OI · CoinLobster 24h liquidations, $100K+ whale trades and unusual-flow radar ·
 Deribit options for max pain, put/call and IV skew · DefiLlama stablecoin supply · alternative.me Fear &
 Greed · Forex Factory weekly economic calendar (high-impact USD prints with forecast/previous; drives the
-macro-window trigger).
+macro-window trigger) · CoinDesk and Cointelegraph RSS plus the cryptocurrency.cv aggregator for headlines · goldprice.dev for XAU/USD spot
+(gold only; silver and copper are plan-gated) · Polymarket odds via voxodds.com, with an execution-quality
+band per market.
 
 Binance and Bybit geo-block US egress, and Streamlit Cloud is US-hosted, which is why Gate.io sits in the
 chain — the live site sources futures from it. Whichever provider answered is labelled in the sidebar.
@@ -46,14 +48,20 @@ before publishing:
 
 | Agent | Domain | Points |
 | --- | --- | --- |
-| 1 | Market Structure & SMC | 20 |
-| 2 | Liquidity & Order Flow | 20 |
-| 3 | Multi-Timeframe Alignment | 20 |
-| 4 | Quantitative Volatility | 20 |
-| 5 | Macro & Financial News | 20 |
+| 1 | Quant & Statistics | 20 |
+| 2 | Auction Market & Volume Profile | 20 |
+| 3 | Order Flow & Delta | 20 |
+| 4 | ICT & Liquidity | 20 |
+| 5 | On-Chain & Derivatives | 20 |
 
-Eighteen weighted items make up those 100 points (`core/agents/rubric.py`), each phrased once for the
-bullish case and once for the bearish one. **The model only answers "does this condition hold" and
+Twenty-two weighted items make up those 100 points (`core/agents/rubric.py`), each phrased once for the
+bullish case and once for the bearish one. Macro and news are a global engine rather than a desk
+sub-agent, following the enhanced spec. `RUBRIC_VERSION` records which checklist scored each window, so
+the accuracy report never cites an old score as evidence about an item that did not exist yet.
+
+An expander on each tab shows the **Institutional Quantitative Matrix**: every reading each sub-agent
+was given, built from the same state dictionary the judges receive (`core/agents/deck.py`), so the
+screen cannot disagree with the scorecard. A missing feed shows a dash, never a number. **The model only answers "does this condition hold" and
 returns a probability; the weights and all arithmetic stay in code**, so a team score is auditable item by
 item and a weight can change without re-running any inference.
 
@@ -98,6 +106,19 @@ trap call at or above 0.60, a 15-point swing that does not flip the bias, a high
 inside the candle, or a scan that ran degraded. Each note carries a dedup key, so an interim scan that
 keeps seeing the same flip announces it once (`core/live_anchor.py`).
 
+## Volatility matrix
+
+`core/indicators/volatility.py` computes, per timeframe: realized volatility annualised from that
+timeframe's own returns (365 days, since crypto never closes), implied volatility taken from the Deribit
+options feed or shown as a dash, ATR with its percentile regime, the ±1/2/3σ channels, and the **Hurst
+exponent** with a plain-English memory label.
+
+Hurst is estimated from how return variance scales with aggregation, using overlapping windows because
+that measurably cut the estimator's spread by about a third against disjoint blocks. A random walk
+measures 0.50 give or take 0.03 on the history we hold, so the neutral band is two standard deviations
+wide: above 0.56 trends persist, below 0.44 moves mean-revert, and inside that band the reading claims
+nothing. Tests hold it to series whose behaviour is known by construction.
+
 ## SMC and liquidity protocols
 
 The rubric asks about structure and order flow, so both are computed from candles rather than left to a
@@ -118,6 +139,172 @@ Two honesty rules worth knowing:
   CVD, and it is labelled as a proxy everywhere it appears, in the agent state and on screen.
 - **An open-interest window reports nothing unless a stored sample brackets it.** A reading from the wrong
   window is not an approximation of the right one.
+
+## TRAP Intelligence (its own tab)
+
+The watchdog for engineered moves: fakeouts, swing failures and stop runs. Candidates are found in code
+and only then judged, so a trap is never asserted without the evidence that produced it and every level
+on a card comes from the data.
+
+**Two triggers, from the spec.** Liquidity taken and immediately reclaimed (the swing failure), or price
+holding beyond the value-area edge while cumulative delta drains the other way. A trigger needs at least
+one *independent* supporting factor from funding, open interest, the 2-sigma channel, premium/discount or
+counter-trend structure — a factor that merely restates the reading which fired the trigger is not a
+second signal.
+
+**Three gates keep a candidate live**, each set from measurements over the fixture candles rather than by
+taste:
+
+- **The reclaim must have happened.** A fake break up is only a fake once price is back below the high it
+  took; while price is still above it, the break is in progress.
+- **The raid must be recent** — within `MAX_SWEEP_BARS` (5). Unbounded, this carded raids up to 189 bars
+  old while still calling them "immediately reclaimed".
+- **The candidate must not already be settled** by the price that found it, checked with the same
+  `resolved_by()` the settle pass uses, so detection and settlement cannot disagree. Without these gates
+  35% of declared traps were resolved seconds later, most recorded as "the break was real after all"
+  against a trap declared at that very price.
+
+The invalidation sits half an ATR beyond the raid (a quarter ATR is a hair trigger — ordinary noise would
+resolve a live trap within minutes), and the payoff target is the point of control, pushed out when that
+sits nearer than the invalidation so a card never advertises a trade that risks more than it makes.
+
+**Ten sub-agents, then the Head, then the desk.** The strongest candidate goes to five domain questions in
+one batched request, judged by the side whose case the trap would prove — the bearish specialists hunt
+bull traps and the bullish ones hunt bear traps — out of 100. The Head then makes one categorical call:
+engineered trap, authentic break, or unclear. Before anything is declared the affected desk is asked, in
+code, whether this is a real higher-timeframe break: **structure in the direction of the move together
+with acceptance beyond value** vetoes the declaration and the trap stays a watch. Open interest building
+is context only, never a veto — a crowded move is exactly what a trap looks like.
+
+A trap is declared when the sub-agents score 60 or more, the Head calls it engineered, and the desk does
+not read an authentic break.
+
+**A trap is a market event, not a desk's opinion of one.** Each timeframe is scanned once, by the first
+desk that reads it — 15m/1h/4h by Live Recon, 1d by Intraday, 1w by Weekly — and a trap then appears on
+every desk that reads its timeframe. Monthly owns no timeframe of its own, because the feed stops at the
+weekly candle and so Weekly and Monthly read identical candles; scanning per desk instead judged the same
+shape twice and anchored two rows for one raid. Identity is side, timeframe and level, matched within a
+quarter ATR rather than to the cent, because a recomputed value-area edge drifts by dollars between
+refreshes.
+
+**Cost:** a full sweep is at most six requests — three desks own timeframes, two requests each. The scan
+itself is free arithmetic.
+
+**Anchored until price settles it.** Invalidated when the break proves real, played out when price returns
+inside value; settlement happens once, so a refresh cannot double-report, and nothing expires on a clock.
+Declared traps warn on every affected desk and append a side note to its anchored summary.
+
+## Active Trade desk (spec sections 3 and 4)
+
+Enter a position and it is evaluated, pinned and tracked until you kill it. Everything the card asserts is
+either measured in code or judged by an agent that was shown the evidence; nothing on it is a number a
+model was simply asked to produce.
+
+**The deterministic half** (`core/trades.py`) runs first, so a card still carries usable levels when the
+model is unreachable:
+
+- **Stop verification.** A stop is judged by what sits between it and price, not by its distance. Resting
+  liquidity is swept before a level gives way, so a stop nearer than the pool below a long is one that
+  gets hunted on the way to a move that then works. When the given stop is unsafe — hunted, inside a
+  single bar's range, or on the wrong side of entry — the engine proposes one beyond the protective
+  structure and the cluster of levels around it, and the card shows both.
+- **Timed take-profits.** The price comes from the volatility bands, the time from the Fibonacci time
+  zones. A band behind the entry is not a target, so it falls back to a multiple of range and says so; a
+  Fibonacci window already past is not a date, so it falls back to the k-th candle close. Every target
+  carries its reward in R, and a first target nearer than the stop is called out.
+- **The pullback guardrail**, measured rather than assumed: the distribution of adverse excursions over
+  the lookback, stated in plain English so an ordinary retracement is not mistaken for a broken thesis.
+- **The monitoring schedule**: the exact candle closes to look at, in UTC.
+
+**The agents** (`core/agents/trade_desk.py`): five bullish and five bearish sub-agents across the same
+five domains, both sides asked about the same position, because a trade has a case for it and a case
+against it. The score is the difference, so a position whose opposite is equally well supported reads 50 —
+which is also the condition a trap is built in, and the card says so. The Head then calls it take, wait or
+stand aside.
+
+**Both handshakes are deterministic.** The four category heads are consulted from the verdicts they have
+already published rather than by asking a model again, which would cost more and could contradict what is
+on screen; a desk whose anchored candle has closed is silent rather than counted, and a `BULL TRAP RISK`
+verdict does not count as support for a long. The TRAP head is consulted against the anchored ledger:
+whether a live trap sits on the entry, the stop or any target, within half an ATR.
+
+**The probability is a confluence estimate, clamped to 15–85%, and labelled as such on the card.** Nothing
+in this system counts how often a setup like this has worked, so a number at the extremes would be a lie
+about what is known.
+
+**Cost:** two batched requests plus one Head call per judgement.
+
+**The card is pinned in the database**, not in session state, so it survives navigation, a refresh and a
+redeploy. The plan is written once at open: `Refresh` updates the live block only — current price, PnL in
+percent and in R, which targets have been reached — and cannot rewrite the thesis. `Re-judge` runs the
+desk again and opens a new card rather than editing the old one. `KILL` unpins it and stops its alerts.
+Several positions are tracked at once, each in its own card.
+
+## Alerts
+
+`core/alerts.py` detects what has happened to a pinned trade — a target reached, the stop reached, a trap
+developing on its levels, a monitoring checkpoint passing — and pushes it. Every event carries a dedup key
+behind a unique index, which is what makes an alert fire once rather than on every 30-second auto-refresh,
+and nothing is marked as sent unless a channel confirms delivery, so a refused send is retried rather than
+lost.
+
+**Telegram** and **Discord** are implemented and work as soon as `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID`
+or `DISCORD_WEBHOOK_URL` exist in the secrets. **Email and SMS are not wired up** — they need an SMTP
+account with a verified sender, and a paid gateway, neither of which exists here; they report themselves
+unconfigured rather than pretending to send.
+
+**Alerting only runs while the page is open.** Streamlit Cloud provides no scheduled worker, so continuous
+background alerting needs a cron host. That is a hosting decision, not something the code can supply for
+itself, and the tab says so rather than implying the alerts are always on.
+
+## Macro and news engines (spec section 2)
+
+Three keyless feeds, on their own tab because none of them is a read on one timeframe. All three were
+chosen by calling them, not by reading a directory's Auth column, and each hid something:
+
+- **Headlines — publisher RSS** (CoinDesk, Cointelegraph) **plus the cryptocurrency.cv aggregator**,
+  merged. The aggregator adds twelve more publishers (The Block, Decrypt, CNBC Crypto, CryptoSlate and
+  the rest), taking the feed from 55 headlines across 2 publishers to 74 across 14. It is keyless and its
+  hosted API is stated to be free to use; its *code* is all rights reserved, so none of it is copied and
+  it is not self-hosted. The direct feeds are kept rather than replaced, because measuring the aggregator
+  found its `/api/news` serving three items from a near-empty cache and every AI endpoint returning 429
+  from an exhausted upstream quota — so `/api/breaking` is the endpoint used, the AI and sentiment
+  endpoints are not, and publisher RSS stays as the leg that cannot go down with one operator. Publisher
+  feeds merge first, so a story carried by both keeps the direct copy, and each headline is credited to
+  its publisher rather than to the relay. Every news API in the public directories needs
+  a key; the two that do not are an Indian news aggregator and a host that no longer resolves. RSS needs
+  no key, account or quota, and parses with the standard library, so it adds no dependency. *The trap:*
+  CoinDesk 308-redirects from the trailing-slash URL and httpx does not follow redirects unless told to,
+  which silently cost one publisher until a live call showed it. One publisher down is now a degraded
+  feed that names the gap, not a missing one.
+- **Gold — `api.goldprice.dev`**. *Two traps:* `symbols=` (plural) is not the parameter and returns XAU
+  quoted in **AUD** with HTTP 200 and no warning, so the response's own `symbol` and `quote_currency` are
+  checked against what was asked for and a mismatch is treated as no data — a silently wrong gold price
+  is worse than a missing one, because a dash cannot be traded on by mistake. And silver and copper are
+  plan-gated on the free tier, so only gold is fetched and nothing implies the others are available. The
+  feed reports `is_stale` and `computed_at` itself; both are carried through, and a print older than
+  half an hour is treated as stale even when the feed calls it fresh.
+- **Prediction markets — Polymarket via `voxodds.com`**. Polymarket's own Gamma API is keyless too, but a
+  top-volume query returns everything (a Dota 2 match, in testing) and says nothing about whether a quote
+  can be filled. VoxOdds filters by category and scores each market's execution quality — `clean`,
+  `watch` or `fragile`, with the flags behind it. That distinction matters: on the recorded sample only
+  13 of 40 crypto markets carried a quote worth quoting. A 6% probability on a market flagged "extreme
+  price" is a printed number, not a forecast, and the panel says so. Attribution ("Data from Polymarket.
+  Powered by VoxOdds") is required by the feed and is rendered, not dropped.
+
+Headlines are **tagged, not judged**: topic and impact come from keyword matching over the headline text,
+which cannot tell a rumour from a confirmation. They are shown as tags so the list can be sorted, and the
+card states outright that they are not a read on the market.
+
+**Remote XML is parsed behind a guard.** Measured on this runtime the standard library already refuses
+both attacks that matter — an external entity fails with "undefined entity", and expat 2.7.3 refuses an
+entity bomb with "limit on input amplification factor breached" — but that second guarantee comes from
+expat 2.4.1 or newer and the deploy host's build is not ours to choose. A news feed needs no document
+type declaration, so one is refused outright, which removes the entity-expansion class without taking on
+a dependency for it. There is a size cap too.
+
+**Fixtures are recorded from the live feeds**, not hand-written, because a hand-made payload only tests
+one's idea of the payload. `TI_OFFLINE_FIXTURES=1` serves them and labels every source "fixture".
 
 ## Accuracy report
 
@@ -161,6 +348,9 @@ tab shows hit rates with sample sizes; under 10 samples is labelled indicative.
 `.streamlit/secrets.toml` locally, Streamlit Cloud Secrets in production:
 
     TYPESAFE_API_KEY = "..."        # war-room rubric and trap audit (Jev); absent = Gemini fallback
+    TELEGRAM_BOT_TOKEN = "..."      # optional: trade alerts
+    TELEGRAM_CHAT_ID = "..."        # optional: trade alerts
+    DISCORD_WEBHOOK_URL = "..."     # optional: trade alerts
     GEMINI_API_KEY = "..."          # Director pipeline, and the rubric fallback
     OPENROUTER_API_KEY = "..."      # optional alternative to Gemini
     # optional overrides
@@ -173,7 +363,10 @@ tab shows hit rates with sample sizes; under 10 samples is labelled indicative.
 
 SQLite at `TI_DATA_DIR` (default `./data`, gitignored): anchored verdicts and their audit log, direction
 calls and report scores, per-category war-room anchors (`recon_anchors`), side notes
-(`recon_side_notes`), scored windows (`recon_scores`), squeeze signals and futures samples.
+(`recon_side_notes`), scored windows (`recon_scores`), anchored traps (`traps`), pinned positions
+(`trades`) and what happened to them (`trade_events`), squeeze signals and futures samples. `STORE_VERSION` in `app.py` is passed to the cached `_store()` call, not defaulted:
+Streamlit hashes the arguments a call actually makes, so a version left as a default never reaches the
+cache key and a bump does nothing.
 
 **On Streamlit Cloud this file resets on reboot or redeploy**, so the accuracy report rarely passes
 "collecting" there. Point `TI_DATA_DIR` at a mounted volume, or move to a hosted database.
@@ -196,8 +389,12 @@ stops eating the candles. Dollar amounts in Markdown are escaped, because Stream
 
 ## Layout
 
-`core/data` providers → `core/indicators` pure functions (including `smc`, `liquidity`) →
-`core/agents` (rubric, judge, war room, profiles, LLM client, prompts, context, runner, report) →
-`core/store`, `core/anchors`, `core/accuracy`, `core/live_anchor`, `core/live_accuracy` (persistence,
-anchoring, scoring) → `ui/` renderers → `app.py` shell.
+`core/data` providers → `core/indicators` pure functions (including `smc`, `liquidity`, `fib_time`) →
+`core/traps` and `core/trades` (deterministic trap and trade arithmetic) →
+`core/agents` (rubric, judge, war room, profiles, trap desk, trade desk, LLM client, prompts, context,
+runner, report) → `core/store`, `core/anchors`, `core/accuracy`, `core/live_anchor`,
+`core/live_accuracy`, `core/alerts` (persistence, anchoring, scoring, notification) → `ui/` renderers
+→ `app.py` shell.
+
+Tabs: Live Recon, Intraday, Weekly, Monthly, TRAP Intelligence, Active Trade, War Room, Macro & News.
 Design spec and implementation plans live under `docs/superpowers/`.

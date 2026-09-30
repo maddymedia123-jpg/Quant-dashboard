@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import html
+import json
 
 import streamlit as st
 
@@ -478,6 +479,11 @@ def _dash(v, digits=0, prefix="") -> str:
     return "—" if v is None else fmt_num(v, digits, prefix)
 
 
+def _pct_or_dash(v, digits=1) -> str:
+    """A dash carrying a percent sign reads as a measured zero, so the unit goes only with a number."""
+    return "—" if v is None else f"{fmt_num(v, digits)}%"
+
+
 def smc_html(by_tf: dict) -> str:
     """Structure, order blocks, gaps and premium/discount per timeframe."""
     rows = ""
@@ -570,3 +576,494 @@ def accuracy_report_html(rep) -> str:
         body += "<p class='muted'>Accuracy is below the floor but no single protocol stands out yet.</p>"
     body += "<p class='muted'>These are suggestions for a person to review; nothing is changed automatically.</p>"
     return card_html("Accuracy report · calibration needed", body, "warn")
+
+
+# ---------- volatility matrix (spec section 2) ----------
+def vol_matrix_html(by_tf: dict) -> str:
+    """Realized and implied volatility, ATR, the sigma channels and market memory, per timeframe."""
+    rows = ""
+    bands_line = ""
+    for tf, m in by_tf.items():
+        if not (m or {}).get("available"):
+            rows += (f"<tr><td>{html.escape(tf)}</td><td colspan='6' class='muted'>"
+                     f"— {html.escape(str((m or {}).get('note') or 'not enough candles'))}</td></tr>")
+            continue
+        prem = m.get("implied_minus_realized_pct")
+        rows += (f"<tr><td>{html.escape(tf)}</td>"
+                 f"<td>{_pct_or_dash(m.get('realized_vol_pct'), 1)}</td>"
+                 f"<td>{_pct_or_dash(m.get('implied_vol_pct'), 1)}</td>"
+                 f"<td>{'—' if prem is None else f'{prem:+.1f} pts'}</td>"
+                 f"<td>{_pct_or_dash(m.get('atr_pct'), 2)}</td>"
+                 f"<td>{_dash(m.get('hurst'), 3)} <span class='muted'>{html.escape(str(m.get('memory', '')))}</span></td>"
+                 f"<td>{html.escape(str(m.get('regime', '—')))}</td></tr>")
+        b = m.get("bands") or {}
+        if not bands_line and b:
+            bands_line = (f"<p>{html.escape(tf)} channel · 1&sigma; {_dash(b.get('sigma1_dn'), 0, '$')}–"
+                          f"{_dash(b.get('sigma1_up'), 0, '$')} · 2&sigma; {_dash(b.get('sigma2_dn'), 0, '$')}–"
+                          f"{_dash(b.get('sigma2_up'), 0, '$')} · 3&sigma; {_dash(b.get('sigma3_dn'), 0, '$')}–"
+                          f"{_dash(b.get('sigma3_up'), 0, '$')}</p>")
+    body = ("<table><thead><tr><th>TF</th><th>Realized</th><th>Implied</th><th>IV − RV</th><th>ATR</th>"
+            f"<th>Hurst</th><th>Regime</th></tr></thead><tbody>{rows}</tbody></table>" + bands_line)
+    body += ("<p class='muted'>Realized volatility is annualised from that timeframe's returns; implied "
+             "comes from Deribit options or shows as — , never from realized. Hurst measures memory: 0.5 "
+             "is a coin-flip walk, above 0.56 trends persist, below 0.44 moves mean-revert; readings "
+             "inside that band are noise.</p>")
+    return card_html("Volatility matrix", body)
+
+
+# ---------- institutional quantitative matrix (spec section 5) ----------
+def _deck_value(value, kind: str) -> str:
+    if value is None or value == "":
+        return "—"
+    if kind == "usd":
+        return fmt_num(value, 0, "$")
+    if kind == "pct":
+        return f"{float(value):+.2f}%"
+    if kind == "rate":
+        return f"{float(value) * 100:+.3f}%"
+    if kind == "num":
+        return fmt_num(value, 3) if abs(float(value)) < 100 else fmt_num(value, 0)
+    return html.escape(str(value))
+
+
+def agent_matrix_html(deck) -> str:
+    """What each of the five sub-agents read, straight from the state the judges were given."""
+    body = ""
+    for a in deck:
+        rows = "".join(f"<tr><td class='muted'>{html.escape(label)}</td>"
+                       f"<td>{_deck_value(value, kind)}</td></tr>" for label, value, kind in a.rows)
+        body += (f"<p><strong>{a.agent_no}. {html.escape(a.title)}</strong> "
+                 f"<span class='muted'>· {html.escape(a.timeframe)}</span></p>"
+                 f"<table><tbody>{rows}</tbody></table>")
+        if a.note:
+            body += f"<p class='muted'>{html.escape(a.note)}</p>"
+    body += ("<p class='muted'>These are the exact readings handed to the ten domain agents, so the "
+             "scorecard cannot disagree with what is shown here. A dash means no feed, not zero.</p>")
+    return card_html("Institutional quantitative matrix", body)
+
+
+# ---------- TRAP intelligence console (spec section 1) ----------
+TRAP_LABEL = {"bull_trap": "bull trap", "bear_trap": "bear trap"}
+TRAP_SIDES = ("bull_trap", "bear_trap")
+
+
+def _trap_side(row) -> tuple[str, str]:
+    """The side as stored and as written. An unrecognised side is named as unknown rather than described
+    as a bear trap by falling through a `== "bull_trap"` branch, and never printed as the word None."""
+    raw = row.get("side") if isinstance(row, dict) else getattr(row, "side", None)
+    if raw in TRAP_SIDES:
+        return raw, TRAP_LABEL[raw]
+    return "", (str(raw) if raw else "trap of unknown side")
+
+
+def _trap_age(ms, now_ms: int) -> str:
+    """How long ago, or a dash. `.get(key, default)` returns the default only when the key is absent, so
+    a stored NULL arrived here as None and raised - which the caller then reported as a missing trap."""
+    if ms is None or now_ms is None:
+        return "—"
+    try:
+        mins = max(0, (int(now_ms) - int(ms)) // 60000)
+    except (TypeError, ValueError):
+        return "—"
+    return f"{mins // 1440}d {(mins % 1440) // 60}h" if mins >= 1440 else f"{mins // 60}h {mins % 60:02d}m"
+
+
+def _evidence_list(raw) -> list[str]:
+    """Evidence as stored (a JSON string) or already decoded. A trap card without its evidence would
+    assert a trap with nothing behind it, so a blob that will not parse says so instead of going quiet."""
+    if not raw:
+        return []
+    if isinstance(raw, (list, tuple)):
+        return [str(e) for e in raw]
+    try:
+        parsed = json.loads(raw)
+    except (ValueError, TypeError):
+        return ["(the stored evidence for this trap could not be read)"]
+    if isinstance(parsed, (list, tuple)):
+        return [str(e) for e in parsed]
+    return [str(parsed)]
+
+
+def trap_card_html(row: dict, now_ms: int, category_label: str = "") -> str:
+    """One anchored trap: what it is, the level it is built on, and what settles it."""
+    side_key, side = _trap_side(row)
+    tone = "warn" if row.get("status") == "active" else "neutral"
+    head = (f"<p><span class='ti-chip warn'>{html.escape(side)}</span> "
+            f"<strong>{html.escape(str(row.get('timeframe') or '—'))} at "
+            f"{fmt_num(row.get('level'), 0, '$')}</strong>")
+    if category_label:
+        head += f" <span class='muted'>· declared by the {html.escape(category_label)} desk</span>"
+    # a dash means the score was never recorded, not that the sub-agents scored it zero
+    score = row.get("score")
+    head += (f" <span class='muted'>· declared {_trap_age(row.get('declared_ms'), now_ms)} ago"
+             f" · sub-agents {fmt_num(score, 0) if score is not None else '—'}/100</span></p>")
+    body = head
+    if side_key == "bull_trap":
+        body += f"<p>Invalidated above {fmt_num(row.get('invalidation'), 0, '$')}"
+    elif side_key == "bear_trap":
+        body += f"<p>Invalidated below {fmt_num(row.get('invalidation'), 0, '$')}"
+    else:
+        body += f"<p>Invalidated at {fmt_num(row.get('invalidation'), 0, '$')}"
+    body += f" · pays off back at {fmt_num(row.get('plays_out'), 0, '$')}</p>"
+    body += _li(_evidence_list(row.get("evidence")))
+    if row.get("status") != "active":
+        body += (f"<p class='muted'>{html.escape(str(row.get('status') or 'unknown').replace('_', ' '))} at "
+                 f"{fmt_num(row.get('resolved_price'), 0, '$')}</p>")
+    return card_html(f"Anchored {side}", body, tone)
+
+
+def trap_console_html(rows: list[dict], candidates: list, now_ms: int, labels: dict | None = None,
+                      settled: list[dict] | None = None, swept_ms: int | None = None) -> str:
+    """The watchdog console: what is anchored, and what is being watched but not declared.
+
+    `rows` are the anchored traps and `settled` the recently closed ones, queried separately so newer
+    settled traps cannot push the live ones out of sight. The watch list is dated: candidates live in
+    session state and survive every auto-refresh, so an undated one read as current long after the scan
+    that found it."""
+    labels = labels or {}
+    settled = settled or []
+    active = [r for r in rows if r.get("status") == "active"]
+    body = (f"<p><strong>{len(active)} anchored</strong> · {len(candidates)} candidate(s) on watch · "
+            f"{len(settled)} recently settled</p>")
+    if not active:
+        body += ("<p class='muted'>No trap is anchored. A trap is declared only when its five sub-agents "
+                 "score 60 or more, the TRAP Head calls it engineered, and the category desk does not read "
+                 "the move as an authentic break.</p>")
+    if candidates:
+        age = _trap_age(swept_ms, now_ms)
+        body += (f"<p>On watch, from the deterministic scan of {age} ago:</p><ul>"
+                 if swept_ms else "<p>On watch, from the deterministic scan:</p><ul>")
+        for c in candidates[:6]:
+            _key, label = _trap_side(c)
+            body += (f"<li>{html.escape(label)} · {html.escape(str(c.timeframe))} at "
+                     f"{fmt_num(c.level, 0, '$')} · {c.strength} factors: "
+                     f"{html.escape('; '.join(c.evidence[:2]))}</li>")
+        body += "</ul>"
+        if swept_ms and (now_ms - swept_ms) > 30 * 60_000:
+            body += ("<p class='muted'>That scan is over half an hour old. Sweep again before trading "
+                     "from it - these levels were measured against a price that has since moved.</p>")
+    if settled:
+        parts = []
+        for r in settled:
+            _key, label = _trap_side(r)
+            desk = labels.get(r.get("category"), r.get("category") or "")
+            parts.append(f"{label} {r.get('timeframe') or '?'} "
+                         f"{str(r.get('status') or '').replace('_', ' ')}"
+                         + (f" ({desk})" if desk else ""))
+        body += "<p class='muted'>Recently settled: " + html.escape(", ".join(parts)) + "</p>"
+    body += ("<p class='muted'>Traps stay anchored until price settles them: invalidated when the break "
+             "proves real, played out when price returns inside value. Nothing expires on a clock.</p>")
+    return card_html("TRAP intelligence · watchdog", body, "warn" if active else "neutral")
+
+
+def trap_warning_html(rows: list[dict], now_ms: int) -> str | None:
+    """The outbound half of the handshake, on every desk that reads the trap's timeframe."""
+    active = [r for r in rows if r.get("status") == "active"]
+    if not active:
+        return None
+    body = ""
+    for r in active[:3]:
+        side_key, side = _trap_side(r)
+        body += (f"<p><span class='ti-chip warn'>{html.escape(side)}</span> "
+                 f"{html.escape(str(r.get('timeframe') or '—'))} at {fmt_num(r.get('level'), 0, '$')} · "
+                 f"invalidated at {fmt_num(r.get('invalidation'), 0, '$')} · "
+                 f"declared {_trap_age(r.get('declared_ms'), now_ms)} ago</p>")
+    if len(active) > 3:
+        body += f"<p class='muted'>and {len(active) - 3} more on this desk's timeframes.</p>"
+    body += "<p class='muted'>From the TRAP desk. It stays here until price settles it.</p>"
+    return card_html("TRAP warning", body, "warn")
+
+
+# ---------- the pinned Active Trade card (spec sections 3 and 4) ----------
+STOP_TONE = {"sound": "up", "supplied": "neutral", "would be hunted": "down",
+             "inside the noise": "down", "on the wrong side": "down"}
+ALIGN_WORD = {"supports": "supports this trade", "opposes": "against this trade",
+              "neutral": "no directional call", "silent": "no live verdict"}
+
+
+def _when(ms, now_ms: int, future: bool = True) -> str:
+    """A date a trader can set an alarm by.
+
+    `future=True` is for dates that are meant to be ahead of us - a target's due time, a monitoring
+    checkpoint - where having gone past is news. It was applied to `opened_ms` and `refreshed_ms` too,
+    which are past by definition, so every card permanently read "opened 19:37 UTC (passed)"."""
+    if not ms:
+        return "no date"
+    from core.trades import fmt_when
+    try:
+        stamp = int(ms)
+    except (TypeError, ValueError):
+        return "no date"
+    return fmt_when(stamp) + (" (passed)" if future and stamp <= now_ms else "")
+
+
+def trade_card_html(trade: dict, prog=None, now_ms: int = 0, price_now: float | None = None) -> str:
+    """One pinned position: the plan as it was written, and where it stands now.
+
+    `price_now` lets the card tell "no price this refresh" apart from "there is a price but this
+    position's arithmetic failed" - it used to blame the feed for both."""
+    plan = trade.get("plan") or {}
+    side = str(trade.get("side") or "")
+    asset = str(trade.get("asset") or "")
+    closed = trade.get("status") != "open"
+    entry = trade.get("entry")
+    stop = trade.get("stop")
+
+    head = (f"<p><span class='ti-chip {'up' if side == 'LONG' else 'down'}'>{html.escape(side)}</span> "
+            f"<strong>{html.escape(asset)} from {fmt_num(entry, 0, '$')}</strong>")
+    if plan.get("ok"):
+        head += (f" <span class='muted'>· score {fmt_num(plan.get('score'), 0)}/100 · "
+                 f"{fmt_num(plan.get('probability'), 0, suffix='%')} confluence estimate</span>")
+    else:
+        head += " <span class='muted'>· unscored: the sub-agents did not answer</span>"
+    head += f" <span class='muted'>· opened {_when(trade.get('opened_ms'), now_ms, future=False)}</span></p>"
+    body = head
+
+    # --- live block: the only part a Refresh changes ---
+    if closed:
+        body += (f"<p class='muted'>Closed {_when(trade.get('closed_ms'), now_ms, future=False)} at "
+                 f"{fmt_num(trade.get('closed_price'), 0, '$')} - "
+                 f"{html.escape(str(trade.get('closed_reason') or 'no reason recorded'))}.</p>")
+    elif prog is not None:
+        hit = ", ".join(prog.hit) if prog.hit else "none yet"
+        # the price is recomputed on every rerun, so it is stamped with now, not with the last time
+        # the Refresh button was pressed - which used to sit under a live number and make it look stale.
+        # `refreshed_ms` is reported separately, and only when it really happened.
+        body += (f"<p>Now {fmt_num(prog.price, 0, '$')} · <strong>{prog.pnl_pct:+.2f}%</strong> "
+                 f"({prog.pnl_r:+.2f}R) · targets reached: {html.escape(hit)}"
+                 + (" · <strong>the stop has been reached</strong>" if prog.stopped else "")
+                 + f" <span class='muted'>· as of {_when(now_ms, now_ms, future=False)}"
+                 + (f", last manual refresh {_when(trade.get('refreshed_ms'), now_ms, future=False)}"
+                    if trade.get("refreshed_ms") else "")
+                 + "</span></p>")
+    elif price_now:
+        body += (f"<p class='muted'>Price is {fmt_num(price_now, 0, '$')}, but this position's live "
+                 "numbers could not be calculated - see the warning above. The plan below is unaffected."
+                 "</p>")
+    else:
+        body += "<p class='muted'>No live price this refresh, so the numbers below are the plan only.</p>"
+
+    # --- the stop ---
+    verdict = str(plan.get("stop_verdict") or trade.get("stop_verdict") or "")
+    given = trade.get("given_stop")
+    body += (f"<p><span class='ti-chip {STOP_TONE.get(verdict, 'neutral')}'>stop "
+             f"{html.escape(verdict)}</span> trading at {fmt_num(stop, 0, '$')}")
+    if given is not None and verdict not in ("sound", "supplied"):
+        body += f" <span class='muted'>· you gave {fmt_num(given, 0, '$')}, corrected here</span>"
+    body += "</p>" + _li([str(r) for r in (plan.get("stop_reasons") or [])])
+
+    # --- the timed targets ---
+    targets = plan.get("targets") or []
+    if targets:
+        rows = "".join(
+            f"<tr><td>{html.escape(str(t.get('name')))}</td>"
+            f"<td>{fmt_num(t.get('price'), 0, '$')}</td>"
+            f"<td>{fmt_num(t.get('reward_r'), 2, suffix='R')}</td>"
+            f"<td>{html.escape(_when(t.get('due_ms'), now_ms))}</td>"
+            f"<td class='muted'>{html.escape(str(t.get('due_from') or ''))}</td>"
+            f"<td class='muted'>{html.escape(str(t.get('basis') or ''))}</td></tr>" for t in targets)
+        body += ("<p>Timed take-profits</p><table><thead><tr><th>Target</th><th>Price</th><th>Reward</th>"
+                 "<th>Due</th><th>Dated by</th><th>Price from</th></tr></thead>"
+                 f"<tbody>{rows}</tbody></table>")
+        first = targets[0]
+        try:
+            if float(first.get("reward_r") or 0) < 1.0:
+                body += ("<p class='ti-chip down'>reward below risk</p><p class='muted'>The first target "
+                         "is nearer than the stop, so this position risks more than it makes at TP1.</p>")
+        except (TypeError, ValueError):
+            pass
+
+    # --- the pullback guardrail, in plain English ---
+    pb = plan.get("pullback") or {}
+    if pb.get("available"):
+        levels = pb.get("levels") or {}
+        body += (f"<p>Price elasticity and pullback guardrail</p>"
+                 f"<p>Over the last {pb.get('horizon_bars')} {html.escape(str(pb.get('timeframe')))} "
+                 f"candles this market has normally gone "
+                 f"{fmt_num(pb.get('ordinary'), 0, '$')} against a position like this before continuing, "
+                 f"and {fmt_num(pb.get('edge'), 0, '$')} in four cases out of five. So a move to "
+                 f"{fmt_num(levels.get('ordinary'), 0, '$')} is ordinary and "
+                 f"{fmt_num(levels.get('edge'), 0, '$')} is still normal - do not close there. "
+                 f"Past {fmt_num(levels.get('breaking'), 0, '$')} this is no longer a pullback: that is "
+                 f"the 95th percentile, and the move you were expecting is not happening.</p>")
+    elif pb:
+        body += (f"<p class='muted'>No pullback guardrail: {html.escape(str(pb.get('note') or 'not measurable'))}."
+                 "</p>")
+
+    # --- the monitoring schedule ---
+    schedule = plan.get("schedule") or []
+    if schedule:
+        body += "<p>Chart monitoring schedule</p><ul>"
+        for c in schedule:
+            body += (f"<li>{html.escape(_when(c.get('at_ms'), now_ms))} - "
+                     f"{html.escape(str(c.get('reason') or ''))}</li>")
+        body += "</ul>"
+
+    # --- the two handshakes ---
+    alignment = plan.get("alignment") or []
+    if alignment:
+        body += (f"<p>Category consultation <span class='muted'>· "
+                 f"{html.escape(str(plan.get('aligned') or ''))}</span></p><ul>")
+        for a in alignment:
+            word = ALIGN_WORD.get(str(a.get("verdict")), str(a.get("verdict")))
+            body += (f"<li>{html.escape(str(a.get('label')))}: "
+                     f"{html.escape(str(a.get('bias') or 'no verdict'))} - {html.escape(word)}"
+                     + (f" <span class='muted'>({html.escape(str(a.get('note')))})</span>"
+                        if a.get("note") else "") + "</li>")
+        body += "</ul>"
+
+    traps = plan.get("traps") or []
+    if traps:
+        body += "<p><span class='ti-chip warn'>TRAP consultation</span></p><ul>"
+        for t in traps:
+            body += (f"<li>An anchored {html.escape(str(t.get('side', '')).replace('_', ' '))} on the "
+                     f"{html.escape(str(t.get('timeframe')))} sits {fmt_num(t.get('distance'), 0, '$')} "
+                     f"from this trade's {html.escape(str(t.get('near')))} at "
+                     f"{fmt_num(t.get('level'), 0, '$')}</li>")
+        body += "</ul>"
+    elif plan.get("ok"):
+        body += "<p class='muted'>TRAP consultation: no anchored trap sits on this trade's levels.</p>"
+
+    # --- the desks' own numbers and the head ---
+    if plan.get("ok"):
+        for label, key in (("for", "for_domains"), ("against", "against_domains")):
+            doms = plan.get(key) or []
+            if doms:
+                body += (f"<p class='muted'>The case {label} "
+                         f"({fmt_num(plan.get(f'{label}_points'), 0)}/100): "
+                         + ", ".join(f"{html.escape(str(d.get('title')))} "
+                                     f"{fmt_num(d.get('points'), 0)}/20" for d in doms) + "</p>")
+        if plan.get("head_call"):
+            conf = plan.get("head_confidence")
+            body += (f"<p><strong>Head of the Active Trade desk: "
+                     f"{html.escape(str(plan['head_call']).replace('_', ' ').title())}</strong>"
+                     + (f" <span class='muted'>({float(conf):.0%} confidence)</span>" if conf else "")
+                     + "</p>")
+
+    body += _li([str(n) for n in (plan.get("notes") or [])])
+    body += ("<p class='muted'>The score and the estimate come from the agents' own probabilities and the "
+             "desks' alignment. They are a measure of confluence, not a backtested win rate - nothing "
+             "here counts how often a setup like this has worked.</p>")
+
+    tone = "neutral" if closed else ("down" if (prog is not None and prog.stopped) or traps else "warn")
+    title = f"{asset} {side}" + ("" if not closed else " (closed)")
+    return card_html(title, body, tone)
+
+
+# ---------- macro and news engines (spec section 2) ----------
+IMPACT_TONE = {"high": "down", "medium": "warn", "low": "neutral"}
+BAND_TONE = {"clean": "up", "watch": "warn", "fragile": "down", "unknown": "neutral"}
+
+
+def _age(ms, now_ms: int) -> str:
+    if not ms:
+        return "undated"
+    mins = max(0, (int(now_ms) - int(ms)) // 60_000)
+    if mins < 60:
+        return f"{mins}m ago"
+    return f"{mins // 60}h ago" if mins < 1440 else f"{mins // 1440}d ago"
+
+
+def news_html(news, now_ms: int, limit: int = 12) -> str:
+    """Headlines, newest first, with the keyword tags shown as tags.
+
+    The topic and impact labels are keyword matches, not judgments - a headline can be mislabelled by a
+    word used in passing - so the card says so rather than letting "high impact" read as a verdict."""
+    if not getattr(news, "available", False):
+        return card_html("News", f"<p class='muted'>No headline feed: "
+                                 f"{html.escape(str(getattr(news, 'error', '') or 'unavailable'))}.</p>",
+                         "neutral")
+    headlines = list(getattr(news, "headlines", []) or [])
+    high = [h for h in headlines if h.get("impact") == "high"]
+    body = (f"<p><strong>{len(headlines)} headlines</strong> from "
+            f"{html.escape(str(getattr(news, 'source', '')))}"
+            + (f" · <span class='ti-chip down'>{len(high)} high-impact</span>" if high else "")
+            + "</p>")
+    if getattr(news, "error", None):
+        body += (f"<p class='muted'>Partial feed: {html.escape(str(news.error))[:160]} - the count above "
+                 "is what did arrive, not everything published.</p>")
+    body += "<table><thead><tr><th>When</th><th>Topic</th><th>Headline</th></tr></thead><tbody>"
+    for h in headlines[:limit]:
+        assets = " ".join(str(a) for a in (h.get("assets") or [])[:3])
+        tone = IMPACT_TONE.get(str(h.get("impact")), "neutral")
+        title = html.escape(str(h.get("title") or ""))[:150]
+        url = str(h.get("url") or "")
+        # only an http(s) link is rendered as one: a feed controls this string
+        linked = (f"<a href='{html.escape(url)}' target='_blank' rel='noopener noreferrer'>{title}</a>"
+                  if url.startswith(("https://", "http://")) else title)
+        body += (f"<tr><td class='muted'>{html.escape(_age(h.get('published_ms'), now_ms))}</td>"
+                 f"<td><span class='ti-chip {tone}'>{html.escape(str(h.get('topic') or ''))}</span></td>"
+                 f"<td>{linked}"
+                 + (f" <span class='muted'>{html.escape(assets)}</span>" if assets else "")
+                 + f" <span class='muted'>· {html.escape(str(h.get('source') or ''))}</span></td></tr>")
+    body += "</tbody></table>"
+    body += ("<p class='muted'>Topic and impact are keyword tags over the headline text, not a judgment "
+             "of the story. Treat them as a way to sort the list, not as a read on the market.</p>")
+    return card_html("News", body, "down" if high else "neutral")
+
+
+def gold_html(metals, now_ms: int) -> str:
+    """Gold spot, with the feed's own freshness carried through."""
+    if not getattr(metals, "available", False):
+        return card_html("Gold (XAU/USD)",
+                         f"<p class='muted'>No gold feed: "
+                         f"{html.escape(str(getattr(metals, 'error', '') or 'unavailable'))}.</p>", "neutral")
+    price = getattr(metals, "xau_usd", None)
+    body = (f"<p><strong>{fmt_num(price, 2, '$')}</strong> per "
+            f"{html.escape(str(getattr(metals, 'unit', 'troy_ounce')).replace('_', ' '))}")
+    bid, ask = getattr(metals, "bid", None), getattr(metals, "ask", None)
+    if bid is not None and ask is not None:
+        body += f" <span class='muted'>· bid {fmt_num(bid, 2, '$')} / ask {fmt_num(ask, 2, '$')}</span>"
+    body += "</p>"
+    if getattr(metals, "is_stale", False):
+        body += ("<p><span class='ti-chip down'>stale</span> The feed reports this print as stale, so it "
+                 "is not the current price.</p>")
+    else:
+        body += (f"<p class='muted'>Computed {html.escape(_age(getattr(metals, 'computed_ms', None), now_ms))}"
+                 f" · {html.escape(str(getattr(metals, 'source', '')))}</p>")
+    body += ("<p class='muted'>Gold only: silver and copper are gated behind a paid tier on this feed, so "
+             "they are not shown rather than guessed at.</p>")
+    return card_html("Gold (XAU/USD)", body, "warn" if getattr(metals, "is_stale", False) else "neutral")
+
+
+def predictions_html(preds, now_ms: int, asset: str | None = None, limit: int = 8) -> str:
+    """What the crowd is pricing, and whether the quote can actually be filled."""
+    if not getattr(preds, "available", False):
+        return card_html("Prediction markets",
+                         f"<p class='muted'>No odds feed: "
+                         f"{html.escape(str(getattr(preds, 'error', '') or 'unavailable'))}.</p>", "neutral")
+    markets = list(getattr(preds, "markets", []) or [])
+    if asset:
+        markets = [m for m in markets if asset in (m.get("assets") or [])]
+    tradeable = [m for m in markets if m.get("band") in ("clean", "watch")]
+    body = (f"<p><strong>{len(markets)} market(s)</strong>"
+            + (f" mentioning {html.escape(asset)}" if asset else "")
+            + f" · {len(tradeable)} with a quote worth quoting</p>")
+    body += ("<table><thead><tr><th>Probability</th><th>Execution</th><th>24h volume</th><th>Ends</th>"
+             "<th>Market</th></tr></thead><tbody>")
+    for m in markets[:limit]:
+        band = str(m.get("band") or "unknown")
+        tone = BAND_TONE.get(band, "neutral")
+        question = html.escape(str(m.get("question") or ""))[:120]
+        url = str(m.get("url") or "")
+        linked = (f"<a href='{html.escape(url)}' target='_blank' rel='noopener noreferrer'>{question}</a>"
+                  if url.startswith("https://") else question)
+        days = m.get("days_left")
+        body += (f"<tr><td><strong>{fmt_num((m.get('probability') or 0) * 100, 1, suffix='%')}</strong></td>"
+                 f"<td><span class='ti-chip {tone}'>{html.escape(band)}</span>"
+                 + (f" <span class='muted'>{fmt_num(m.get('band_score'), 0)}</span>"
+                    if m.get("band_score") is not None else "")
+                 + f"</td><td>{fmt_num(m.get('volume_24h'), 0, '$')}</td>"
+                 f"<td class='muted'>{fmt_num(days, 0) if days is not None else '—'}d</td>"
+                 f"<td>{linked}</td></tr>")
+    body += "</tbody></table>"
+    fragile = [m for m in markets[:limit] if m.get("band") == "fragile"]
+    if fragile:
+        reason = next((str(m.get("band_reason")) for m in fragile if m.get("band_reason")), "")
+        body += (f"<p class='muted'><strong>{len(fragile)} of these are fragile.</strong> "
+                 + html.escape(reason or "The quote can move or fill badly.")
+                 + " A probability on a fragile market is a printed number, not a forecast.</p>")
+    attribution = str(getattr(preds, "attribution", "") or "")
+    if attribution:
+        body += f"<p class='muted'>{html.escape(attribution)}</p>"
+    return card_html("Prediction markets", body, "neutral")

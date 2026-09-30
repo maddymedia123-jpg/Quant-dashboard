@@ -65,7 +65,7 @@ def test_price_rising_while_delta_falls_is_flagged_as_bearish_absorption():
 def test_delta_agreeing_with_price_is_confirmation():
     strong = [(100 + i, 101.5 + i, 100 + i, 101.4 + i, 10.0) for i in range(12)]
     cvd = lq.cumulative_delta(candles(strong), lookback=10)
-    assert cvd.state == "confirming" and cvd.delta_change > 0
+    assert cvd.state == "confirming up" and cvd.delta_change > 0
 
 
 def test_cumulative_delta_is_labelled_as_a_candle_proxy_not_real_tape():
@@ -143,3 +143,43 @@ def test_the_sample_used_must_bracket_the_window():
     oi = lq.oi_changes(hist, now_ms=now)
     assert oi["15m"] is None and oi["4h"] is None
     assert oi["1h"] == pytest.approx(10.0, abs=0.01)
+
+
+def test_confirmation_says_which_way_it_confirms():
+    """A bare "confirming" would read as agreement to whichever side asked the question."""
+    falling = [(100 - i, 100.5 - i, 98.5 - i, 98.6 - i, 10.0) for i in range(12)]
+    cvd = lq.cumulative_delta(candles(falling), lookback=10)
+    assert cvd.price_change < 0 and cvd.delta_change < 0
+    assert cvd.state == "confirming down", "delta confirming a fall is not evidence for the bulls"
+
+
+# ---------- auction rotation and excess (the evidence agent 2 is scored on) ----------
+def test_rotation_names_where_the_auction_is_heading():
+    rows = flat(30, 100, vol=5.0) + leg(100, 108, 10, vol=1.0)      # value built at 100, price leaving up
+    r = lq.volume_profile_context(candles(rows))
+    assert r["rotation"].startswith("rotating up"), r["rotation"]
+    down = lq.volume_profile_context(candles(flat(30, 100, vol=5.0) + leg(100, 92, 10, vol=1.0)))
+    assert down["rotation"].startswith("rotating down"), down["rotation"]
+    quiet = lq.volume_profile_context(candles(flat(40, 100, vol=5.0)))
+    assert "balanced" in quiet["rotation"]
+
+
+def test_excess_counts_rejections_beyond_the_value_area_edges():
+    tight = [(100.0, 100.1, 99.9, 100.0, 5.0)]          # value built in a narrow band...
+    rows = tight * 30 + [(100.0, 100.1, 94.0, 100.0, 1.0)] + tight * 4  # ...one deep wick, closing back in
+    ex = lq.volume_profile_context(candles(rows))["excess"]
+    assert ex["low"] == 1 and ex["last_low_bars_ago"] == 4
+    assert ex["high"] == 0, "nothing was rejected at the top of value"
+
+
+def test_a_range_straddling_the_value_edge_is_not_excess_on_every_bar():
+    """The first rule counted any wick through the edge, so a quiet range reported excess 19 times."""
+    ex = lq.volume_profile_context(candles(flat(40, 100, vol=5.0)))["excess"]
+    assert ex["low"] == 0 and ex["high"] == 0
+
+
+def test_the_auction_summary_carries_rotation_and_excess():
+    df = candles(flat(30, 100, vol=5.0) + leg(100, 108, 10))
+    vp = lq.summarise(df, [], 1_700_000_000_000)["volume_profile"]
+    assert vp["available"] and "rotation" in vp and "excess" in vp
+    assert vp["rotation"] and isinstance(vp["excess"], dict)

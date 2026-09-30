@@ -141,6 +141,34 @@ def domain_payload(domain: str, m: MarketSnapshot, analyses: dict[str, CategoryA
     return data, unavailable
 
 
+def derivatives_payload(m: MarketSnapshot) -> tuple[dict, list[str]]:
+    """Funding, open interest, positioning, liquidations, options and stablecoins for the desks.
+
+    The On-Chain & Derivatives sub-agent is worth twenty points, so this has to reach the judges; an
+    unavailable feed is named in the second return value rather than left as a silent gap."""
+    data: dict[str, Any] = {}
+    unavailable: list[str] = []
+    for name, kw in (("futures", {"drop": ("oi_history",)}),
+                     ("options", {"drop": ("expiries",)}),
+                     ("liquidations", {"drop": ("hourly", "biggest", "venues")}),
+                     ("stablecoins", {}),
+                     ("hyperliquid", {})):
+        snap = getattr(m, name)
+        if snap.available:
+            data[name] = _dump(snap, **kw)
+        else:
+            unavailable.append(name)
+    # _dump rounds to four places, which turns a funding rate of 4.9e-05 into 0.0 and makes the
+    # "overheated funding" item unjudgeable. Rates keep the precision the exchange reported: rounding
+    # anything at 1e-5 to a fixed number of decimals throws away significant figures.
+    if "futures" in data:
+        for rate in ("funding_rate", "funding_7d_mean", "predicted_funding_rate"):
+            value = getattr(m.futures, rate, None)
+            if value is not None:
+                data["futures"][rate] = float(value)
+    return data, unavailable
+
+
 def payload_for(agent_id: str, m: MarketSnapshot, analyses: dict[str, CategoryAnalysis]) -> dict:
     domain = DOMAIN_OF[agent_id]
     data, unavailable = domain_payload(domain, m, analyses)

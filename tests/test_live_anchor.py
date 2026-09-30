@@ -49,7 +49,7 @@ def test_first_run_of_a_window_anchors_the_summary(store):
     out = la.publish(store, result(0.8, 0.3, ms=t), t, price=78_000.0)
     assert out.anchored and out.window_open_ms == 2 * H4 and out.window_close_ms == 3 * H4
     assert out.anchor["bias"] == "BULL" and out.anchor["price"] == 78_000.0
-    assert out.anchor["domains"]["bullish"]["smc"] == 16.0
+    assert out.anchor["domains"]["bullish"]["quant"] == 16.0
     row = store.get_live_anchor(2 * H4)
     assert row["bias"] == "BULL" and row["published_ms"] == t
 

@@ -13,8 +13,8 @@ STATE = {"price": 78000, "categories": {"live": {"direction": "BEARISH"}}}
 
 
 def test_parsers_read_probabilities_and_clamp():
-    ts = {"nouls": {"smc_bos": {"noul": 0.82}, "smc_ob": {"noul": 1.4}, "bad": {"noul": "x"}}}
-    assert parse_typesafe(ts) == {"smc_bos": 0.82, "smc_ob": 1.0}
+    ts = {"nouls": {"ict_structure": {"noul": 0.82}, "smc_ob": {"noul": 1.4}, "bad": {"noul": "x"}}}
+    assert parse_typesafe(ts) == {"ict_structure": 0.82, "smc_ob": 1.0}
     assert parse_gemini_probabilities({"probabilities": {"a": 0.5, "b": -3, "c": None}}) == {"a": 0.5, "b": 0.0}
     assert parse_gemini_probabilities({"a": {"probability": 0.25}}) == {"a": 0.25}
 
@@ -36,7 +36,7 @@ def test_typesafe_backend_sends_one_batched_request_per_side():
     assert seen["auth"] == "Bearer ts-key" and seen["body"]["model"] == "jev-latest"
     assert seen["body"]["state"] == STATE
     assert all(q["type"] == "noul" for q in seen["body"]["questions"].values())
-    assert "bullish" in seen["body"]["questions"]["smc_bos"]["instructions"]
+    assert "bullish" in seen["body"]["questions"]["ict_structure"]["instructions"]
     assert res.prompt_tokens == 900 and res.completion_tokens == 60
 
 
@@ -44,7 +44,7 @@ def test_side_changes_the_question_wording():
     captured = []
 
     def handler(request: httpx.Request):
-        captured.append(json.loads(request.content)["questions"]["mtf_triple"]["instructions"])
+        captured.append(json.loads(request.content)["questions"]["quant_mtf"]["instructions"])
         return httpx.Response(200, json={"nouls": {}})
 
     j = Judge(SETTINGS, typesafe_key="k", client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
@@ -69,7 +69,7 @@ def test_gemini_fallback_used_when_there_is_no_typesafe_key():
     assert res.ok and res.provider == "gemini" and abs(team_score(res.probabilities) - 50.0) < 1e-9
     system, user, temp = llm.calls[0]
     assert "probability from 0 to 1" in system and temp == 0.0
-    assert "smc_bos" in user and "bearish" in system
+    assert "ict_structure" in user and "bearish" in system
 
 
 def test_failures_return_an_empty_result_instead_of_raising():
@@ -120,9 +120,9 @@ def test_questions_are_built_the_way_the_api_documents_them():
 
     j = Judge(SETTINGS, typesafe_key="k", client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
     res = asyncio.run(j.score(STATE, BULLISH))
-    q = seen["questions"]["smc_bos"]
+    q = seen["questions"]["ict_structure"]
     assert q["type"] == "noul" and set(q["criteria"]) == {"true", "false"} and q["instructions"]
-    assert res.ok and res.probabilities["smc_bos"] == 0.6
+    assert res.ok and res.probabilities["ict_structure"] == 0.6
 
     c = asyncio.run(j.classify(STATE, "trap", "Is this a trap?", {"BULL_TRAP": "up is fake", "NO_TRAP": "no trap"}))
     assert c.ok and c.choice == "BULL_TRAP" and c.confidence == 0.6 and c.provider == "typesafe"

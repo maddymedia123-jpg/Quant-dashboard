@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 import pandas as pd
 
 from core.agents.recon_profiles import LIVE, PROFILES, ReconProfile
-from core.agents.rubric import ALL_ITEMS, BEARISH, BULLISH
+from core.agents.rubric import ALL_ITEMS, BEARISH, BULLISH, RUBRIC_VERSION
 
 UP, DOWN, FLAT = "UP", "DOWN", "FLAT"
 TF_MS = {"15m": 900_000, "1h": 3_600_000, "4h": 14_400_000, "1d": 86_400_000, "1w": 604_800_000}
@@ -41,17 +41,26 @@ ITEM_GAP = 0.20           # ...and this far from what actually happened is a fin
 MAX_ITEM_ISSUES = 8
 TRAP_MIN_MISSES = 3
 
-ITEM_KIND = {"smc": "structural misalignment", "mtf": "structural misalignment",
-             "liq": "misread liquidity", "macro": "false sentiment", "quant": "volatility misread"}
+# The spec names the failures it wants called out: protocol failures, misread liquidity, false
+# sentiment signals, structural misalignment and missed traps. Each sub-agent maps to one of them.
+ITEM_KIND = {"ict": "structural misalignment", "auction": "misread liquidity",
+             "delta": "misread liquidity", "derivs": "false sentiment", "quant": "volatility misread"}
 
+# One line of advice per sub-agent, written for what that agent actually reads. Remapping the domains
+# without rewriting these once cross-wired them: the sweep item was told to tighten break confirmation
+# while the delta item was told to tighten sweep reclaims.
 SUGGESTIONS = {
-    "structural misalignment": "Require a break to hold for a full {ltf} candle and agree with the {htf} bias "
-                               "before this item scores high.",
-    "misread liquidity": "Count a sweep as confirmation only after a reclaim close, and score sweeps against "
-                         "the {htf} bias lower.",
-    "false sentiment": "Down-weight sentiment when positioning (funding, open interest) disagrees with it "
-                       "instead of treating it as a lead signal.",
-    "volatility misread": "Treat band pushes as exhaustion unless ATR is expanding on the same timeframe.",
+    "structural misalignment": "ICT reads are firing early: require a break of structure to hold a full "
+                               "{ltf} candle, and a sweep to close back inside before it counts as a "
+                               "reclaim, before this item scores high.",
+    "misread liquidity": "Value and flow are being read as direction: require delta to agree with the "
+                         "{mtf} trend, and price to accept beyond the value area edge for more than one "
+                         "candle, before scoring this high.",
+    "false sentiment": "Positioning is being read as a forecast: funding, open interest and the "
+                       "long/short ratio say who is crowded, not which way price goes next. Score these "
+                       "against the {htf} bias rather than with it.",
+    "volatility misread": "Volatility and timeframe agreement are being over-read: require ATR to be "
+                          "expanding, and all of {ltf}, {mtf} and {htf} to agree, before this scores high.",
     "missed signal": "The team discounted a condition that kept preceding moves in its favour; check the "
                      "evidence for it is reaching the state.",
     "missed traps": "Lower the bar for the trap agent to flag a trap when liquidity was swept against the "
@@ -175,6 +184,9 @@ def _mean(xs: list[float]) -> float | None:
 
 
 def _item_issues(rows: list[dict], profile: ReconProfile) -> list[Issue]:
+    # Item ids are the memory here. A window scored under an older checklist cannot speak about items
+    # that did not exist then, so it counts towards direction accuracy but not towards item findings.
+    rows = [r for r in rows if int((r.get("payload") or {}).get("rubric_version") or 1) == RUBRIC_VERSION]
     found: list[tuple[float, Issue]] = []
     for side, target in ((BULLISH, UP), (BEARISH, DOWN)):
         for item in ALL_ITEMS:

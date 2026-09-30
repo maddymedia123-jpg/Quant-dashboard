@@ -1,9 +1,17 @@
-"""Live Recon scoring rubric: the client's 100-point checklist as data.
+"""The desk scoring rubric: the client's 100-point checklist as data.
 
-Five domain agents per side, each worth 20 points, split into weighted checklist items. Each item is a
-yes/no judgment about the market state, asked from one side's point of view (bullish or bearish). The
-model only judges whether each condition holds; the weights and the arithmetic stay here in code, so a
-team score can be audited line by line and weights can change without re-running any inference."""
+Five sub-agents per desk, as the enhanced spec names them - Quant/Statistics, Auction Market & Volume
+Profile, Order Flow & Delta, ICT & Liquidity, On-Chain & Derivatives - each worth 20 points. Macro and
+news moved out to the global engine in that spec, so they are no longer a desk sub-agent.
+
+Each item is a yes/no judgment about the market state, asked from one side's point of view, and every
+one of them is answerable from evidence the deterministic layer actually computes: the volatility
+matrix, the volume profile, cumulative delta, the SMC reads, and the derivatives feeds. The model only
+judges whether the condition holds; the weights and the arithmetic stay here in code, so a team score
+can be audited line by line and a weight can change without re-running any inference.
+
+Item ids are the accuracy report's memory. RUBRIC_VERSION changes whenever they do, so scores from an
+older checklist are never compared against items that did not exist when they were made."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -11,6 +19,9 @@ from dataclasses import dataclass
 from core.agents.recon_profiles import LIVE, ReconProfile
 
 BULLISH, BEARISH = "bullish", "bearish"
+
+# 1: SMC / Liquidity / MTF / Quant / Macro. 2: the spec's five sub-agents.
+RUBRIC_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -45,112 +56,139 @@ class Domain:
 
 DOMAINS: tuple[Domain, ...] = (
     Domain(
-        key="smc", agent_no=1, title="Market Structure & SMC",
+        key="quant", agent_no=1, title="Quant & Statistics",
         checklist=(
-            "Identify the {htf} structural state: expansion, retracement or consolidation.",
-            "Locate the nearest unmitigated premium/discount order block.",
-            "Map active fair value gaps on the {mtf} and {ltf} charts.",
-            "Verify whether a change of character occurred within the last 1-3 candles on {ltf}.",
+            "Read the Hurst exponent: does this market persist or mean-revert right now?",
+            "Compare current ATR with its own recent distribution.",
+            "Check where price sits in the 1, 2 and 3 sigma channels.",
+            "Verify trend agreement across {ltf}, {mtf} and {htf}, and RSI for momentum or divergence.",
         ),
         items=(
-            RubricItem("smc_bos", 5,
-                       "A confirmed {htf} break of structure or change of character points UP.",
-                       "A confirmed {htf} break of structure or change of character points DOWN."),
-            RubricItem("smc_ob", 5,
-                       "Price is testing or reacting to an unmitigated {mtf}/{htf} demand order block.",
-                       "Price is testing or reacting to an unmitigated {mtf}/{htf} supply order block."),
-            RubricItem("smc_fvg", 5,
-                       "A clear unfilled fair value gap sits ABOVE price as an upside magnet or entry zone.",
-                       "A clear unfilled fair value gap sits BELOW price as a downside magnet or entry zone."),
-            RubricItem("smc_ltf", 5,
-                       "The {ltf} structure is clean, making higher highs and higher lows.",
-                       "The {ltf} structure is clean, making lower highs and lower lows."),
-        ),
-    ),
-    Domain(
-        key="liquidity", agent_no=2, title="Liquidity & Order Flow",
-        checklist=(
-            "Locate buyside and sellside liquidity targets.",
-            "Confirm whether CVD is expanding with price or showing absorption or divergence.",
-            "Identify the point of control and value area limits.",
-            "Track the net change in open interest over {ltf}, {mtf} and {htf}.",
-        ),
-        items=(
-            RubricItem("liq_sweep", 5,
-                       "A recent sweep of equal lows or the previous day low was rejected, favouring upside.",
-                       "A recent sweep of equal highs or the previous day high was rejected, favouring downside."),
-            RubricItem("liq_cvd", 5,
-                       "Cumulative volume delta confirms buying, or shows bullish absorption against falling price.",
-                       "Cumulative volume delta confirms selling, or shows bearish absorption against rising price."),
-            RubricItem("liq_profile", 5,
-                       "Price sits where the volume profile supports upside: above value or holding a high volume node.",
-                       "Price sits where the volume profile supports downside: below value or rejected at a high volume node."),
-            RubricItem("liq_oi", 5,
-                       "Open interest is expanding in a way that indicates aggressive long positioning.",
-                       "Open interest is expanding in a way that indicates aggressive short positioning."),
-        ),
-    ),
-    Domain(
-        key="mtf", agent_no=3, title="Multi-Timeframe Alignment",
-        checklist=(
-            "Verify the {htf} trend direction.",
-            "Verify the {mtf} trend direction.",
-            "Verify the {ltf} trend direction.",
-            "Measure how much of the three timeframes agree.",
-        ),
-        items=(
-            RubricItem("mtf_triple", 8,
+            RubricItem("quant_mtf", 5,
                        "All three timeframes ({ltf}, {mtf}, {htf}) point UP.",
                        "All three timeframes ({ltf}, {mtf}, {htf}) point DOWN."),
-            RubricItem("mtf_double", 6,
-                       "The {mtf} and {htf} point UP while the {ltf} pulls back into discount.",
-                       "The {mtf} and {htf} point DOWN while the {ltf} pulls back into premium."),
-            RubricItem("mtf_fib", 6,
-                       "Price is at a Fibonacci retracement or time zone that supports an upside turn.",
-                       "Price is at a Fibonacci retracement or time zone that supports a downside turn."),
-        ),
-    ),
-    Domain(
-        key="quant", agent_no=4, title="Quantitative Volatility",
-        checklist=(
-            "Compare current ATR with its 20-period average.",
-            "Verify EMA alignment on the {mtf} and {htf}.",
-            "Check the standard deviation band boundaries.",
-            "Audit RSI and StochRSI for momentum locks or hidden divergences.",
-        ),
-        items=(
-            RubricItem("quant_bands", 5,
-                       "Price is pushing the upper volatility band in a way that favours continuation higher.",
-                       "Price is pushing the lower volatility band in a way that favours continuation lower."),
-            RubricItem("quant_ema", 5,
+            RubricItem("quant_memory", 5,
+                       "The Hurst reading shows trending memory rather than mean reversion, so an upside "
+                       "move should persist over the next {horizon}.",
+                       "The Hurst reading shows trending memory rather than mean reversion, so a downside "
+                       "move should persist over the next {horizon}."),
+            RubricItem("quant_bands", 4,
+                       "Price is working the upper sigma channel in a way that favours continuation higher "
+                       "rather than exhaustion.",
+                       "Price is working the lower sigma channel in a way that favours continuation lower "
+                       "rather than exhaustion."),
+            RubricItem("quant_ema", 3,
                        "The EMA ribbon is stacked bullish on both the {mtf} and {htf}.",
                        "The EMA ribbon is stacked bearish on both the {mtf} and {htf}."),
-            RubricItem("quant_momentum", 5,
+            RubricItem("quant_momentum", 3,
                        "RSI momentum supports upside and is not contradicted by a bearish divergence.",
                        "RSI momentum supports downside and is not contradicted by a bullish divergence."),
-            RubricItem("quant_atr", 5,
-                       "ATR is expanding, confirming an upside move rather than quiet consolidation.",
-                       "ATR is expanding, confirming a downside move rather than quiet consolidation."),
         ),
     ),
     Domain(
-        key="macro", agent_no=5, title="Macro & Financial News",
+        key="auction", agent_no=2, title="Auction Market & Volume Profile",
         checklist=(
-            "Scan the economic calendar for tier-1 releases in the next {ltf}, {mtf} and {htf}.",
-            "Read sentiment indicators for market-moving shifts.",
-            "Assess broader market positioning and funding conditions.",
-            "Flag any high-impact event landing mid-candle.",
+            "Locate the point of control and the value area high and low.",
+            "Decide whether price is accepting or rejecting value at its current position.",
+            "Identify which way the auction is rotating inside the range.",
+            "Look for excess or rejection at the far edge of value.",
         ),
         items=(
-            RubricItem("macro_release", 8,
-                       "The nearest high-impact release or its outcome favours upside.",
-                       "The nearest high-impact release or its outcome favours downside."),
-            RubricItem("macro_sentiment", 6,
-                       "Current sentiment and positioning support upside over the next {horizon}.",
-                       "Current sentiment and positioning support downside over the next {horizon}."),
-            RubricItem("macro_clear", 6,
-                       "No imminent high-impact event threatens the upside case inside the next {horizon}.",
-                       "No imminent high-impact event threatens the downside case inside the next {horizon}."),
+            RubricItem("auction_value", 6,
+                       "Price is accepting value at or above the value area high rather than being rejected "
+                       "from it.",
+                       "Price is accepting value at or below the value area low rather than being rejected "
+                       "from it."),
+            RubricItem("auction_poc", 5,
+                       "The point of control is acting as support beneath price.",
+                       "The point of control is acting as resistance above price."),
+            RubricItem("auction_rotation", 5,
+                       "The auction is rotating up from the value area low towards the point of control or "
+                       "the value area high.",
+                       "The auction is rotating down from the value area high towards the point of control "
+                       "or the value area low."),
+            RubricItem("auction_excess", 4,
+                       "There is excess or rejection at the low end of value, marking sellers as finished "
+                       "there.",
+                       "There is excess or rejection at the high end of value, marking buyers as finished "
+                       "there."),
+        ),
+    ),
+    Domain(
+        key="delta", agent_no=3, title="Order Flow & Delta",
+        checklist=(
+            "Compare cumulative delta with price over the recent window.",
+            "Decide whether either side is absorbing rather than driving.",
+            "Read taker flow for who is paying the spread.",
+            "Note that delta here is a candle close-position proxy, not tick tape.",
+        ),
+        items=(
+            RubricItem("delta_confirm", 8,
+                       "Cumulative delta is rising with price, so buyers are driving rather than chasing.",
+                       "Cumulative delta is falling with price, so sellers are driving rather than chasing."),
+            RubricItem("delta_absorption", 7,
+                       "Delta shows bullish absorption: price held or fell while delta rose, so sellers are "
+                       "being absorbed.",
+                       "Delta shows bearish absorption: price held or rose while delta fell, so buyers are "
+                       "being absorbed."),
+            RubricItem("delta_taker", 5,
+                       "Taker flow leans to the buy side, paying the spread to get long.",
+                       "Taker flow leans to the sell side, paying the spread to get short."),
+        ),
+    ),
+    Domain(
+        key="ict", agent_no=4, title="ICT & Liquidity",
+        checklist=(
+            "Identify the {htf} structural state and the most recent break of structure or change of "
+            "character.",
+            "Locate buyside and sellside liquidity pools and whether either was swept and reclaimed.",
+            "Find the nearest unmitigated order block and any unfilled fair value gap.",
+            "Place price in premium or discount of the dealing range.",
+        ),
+        items=(
+            RubricItem("ict_structure", 6,
+                       "A confirmed {htf} break of structure or change of character points UP.",
+                       "A confirmed {htf} break of structure or change of character points DOWN."),
+            RubricItem("ict_sweep", 5,
+                       "A sweep of sellside liquidity was reclaimed, leaving a swing failure that favours "
+                       "upside.",
+                       "A sweep of buyside liquidity was reclaimed, leaving a swing failure that favours "
+                       "downside."),
+            RubricItem("ict_ob", 4,
+                       "Price is testing or reacting to an unmitigated {mtf}/{htf} demand order block.",
+                       "Price is testing or reacting to an unmitigated {mtf}/{htf} supply order block."),
+            RubricItem("ict_fvg", 3,
+                       "A clear unfilled fair value gap sits ABOVE price as an upside magnet.",
+                       "A clear unfilled fair value gap sits BELOW price as a downside magnet."),
+            RubricItem("ict_pd", 2,
+                       "Price is in discount of the dealing range, where longs are priced well.",
+                       "Price is in premium of the dealing range, where shorts are priced well."),
+        ),
+    ),
+    Domain(
+        key="derivs", agent_no=5, title="On-Chain & Derivatives",
+        checklist=(
+            "Read funding against its own recent mean.",
+            "Track the net change in open interest over {ltf}, {mtf} and {htf}.",
+            "Compare long and short liquidations over the last day.",
+            "Check options positioning: max pain and the put/call skew.",
+        ),
+        items=(
+            RubricItem("derivs_funding", 5,
+                       "Funding is not overheated on the long side, so an upside move is not crowded.",
+                       "Funding is not overheated on the short side, so a downside move is not crowded."),
+            RubricItem("derivs_oi", 5,
+                       "Open interest is expanding in a way that indicates aggressive long positioning.",
+                       "Open interest is expanding in a way that indicates aggressive short positioning."),
+            RubricItem("derivs_liquidations", 4,
+                       "Recent liquidations flushed longs rather than shorts, clearing the way higher.",
+                       "Recent liquidations flushed shorts rather than longs, clearing the way lower."),
+            RubricItem("derivs_options", 3,
+                       "Options positioning (max pain and skew) sits above price, pulling it up.",
+                       "Options positioning (max pain and skew) sits below price, pulling it down."),
+            RubricItem("derivs_ls", 3,
+                       "The long/short account ratio is not stretched long, leaving room to squeeze up.",
+                       "The long/short account ratio is not stretched short, leaving room to squeeze down."),
         ),
     ),
 )

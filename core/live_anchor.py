@@ -15,6 +15,7 @@ from dataclasses import dataclass
 
 from core.agents.live_recon import DECISIVE_MARGIN, TRAP_OVERRIDE_P, LiveReconResult
 from core.agents.recon_profiles import LIVE, ReconProfile
+from core.agents.rubric import RUBRIC_VERSION
 
 WINDOW_MS = 4 * 60 * 60 * 1000          # the 4h candle, aligned to UTC
 SWING_POINTS = 15.0                      # team-score move that counts as substantial
@@ -72,6 +73,7 @@ def anchor_payload(res: LiveReconResult, price: float | None = None) -> dict:
             side.side: {d.key: round(d.points, 2) for d in side.domains}
             for side in (res.bull, res.bear)
         },
+        "rubric_version": RUBRIC_VERSION,
         # every item's probability, so the accuracy report can grade each protocol after the close
         "items": {
             side.side: {item_id: round(p, 4) for d in side.domains for item_id, _w, p in d.items}
