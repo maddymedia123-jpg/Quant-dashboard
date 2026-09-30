@@ -134,3 +134,67 @@ def test_events_survive_their_trade_being_killed(store):
     store.add_trade_event(tid, NOW, "target", "target:TP1", "TP1 reached", 80_600.0)
     store.close_trade(tid, "killed by the trader", 80_600.0, NOW + 1)
     assert len(store.trade_events(tid)) == 1
+
+
+# ---------- replacing a plan (Re-judge) ----------
+def test_re_judging_opens_the_successor_and_closes_the_original_together(store):
+    old = open_one(store, plan={"targets": [], "thesis": "the first read"})
+    new = store.rejudge_trade(old, opened_ms=NOW + 60_000, asset="BTC/USDT", side="LONG",
+                              entry=80_000.0, stop=79_500.0, given_stop=None, stop_verdict="supplied",
+                              category="live", plan={"targets": [], "thesis": "the second read"})
+    assert new != old
+    assert [r["id"] for r in store.trades(status="open")] == [new], "exactly one position is pinned"
+    closed = store.trade(old)
+    assert closed["status"] == "closed" and closed["closed_reason"] == f"re-judged as #{new}"
+    assert store.trade(new)["plan"]["thesis"] == "the second read"
+    assert closed["plan"]["thesis"] == "the first read", "the original plan is kept as written"
+
+
+def test_a_failed_replacement_leaves_exactly_one_open_position(store):
+    """Two separate calls could leave two rows open for one real position - two cards, two alert
+    streams, and the stop alerted twice. Either both happen or neither does."""
+    old = open_one(store)
+    store.close_trade(old, "killed by the trader", 80_100.0, NOW + 10)
+    with pytest.raises(ValueError, match="was not open"):
+        store.rejudge_trade(old, opened_ms=NOW + 60_000, asset="BTC/USDT", side="LONG", entry=80_000.0,
+                            stop=79_500.0, given_stop=None, stop_verdict="supplied", category="live",
+                            plan={})
+    assert store.trades(status="open") == [], "the rollback left no orphan open row"
+    assert len(store.trades(status=None)) == 1, "and nothing else was inserted"
+
+
+def test_a_plan_carrying_an_awkward_value_still_opens(store):
+    """set_anchor has always used default=str; open_trade did not, so one numpy value would have made
+    opening a trade fail outright."""
+    import datetime as dt
+
+    tid = open_one(store, plan={"built_at": dt.datetime(2026, 9, 30, tzinfo=dt.timezone.utc),
+                                "targets": []})
+    assert isinstance(store.trade(tid)["plan"]["built_at"], str)
+
+
+# ---------- the order pending alerts are drained in ----------
+def test_pending_events_come_back_oldest_first(store):
+    """Newest-first with a limit meant a backlog larger than the limit permanently hid the OLDEST
+    unsent alerts - and the oldest is the one most likely to be a stop."""
+    tid = open_one(store)
+    for i in range(5):
+        store.add_trade_event(tid, NOW + i * 1_000, "target", f"target:TP{i}", f"TP{i} reached", 1.0)
+    pending = store.trade_events(tid, unnotified_only=True)
+    assert [e["dedup_key"] for e in pending] == [f"target:TP{i}" for i in range(5)]
+
+
+def test_a_backlog_larger_than_the_limit_still_surfaces_the_oldest(store):
+    tid = open_one(store)
+    for i in range(150):
+        store.add_trade_event(tid, NOW + i * 1_000, "target", f"k{i}", f"event {i}", 1.0)
+    first_page = store.trade_events(tid, unnotified_only=True, limit=100)
+    assert first_page[0]["dedup_key"] == "k0", "the oldest pending event is reachable"
+    assert len(first_page) == 100
+
+
+def test_the_settled_history_is_still_newest_first(store):
+    tid = open_one(store)
+    for i in range(3):
+        store.add_trade_event(tid, NOW + i * 1_000, "target", f"k{i}", f"event {i}", 1.0)
+    assert [e["dedup_key"] for e in store.trade_events(tid)] == ["k2", "k1", "k0"]

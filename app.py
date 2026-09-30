@@ -650,7 +650,9 @@ def trade_alert_pass(row: dict, prog) -> None:
     for e in events:
         # the unique index decides what is new: the same target reached is one event, not one per refresh
         store.add_trade_event(row["id"], now_ms, e.kind, e.dedup_key, e.headline, e.price)
-    pending = store.trade_events(row["id"], unnotified_only=True)
+    # oldest first, with a limit well above one pass: the default hid the oldest pending alert once a
+    # backlog passed it, and the oldest is the one most likely to be a stop
+    pending = store.trade_events(row["id"], unnotified_only=True, limit=500)
     if not pending:
         return
     dispatcher = Dispatcher(_secrets())
@@ -744,21 +746,29 @@ with tabs[5]:
             st.rerun()
         if b2.button("Re-judge", key=f"tr_rejudge_{row['id']}", disabled=settings is None,
                      help="Runs the ten sub-agents again and writes a new plan for this position."):
+            rejudged = False
             with st.status("Re-judging the position...", expanded=False) as s2:
                 try:
                     fresh_plan, fresh_stop, _ = build_trade_plan(
                         row["asset"], row["side"], float(row["entry"]),
                         row.get("given_stop"), row.get("category") or "live")
-                    new_id = store.open_trade(opened_ms=int(time.time() * 1000), asset=row["asset"],
-                                              side=row["side"], entry=float(row["entry"]),
-                                              stop=fresh_stop.stop, given_stop=row.get("given_stop"),
-                                              stop_verdict=fresh_stop.verdict,
-                                              category=row.get("category") or "live", plan=fresh_plan)
-                    store.close_trade(row["id"], f"re-judged as #{new_id}", price_now, now_ms)
+                    # one transaction: opening then closing as two calls left two open rows for one
+                    # position when the close failed
+                    new_id = store.rejudge_trade(
+                        row["id"], opened_ms=int(time.time() * 1000), asset=row["asset"],
+                        side=row["side"], entry=float(row["entry"]), stop=fresh_stop.stop,
+                        given_stop=row.get("given_stop"), stop_verdict=fresh_stop.verdict,
+                        category=row.get("category") or "live", plan=fresh_plan)
                     s2.update(label=f"Re-judged as #{new_id}", state="complete")
+                    rejudged = True
                 except Exception as e:  # noqa: BLE001
-                    s2.update(label=f"Could not re-judge: {e}", state="error")
-            st.rerun()
+                    s2.update(label=f"Could not re-judge: {type(e).__name__}: {e}", state="error")
+                    st.error(f"Trade #{row['id']} was NOT re-judged ({type(e).__name__}: {e}). The card "
+                             "below is still the plan it was opened with - the sub-agents did not run.")
+            # only on success: an unconditional rerun discards the status box, which is what made a
+            # failed re-judge look exactly like a successful one
+            if rejudged:
+                st.rerun()
         if b3.button("KILL", key=f"tr_kill_{row['id']}", type="primary",
                      help="Unpins the card and stops every alert for this position."):
             store.close_trade(row["id"], "killed by the trader", price_now, now_ms)

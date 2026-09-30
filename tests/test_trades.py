@@ -50,6 +50,19 @@ def candles(n=400, start=80_000.0, seed=7, drift=0.0, bar=200.0) -> pd.DataFrame
                          "close": closes, "volume": rng.uniform(10, 100, n)})
 
 
+# ---------- the constants the app reaches for ----------
+def test_the_atr_fallback_constant_is_reachable_from_this_module():
+    """app.py computes `entry * trades.DEFAULT_ATR_PCT` whenever the volatility matrix has no ATR for a
+    desk's timeframe. The constant lived only in core.traps, so that path raised AttributeError and the
+    Active Trade desk failed to open a position instead of degrading to a percent of price."""
+    from core import traps
+
+    assert trades.DEFAULT_ATR_PCT == traps.DEFAULT_ATR_PCT, "one definition, not two that can drift"
+    assert 0.001 <= trades.DEFAULT_ATR_PCT <= 0.02
+    # the expression app.py actually evaluates
+    assert ENTRY * trades.DEFAULT_ATR_PCT > 0
+
+
 # ---------- the stop ----------
 def test_a_stop_beyond_the_structure_with_nothing_just_past_it_is_sound():
     v = trades.verify_stop(state(), LONG, ENTRY, 78_600.0, "1h", ATR)

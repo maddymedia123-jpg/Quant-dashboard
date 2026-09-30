@@ -409,7 +409,9 @@ class Store:
                 "category, plan, status) VALUES (?,?,?,?,?,?,?,?,?,'open')",
                 (opened_ms, asset, side, float(entry), float(stop),
                  None if given_stop is None else float(given_stop), stop_verdict, category,
-                 json.dumps(plan)))
+                 # default=str, as set_anchor already does: a value the plan picked up from numpy or
+                 # datetime should not be able to make opening a trade fail
+                 json.dumps(plan, default=str)))
             self._conn.commit()
             return int(cur.lastrowid)
 
@@ -452,6 +454,36 @@ class Store:
             self._conn.commit()
         return cur.rowcount > 0
 
+    def rejudge_trade(self, old_id: int, *, opened_ms: int, asset: str, side: str, entry: float,
+                      stop: float, given_stop: float | None, stop_verdict: str, category: str,
+                      plan: dict) -> int:
+        """Replace a pinned trade's plan: open its successor and close it, in one transaction.
+
+        As two separate calls, a failure between them left two rows with status 'open' for one real
+        position - two pinned cards, two alert streams, and the stop alerted twice. Either both happen
+        or neither does. Returns the new trade id, and raises if the old trade was not open."""
+        with self._lock:
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                cur = self._conn.execute(
+                    "INSERT INTO trades (opened_ms, asset, side, entry, stop, given_stop, stop_verdict, "
+                    "category, plan, status) VALUES (?,?,?,?,?,?,?,?,?,'open')",
+                    (opened_ms, asset, side, float(entry), float(stop),
+                     None if given_stop is None else float(given_stop), stop_verdict, category,
+                     json.dumps(plan, default=str)))
+                new_id = int(cur.lastrowid)
+                closed = self._conn.execute(
+                    "UPDATE trades SET status='closed', closed_reason=?, closed_price=?, closed_ms=? "
+                    "WHERE id=? AND status='open'",
+                    (f"re-judged as #{new_id}", None, opened_ms, old_id))
+                if closed.rowcount == 0:
+                    raise ValueError(f"trade #{old_id} was not open, so it was not replaced")
+                self._conn.commit()
+                return new_id
+            except BaseException:
+                self._conn.rollback()
+                raise
+
     def add_trade_event(self, trade_id: int, ts_ms: int, kind: str, dedup_key: str, headline: str,
                         price: float | None) -> int | None:
         """Log something that happened to a trade, once. Returns the row id, or None if already logged.
@@ -476,7 +508,12 @@ class Store:
             where.append("notified=0")
         if where:
             sql += " WHERE " + " AND ".join(where)
-        sql += " ORDER BY ts_ms DESC LIMIT ?"
+        # Pending events oldest-first, everything else newest-first. Newest-first with a limit meant a
+        # backlog larger than the limit permanently hid the OLDEST unsent alerts - a stop among them -
+        # and oldest-first is also the order they should be delivered in. The id breaks ties, because a
+        # whole pass of events is written with the same ts_ms.
+        sql += (" ORDER BY ts_ms ASC, id ASC LIMIT ?" if unnotified_only
+                else " ORDER BY ts_ms DESC, id DESC LIMIT ?")
         args.append(limit)
         with self._lock:
             return _rows(self._conn.execute(sql, tuple(args)))

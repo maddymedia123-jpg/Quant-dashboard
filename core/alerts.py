@@ -75,6 +75,13 @@ def detect_events(trade: dict, price: float | None, progress=None, traps=(), che
             out.append(Event("checkpoint", f"checkpoint:{c.at_ms}",
                              f"{asset} {side}: {c.reason} has passed - review the position", price))
 
+    # Urgent first, then the rest, before the cap. Truncating in append order dropped the stop event
+    # whenever eight targets had already been reached - and because detection is deterministic, it was
+    # dropped on every later pass too, so that alert was never sent at all rather than merely delayed.
+    out.sort(key=lambda e: not e.urgent)
+    if len(out) > MAX_PER_PASS:
+        log.warning("trade %s has %s pending events; sending the %s most urgent this pass",
+                    trade.get("id"), len(out), MAX_PER_PASS)
     return out[:MAX_PER_PASS]
 
 

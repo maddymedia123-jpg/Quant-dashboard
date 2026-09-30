@@ -129,6 +129,29 @@ def test_a_feed_declaring_entities_is_refused():
         news.safe_xml('<!DOCTYPE rss SYSTEM "http://evil/x.dtd"><rss/>')
 
 
+def test_a_doctype_hidden_behind_prolog_padding_is_refused():
+    """The case that defeated the first version of this guard. XML permits comments in the prolog, so a
+    hostile feed pads past any scan window: measured, a 5 KB comment put the DOCTYPE at byte 5028, the
+    guard scanned only the first 4096, and the expanded entity reached a rendered headline."""
+    padding = "<!--" + ("x" * 5000) + "-->"
+    doc = ('<?xml version="1.0"?>' + padding
+           + '<!DOCTYPE rss [<!ENTITY p "PWNED">]>'
+           + "<rss><channel><item><title>&p;</title></item></channel></rss>")
+    assert doc.index("<!DOCTYPE") > 4096, "the fixture must actually sit past a 4 KB window"
+    with pytest.raises(ValueError, match="DOCTYPE or ENTITY"):
+        news.safe_xml(doc)
+    with pytest.raises(ValueError, match="DOCTYPE or ENTITY"):
+        news.parse_feed("Hostile", doc)
+
+
+def test_padding_alone_does_not_stop_a_real_feed_parsing():
+    """The guard must reject the declaration, not merely anything with a comment in it."""
+    padded_but_clean = ('<?xml version="1.0"?><!--' + ("x" * 5000) + "-->"
+                        + "<rss><channel><item><title>A real story</title>"
+                        + "<link>https://x.test/a</link></item></channel></rss>")
+    assert news.parse_feed("Fine", padded_but_clean)[0]["title"] == "A real story"
+
+
 def test_an_external_entity_cannot_read_a_local_file():
     xxe = ('<?xml version="1.0"?><!DOCTYPE t [<!ENTITY x SYSTEM "file:///etc/passwd">]>'
            '<rss><channel><item><title>&x;</title></item></channel></rss>')

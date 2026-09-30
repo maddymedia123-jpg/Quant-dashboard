@@ -16,6 +16,7 @@ from core.store import Store
 from core.trades import LONG, SHORT, Checkpoint, TimedTarget, progress
 
 NOW = 1_760_000_000_000
+HOUR = 3_600_000
 ENTRY = 80_000.0
 
 
@@ -226,3 +227,40 @@ def test_an_unreachable_channel_is_reported_rather_than_raising():
 
 def test_sending_nothing_is_not_an_error():
     assert Dispatcher({}).send([]) == ([], [])
+
+
+# ---------- what survives the per-pass cap ----------
+def test_an_urgent_warning_is_never_starved_by_a_crowd_of_reached_targets():
+    """Events are appended targets, then stop, then traps, then checkpoints, and the pass is capped at
+    eight. Truncating in append order therefore dropped a trap warning whenever eight targets had been
+    reached - and because detection is deterministic, it was dropped on every later pass too, so the
+    warning was never sent at all rather than merely delayed.
+
+    Note on scope: the stop cannot be starved this way. `hit` needs price at or above a target and
+    `stopped` needs it at or below the stop, and the stop sits below the entry which sits below the
+    targets, so the two can never both be true for one coherent position."""
+    plan_targets = [{"name": f"TP{i}", "price": 80_100.0 + i * 10} for i in range(12)]
+    objs = [TimedTarget(f"TP{i}", 80_100.0 + i * 10, "b", NOW + HOUR, 1.0) for i in range(12)]
+    p = progress(LONG, ENTRY, 79_000.0, objs, 81_000.0)      # every target reached, not stopped
+    assert len(p.hit) == 12, "the fixture really does reach all of them"
+
+    events = detect_events(trade(plan={"targets": plan_targets}), 81_000.0, p, traps=[Trap()],
+                           checkpoints=[Checkpoint("4h", NOW - 60_000, "the 4h close")], now_ms=NOW)
+    assert len(events) == alerts.MAX_PER_PASS
+    kinds = [e.kind for e in events]
+    assert "trap" in kinds, "the trap warning survives the cap"
+    assert kinds[0] == "trap", "and urgent events are sent first"
+    assert kinds.count("target") == alerts.MAX_PER_PASS - 1, "the targets fill what is left"
+
+
+def test_a_stop_is_first_in_the_pass_when_it_fires():
+    p = progress(LONG, ENTRY, 79_000.0, targets(), 78_900.0)
+    events = detect_events(trade(), 78_900.0, p,
+                           checkpoints=[Checkpoint("4h", NOW - 60_000, "the 4h close")], now_ms=NOW)
+    assert events[0].kind == "stop" and events[0].urgent
+
+
+def test_a_quiet_position_is_unaffected_by_the_ordering():
+    p = progress(LONG, ENTRY, 79_000.0, targets(), 80_650.0)
+    events = detect_events(trade(), 80_650.0, p, now_ms=NOW)
+    assert [e.dedup_key for e in events] == ["target:TP1"]
