@@ -5,6 +5,11 @@ import math
 from collections import Counter
 from dataclasses import dataclass
 
+# imported rather than recomputed: two definitions of a category's horizon would drift, which is exactly
+# what the missing DEFAULT_ATR_PCT cost earlier. core.anchors does not import this module, so no cycle.
+from core.anchors import horizon_ms_for
+from core.config import CATEGORIES
+
 DAY_MS = 86_400_000
 WEEK_MS = 7 * DAY_MS
 MIN_SAMPLE = 10
@@ -89,8 +94,19 @@ def score_reports(store, now_ms: int, price: float) -> int:
 
 
 def summary(store) -> dict:
+    # Only calls made over the horizon the category uses NOW. A direction call is a claim about a
+    # specific window, so blending one-hour calls with four-hour ones would average two different
+    # questions into a single hit rate - the same trap RUBRIC_VERSION guards for the rubric. The
+    # horizon is stored per call, so a definition change retires the old history instead of corrupting
+    # the number.
+    current = {key: horizon_ms_for(key) for key in CATEGORIES}
     by_cat: dict[str, HitRate] = {}
+    stale_horizon = 0
     for c in store.calls(limit=2000, scored_only=True):
+        want = current.get(c["category"])
+        if want is not None and c["horizon_ms"] != want:
+            stale_horizon += 1
+            continue
         h = by_cat.setdefault(c["category"], HitRate())
         h.n += 1
         h.hits += int(c["hit"] or 0)
@@ -109,5 +125,6 @@ def summary(store) -> dict:
     recent_reports = [r for r in store.reports(limit=20) if r["hit_24h"] is not None or r["hit_7d"] is not None]
     return {"by_category": by_cat, "by_classification_24h": by_cls, "by_classification_7d": by_cls_7d,
             "recent_calls": recent_calls, "recent_reports": recent_reports,
+            "stale_horizon_calls": stale_horizon,
             "total_scored": sum(h.n for h in by_cat.values()) + sum(h.n for h in by_cls.values()),
             "open_calls": len([c for c in store.calls(limit=2000) if c["scored_ms"] is None])}

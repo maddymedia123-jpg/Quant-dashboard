@@ -24,15 +24,49 @@ def test_report_hit_rules():
 
 
 def test_score_due_calls_and_summary():
+    from core.anchors import horizon_ms_for
+
+    live_h = horizon_ms_for("live")
     s = Store(":memory:")
-    s.add_call(0, "live", "BULLISH", 0.5, 100.0, 1.0, 1000)
-    s.add_call(0, "live", "BEARISH", 0.5, 100.0, 1.0, 1000)
-    s.add_call(0, "weekly", "NEUTRAL", 0.2, 100.0, 1.0, 10_000)  # not due yet
-    assert score_due_calls(s, now_ms=1000, price=101.0) == 2
+    s.add_call(0, "live", "BULLISH", 0.5, 100.0, 1.0, live_h)
+    s.add_call(0, "live", "BEARISH", 0.5, 100.0, 1.0, live_h)
+    s.add_call(0, "weekly", "NEUTRAL", 0.2, 100.0, 1.0, horizon_ms_for("weekly"))  # not due yet
+    assert score_due_calls(s, now_ms=live_h, price=101.0) == 2
     sm = summary(s)
     assert sm["by_category"]["live"].n == 2 and sm["by_category"]["live"].hits == 1
     assert sm["by_category"]["live"].small is True and sm["open_calls"] == 1
     assert HitRate(0, 0).rate is None and HitRate(4, 3).rate == 0.75
+
+
+def test_a_call_made_over_a_retired_horizon_is_not_blended_into_the_hit_rate():
+    """A direction call is a claim about a specific window. When a category's horizon changes - the Live
+    desk went from one hour to four so its chart would match its own war room - averaging the old calls
+    with the new ones would put two different questions in one number. The horizon is stored per call,
+    so the old history is retired rather than corrupted, and the count is reported."""
+    from core.anchors import horizon_ms_for
+
+    live_h = horizon_ms_for("live")
+    s = Store(":memory:")
+    s.add_call(0, "live", "BULLISH", 0.5, 100.0, 1.0, live_h)              # current horizon
+    s.add_call(0, "live", "BULLISH", 0.5, 100.0, 1.0, live_h // 4)         # a retired one
+    assert score_due_calls(s, now_ms=live_h, price=101.0) == 2
+
+    sm = summary(s)
+    assert sm["by_category"]["live"].n == 1, "only the call made over the current horizon counts"
+    assert sm["stale_horizon_calls"] == 1, "and the excluded one is reported, not hidden"
+
+
+def test_the_live_desk_horizon_matches_the_window_its_war_room_judges():
+    """The chart forecast and expected range used to cover an hour while the verdict beside them covered
+    four - the picture and the verdict answering different questions on the same tab."""
+    from core.agents.recon_profiles import PROFILES
+    from core.anchors import horizon_ms_for
+    from core.config import CATEGORIES
+
+    assert horizon_ms_for("live") == 4 * 3_600_000, "16 bars of 15m is four hours"
+    assert PROFILES["live"].window == "4h", "which is the window its summary anchors to"
+    assert PROFILES["live"].horizon == "four hours", "and the horizon its agents are asked about"
+    assert "4h" in CATEGORIES["live"].horizon_label, "and what the screen says"
 
 
 def _report(rid, cls):

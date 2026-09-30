@@ -15,7 +15,10 @@ class Category:
 
 
 CATEGORIES: dict[str, Category] = {
-    "live": Category("live", "Live Recon", "15m", "1h", 4, "next hour"),
+    # 16 bars of 15m is four hours, which is the window the Live war room judges and its summary
+    # anchors to. At 4 bars the chart forecast and expected range covered one hour while the
+    # verdict beside them covered four.
+    "live": Category("live", "Live Recon", "15m", "1h", 16, "next 4h"),
     "intraday": Category("intraday", "Intraday", "1h", "4h", 24, "next 24h"),
     "weekly": Category("weekly", "Weekly", "4h", "1d", 42, "next 7 days"),
     "monthly": Category("monthly", "Monthly", "1d", "1w", 30, "next 30 days"),
