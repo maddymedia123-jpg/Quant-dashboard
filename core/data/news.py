@@ -17,6 +17,7 @@ a loaded word in passing. That is why the tags are presented as tags on screen r
 and why the desk agents get the headline text itself rather than only my label for it."""
 from __future__ import annotations
 
+import asyncio
 import html
 import logging
 import re
@@ -82,6 +83,13 @@ def _published_ms(item: ET.Element) -> int | None:
     return None
 
 
+def _matches(text: str, words: tuple[str, ...]) -> bool:
+    """Whole words only. Matched as bare substrings, "ban " found "Mark Cuban" and "Urban Institute",
+    "ether " found "Tether", "eth " found "Elizabeth Warren", "gold" found "Goldman Sachs" and "court"
+    found "courting" - so ordinary headlines were tagged regulation/high and shown as market-moving."""
+    return any(re.search(rf"\b{re.escape(w.strip())}\b", text) for w in words)
+
+
 def classify(title: str, summary: str = "") -> tuple[str, str, list[str]]:
     """Topic, impact and the assets named, from keywords. The title carries most of the signal, so the
     summary is only consulted for the asset names - a body that mentions Bitcoin in passing should not
@@ -89,13 +97,13 @@ def classify(title: str, summary: str = "") -> tuple[str, str, list[str]]:
     low = f" {title.lower()} "
     topic, impact = "general", "low"
     for name, weight, words in TOPICS:
-        if any(w in low for w in words):
+        if _matches(low, words):
             topic, impact = name, weight
             break
     body = f"{low} {summary.lower()}"
-    assets = [code for code, words in ASSETS if any(w in low for w in words)]
+    assets = [code for code, words in ASSETS if _matches(low, words)]
     if not assets:
-        assets = [code for code, words in ASSETS if any(w in body for w in words)]
+        assets = [code for code, words in ASSETS if _matches(body, words)]
     return topic, impact, assets
 
 
@@ -224,39 +232,48 @@ def parse_aggregator(payload: dict) -> list[dict]:
     return out
 
 
+async def _one_feed(client: httpx.AsyncClient, source: str, url: str) -> list[dict]:
+    # publishers move feeds: CoinDesk 308s from the trailing-slash form, and httpx does not follow
+    # redirects unless told to, which cost one publisher entirely until a live call showed it
+    r = await client.get(url, headers=HEADERS, follow_redirects=True)
+    r.raise_for_status()
+    return parse_feed(source, r.content)
+
+
+async def _aggregator(client: httpx.AsyncClient, url: str) -> list[dict]:
+    r = await client.get(url, params={"limit": AGGREGATOR_LIMIT}, headers=HEADERS,
+                         follow_redirects=True)
+    r.raise_for_status()
+    return parse_aggregator(r.json())
+
+
+def _reason(e: BaseException) -> str:
+    """str(ReadTimeout()) is empty - the most likely failure produced a blank reason on screen."""
+    return f"{type(e).__name__}: {e}".strip(": ")
+
+
 async def fetch_news(client: httpx.AsyncClient) -> NewsSnapshot:
-    """Publisher feeds plus the aggregator, merged. Any one source being down is a degraded feed rather
-    than a missing one, so whatever failed is named and the rest still render."""
+    """Publisher feeds plus the aggregator, fetched concurrently and merged. Any one source being down is
+    a degraded feed rather than a missing one, so whatever failed is named and the rest still render.
+
+    Concurrent, not sequential: awaited one after another, this single leg could hold the page for three
+    read timeouts in a row - 36 s measured - while every other provider in fetch_context caps at one."""
+    legs = [(source, _one_feed(client, source, url)) for source, url in FEEDS]
+    legs.append((AGGREGATOR[0], _aggregator(client, AGGREGATOR[1])))
+    results = await asyncio.gather(*(coro for _, coro in legs), return_exceptions=True)
+
     collected: list[list[dict]] = []
     problems: list[str] = []
     ok_sources: list[str] = []
-
-    for source, url in FEEDS:
-        try:
-            # publishers move feeds: CoinDesk 308s from the trailing-slash form, and httpx does not
-            # follow redirects unless told to, which cost one publisher until a live call showed it
-            r = await client.get(url, headers=HEADERS, follow_redirects=True)
-            r.raise_for_status()
-            collected.append(parse_feed(source, r.content))
-            ok_sources.append(source)
-        except Exception as e:  # noqa: BLE001 - provider boundary, per feed
-            log.warning("news feed %s unavailable: %s", source, e)
-            problems.append(f"{source}: {e}")
-
-    name, url = AGGREGATOR
-    try:
-        r = await client.get(url, params={"limit": AGGREGATOR_LIMIT}, headers=HEADERS,
-                             follow_redirects=True)
-        r.raise_for_status()
-        articles = parse_aggregator(r.json())
-        if articles:
-            collected.append(articles)
+    for (name, _), outcome in zip(legs, results):
+        if isinstance(outcome, BaseException):
+            log.warning("news source %s unavailable: %s", name, outcome)
+            problems.append(f"{name}: {_reason(outcome)}")
+        elif outcome:
+            collected.append(outcome)
             ok_sources.append(name)
         else:
             problems.append(f"{name}: returned no usable articles")
-    except Exception as e:  # noqa: BLE001 - provider boundary
-        log.warning("news aggregator %s unavailable: %s", name, e)
-        problems.append(f"{name}: {e}")
 
     if not collected:
         return NewsSnapshot.unavailable(",".join([s for s, _ in FEEDS] + [AGGREGATOR[0]]),

@@ -98,5 +98,6 @@ async def fetch_predictions(client: httpx.AsyncClient) -> PredictionSnapshot:
         r.raise_for_status()
         return parse_markets(r.json())
     except Exception as e:  # noqa: BLE001 - provider boundary
+        # str(ReadTimeout()) is empty, which rendered as "No odds feed: ."
         log.error("prediction markets unavailable: %s", e)
-        return PredictionSnapshot.unavailable("voxodds", str(e))
+        return PredictionSnapshot.unavailable("voxodds", f"{type(e).__name__}: {e}".strip(": "))

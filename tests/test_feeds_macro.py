@@ -242,16 +242,17 @@ def test_a_plan_gated_symbol_is_reported_as_such():
 def test_bid_and_ask_are_optional():
     """The same endpoint returned them on one call and omitted them on the next."""
     with_quotes = metals.parse_gold({"symbols": [{"symbol": "XAU", "quote_currency": "USD",
-                                                  "price": "4148.98", "bid": "4148.93", "ask": "4149.47"}]})
+                                                  "unit": "troy_ounce", "price": "4148.98",
+                                                  "bid": "4148.93", "ask": "4149.47"}]})
     assert with_quotes.bid == 4148.93 and with_quotes.ask == 4149.47
     without = metals.parse_gold({"symbols": [{"symbol": "XAU", "quote_currency": "USD",
-                                              "price": "4148.98"}]})
+                                              "unit": "troy_ounce", "price": "4148.98"}]})
     assert without.available and without.bid is None and without.ask is None
 
 
 def test_a_stale_print_is_not_usable_even_when_priced():
     snap = metals.parse_gold({"symbols": [{"symbol": "XAU", "quote_currency": "USD", "price": "4148.98",
-                                           "is_stale": True}]})
+                                           "unit": "troy_ounce", "is_stale": True}]})
     assert snap.available and snap.xau_usd == 4148.98
     assert snap.is_stale and not snap.usable, "a stale print is not the current price"
 
@@ -262,7 +263,8 @@ def test_a_print_older_than_the_clock_allows_is_treated_as_stale():
     import datetime as dt
     stamp = dt.datetime.fromtimestamp(old / 1000, dt.timezone.utc).isoformat()
     snap = metals.parse_gold({"symbols": [{"symbol": "XAU", "quote_currency": "USD", "price": "4148.98",
-                                           "is_stale": False, "computed_at": stamp}]}, NOW)
+                                           "unit": "troy_ounce", "is_stale": False,
+                                           "computed_at": stamp}]}, NOW)
     assert snap.is_stale and not snap.usable
 
 
@@ -564,3 +566,125 @@ def test_the_aggregator_request_asks_for_the_breaking_endpoint_with_a_limit():
     _run(news.fetch_news(httpx.AsyncClient(transport=httpx.MockTransport(handler))))
     assert "/api/breaking" in seen["url"] and "/api/news" not in seen["url"]
     assert f"limit={news.AGGREGATOR_LIMIT}" in seen["url"]
+
+
+def gold_row(**over) -> dict:
+    row = {"symbol": "XAU", "quote_currency": "USD", "unit": "troy_ounce", "contract_type": "spot",
+           "price": "4148.55"}
+    row.update(over)
+    return {"symbols": [row]}
+
+
+def test_the_staleness_clock_applies_without_being_handed_the_time():
+    """This guard was dead for its whole life: no caller passed now_ms, so `and now_ms` short-circuited
+    every time and the 30-minute rule never fired. Gold does not trade at the weekend, so a Friday close
+    served on a Sunday with is_stale false is the ordinary case - and it rendered as live spot."""
+    import datetime as dt
+
+    old = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=3)
+    snap = metals.parse_gold(gold_row(is_stale=False, computed_at=old.isoformat()))
+    assert snap.available and snap.xau_usd == 4148.55
+    assert snap.is_stale, "three days old is not spot, whatever the feed says"
+    assert not snap.usable
+
+    recent = dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=2)
+    fresh = metals.parse_gold(gold_row(is_stale=False, computed_at=recent.isoformat()))
+    assert fresh.available and not fresh.is_stale and fresh.usable
+
+
+def test_a_price_in_the_wrong_unit_is_refused():
+    """The same shape of provider bug as the wrong-currency trap, which this module already guarded: a
+    gram price under an ounce label is wrong by a factor of thirty-one."""
+    for unit in ("gram", "kilogram", "10"):
+        snap = metals.parse_gold(gold_row(unit=unit, price="133.40"))
+        assert not snap.available and unit in (snap.error or "")
+        assert snap.xau_usd is None
+
+
+def test_a_missing_unit_is_never_assumed_to_be_ounces():
+    """It used to default to troy_ounce, so a response that never said "ounce" was rendered as
+    "$133.40 per troy ounce"."""
+    row = gold_row(price="133.40")
+    del row["symbols"][0]["unit"]
+    snap = metals.parse_gold(row)
+    assert not snap.available and "does not say what unit" in (snap.error or "")
+
+
+def test_a_futures_quote_is_not_presented_as_spot():
+    snap = metals.parse_gold(gold_row(contract_type="futures"))
+    assert not snap.available and "not spot" in (snap.error or "")
+    assert metals.parse_gold(gold_row(contract_type="spot")).available
+
+
+@pytest.mark.parametrize("price", ["1", "41.49", "133.40", "414.86", "250000"])
+def test_an_implausible_gold_price_is_refused(price):
+    """A garbage body carrying "price":"1" rendered "$1.00 per troy ounce" as a live gold print, and a
+    one- or two-place decimal shift would have rendered just as confidently."""
+    snap = metals.parse_gold(gold_row(price=price))
+    assert not snap.available and "plausible" in (snap.error or "")
+
+
+def test_a_real_price_is_inside_the_band():
+    assert metals.parse_gold(gold_row(price="4148.55")).available
+    assert metals.parse_gold(gold_row(price="1850.00")).available, "and the band is wide enough for history"
+
+
+def test_a_timeout_gives_a_named_reason_not_an_empty_one():
+    """str(ReadTimeout()) is empty, so the panel read "No gold feed: ." with nothing after the colon."""
+    def boom(request):
+        raise httpx.ReadTimeout("")
+
+    snap = _run(metals.fetch_gold(httpx.AsyncClient(transport=httpx.MockTransport(boom))))
+    assert not snap.available and "ReadTimeout" in (snap.error or "")
+
+    def boom2(request):
+        raise httpx.ConnectError("")
+
+    preds = _run(prediction.fetch_predictions(httpx.AsyncClient(transport=httpx.MockTransport(boom2))))
+    assert "ConnectError" in (preds.error or "")
+
+
+def test_the_news_legs_are_fetched_concurrently():
+    """Awaited one after another, this single leg could hold the page for three read timeouts in a row -
+    36 s measured - while every other provider in fetch_context caps at one."""
+    import asyncio as _asyncio
+    import time as _time
+
+    async def slow(request: httpx.Request):
+        await _asyncio.sleep(0.4)
+        if "cryptocurrency.cv" in str(request.url):
+            return httpx.Response(200, json=load("cryptocv_breaking.json"))
+        return httpx.Response(200, content=load("coindesk_rss.xml").encode())
+
+    started = _time.perf_counter()
+    snap = _run(news.fetch_news(httpx.AsyncClient(transport=httpx.MockTransport(slow))))
+    elapsed = _time.perf_counter() - started
+    assert snap.available and snap.headlines
+    assert elapsed < 1.0, f"three 0.4s legs took {elapsed:.2f}s - they are running one after another"
+
+
+@pytest.mark.parametrize("title,expected_topic", [
+    ("Mark Cuban says he still holds Bitcoin through the drawdown", "general"),
+    ("Urban Institute studies stablecoin remittances", "general"),
+    # "custody" is genuinely an adoption keyword; what mattered was that "courting" no longer
+    # matches "court", which used to make this regulation/high
+    ("Ripple courting sovereign wealth funds for XRP custody", "adoption"),
+    ("Ripple in court over its XRP sales", "regulation"),
+    ("SEC sues a major exchange over unregistered offerings", "regulation"),
+])
+def test_keywords_match_whole_words_only(title, expected_topic):
+    """As bare substrings, "ban " found "Mark Cuban" and "Urban", and "court" found "courting" - so
+    ordinary headlines were tagged regulation and shown as high impact."""
+    assert news.classify(title)[0] == expected_topic, title
+
+
+@pytest.mark.parametrize("title,expected", [
+    ("Tether mints $1B on Tron", []),
+    ("Elizabeth Warren renews her call for AML rules", []),
+    ("Goldman Sachs downgrades Coinbase stock", []),
+    ("Ethereum completes its upgrade", ["ETH"]),
+    ("Gold hits a record as Bitcoin stalls", ["BTC", "XAU"]),
+])
+def test_asset_tags_match_whole_words_only(title, expected):
+    """"ether " found "Tether", "eth " found "Elizabeth", and "gold" found "Goldman"."""
+    assert sorted(news.classify(title)[2]) == sorted(expected), title
