@@ -4,10 +4,17 @@ It goes out through st.markdown with HTML enabled, so every string from the data
 a trade plan, so a number in the wrong column is worse than a blank one. The live block is the only part a
 Refresh changes, which is the split the spec asks for.
 """
+import re
+
 import pytest
 
 from core.trades import LONG, SHORT, fmt_when, progress
 from ui import panels
+
+
+def text(h: str) -> str:
+    """The card's words with the markup removed: the design sets a figure as a label over a value."""
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", h)).strip()
 
 NOW = 1_760_000_000_000
 HOUR = 3_600_000
@@ -92,13 +99,15 @@ def test_a_first_target_nearer_than_the_stop_is_called_out():
 def test_a_corrected_stop_says_what_was_given_and_what_is_traded():
     h = panels.trade_card_html(row(given_stop=77_900.0,
                                    plan=plan(stop_verdict="would be hunted")), None, NOW)
-    assert "stop would be hunted" in h and "trading at $77,600" in h
-    assert "you gave $77,900" in h
+    assert "stop would be hunted" in h
+    t = text(h)
+    assert "Desk stop $77,600" in t, "the stop actually traded"
+    assert "Given $77,900" in t and "corrected here" in t
 
 
 def test_a_sound_stop_does_not_nag_about_the_given_one():
     h = panels.trade_card_html(row(given_stop=77_600.0, plan=plan(stop_verdict="sound")), None, NOW)
-    assert "stop sound" in h and "you gave" not in h
+    assert "stop sound" in h and "corrected here" not in h
 
 
 def test_the_pullback_guardrail_reads_as_plain_english():
@@ -128,10 +137,11 @@ def test_the_schedule_and_both_consultations_are_on_the_card():
                     "note": "no anchored verdict yet"}],
         traps=[{"trap_id": 3, "side": "bull_trap", "timeframe": "4h", "level": 78_650.0, "near": "TP1",
                 "distance": 50.0}])), None, NOW)
-    assert "Chart monitoring schedule" in h and "the 4h close" in h
-    assert "Live Recon: BULL - supports this trade" in h
-    assert "Weekly: BEAR - against this trade" in h
-    assert "Monthly: no verdict - no live verdict" in h and "no anchored verdict yet" in h
+    t = text(h)
+    assert "Monitoring schedule" in t and "the 4h close" in t
+    assert "Live Recon BULL supports this trade" in t
+    assert "Weekly BEAR against this trade" in t
+    assert "Monthly no verdict no live verdict" in t and "no anchored verdict yet" in t
     assert "anchored bull trap on the 4h sits $50 from this trade's TP1" in h
 
 
@@ -143,8 +153,9 @@ def test_no_trap_on_the_levels_is_stated_rather_than_left_blank():
 def test_the_head_and_both_domain_scores_are_shown():
     h = panels.trade_card_html(row(), None, NOW)
     assert "Head of the Active Trade desk: Take" in h and "62% confidence" in h
-    assert "The case for (78/100)" in h and "The case against (34/100)" in h
-    assert "Quant &amp; Statistics 16/20" in h
+    assert "For · 78" in h and "Against · 34" in h
+    # each domain's for and against bound to its own row
+    assert re.search(r"Quant &amp; Statistics</span>.*?16/20 · 7/20", h), "for 16, against 7"
 
 
 def test_the_estimate_is_never_presented_as_a_win_rate():
@@ -156,13 +167,24 @@ def test_the_estimate_is_never_presented_as_a_win_rate():
 def test_the_live_block_shows_pnl_in_r_and_which_targets_are_reached():
     prog = progress(LONG, 78_000.0, 77_600.0, targets_as_objects(plan()["targets"]), 78_650.0)
     h = panels.trade_card_html(row(), prog, NOW)
-    assert "Now $78,650" in h and "+0.83%" in h and "+1.62R" in h
-    assert "targets reached: TP1" in h
+    t = text(h)
+    assert "Now $78,650" in t and "PnL +0.83%" in t and "In R +1.62R" in t
+    assert "Targets reached 1 / 2 · TP1" in t
 
 
 def test_a_position_with_nothing_reached_says_none_yet():
     prog = progress(LONG, 78_000.0, 77_600.0, targets_as_objects(plan()["targets"]), 78_100.0)
-    assert "targets reached: none yet" in panels.trade_card_html(row(), prog, NOW)
+    assert "Targets reached 0 / 2 · none yet" in text(panels.trade_card_html(row(), prog, NOW))
+
+
+def test_the_ladder_places_stop_entry_and_targets_to_scale():
+    prog = progress(LONG, 78_000.0, 77_600.0, targets_as_objects(plan()["targets"]), 78_400.0)
+    h = panels.trade_card_html(row(), prog, NOW)
+    # stop 77,600 and TP2 79,200 are the ends; entry 78,000 sits a quarter of the way along
+    assert "ti-ladder-mark down top' style='left:0.0%'" in h
+    assert "style='left:25.0%'><div class='tick'></div><div class='lab'><span>Entry" in h
+    assert "style='left:100.0%'><div class='tick'></div><div class='lab'><span>TP2" in h
+    assert "ti-ladder-seg risk' style='left:0.0%;width:25.0%'" in h
 
 
 def test_a_stopped_position_says_so_in_the_live_block():

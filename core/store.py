@@ -61,7 +61,7 @@ CREATE TABLE IF NOT EXISTS traps (
     id INTEGER PRIMARY KEY AUTOINCREMENT, category TEXT NOT NULL, side TEXT NOT NULL,
     timeframe TEXT NOT NULL, level REAL NOT NULL, invalidation REAL NOT NULL, plays_out REAL NOT NULL,
     declared_ms INTEGER NOT NULL, score REAL, head_call TEXT, evidence TEXT NOT NULL, notes TEXT,
-    status TEXT NOT NULL DEFAULT 'active', resolved_ms INTEGER, resolved_price REAL);
+    status TEXT NOT NULL DEFAULT 'active', resolved_ms INTEGER, resolved_price REAL, detail TEXT);
 CREATE INDEX IF NOT EXISTS idx_traps_open ON traps (status, category, level);
 CREATE INDEX IF NOT EXISTS idx_traps_live ON traps (status, side, timeframe, level);
 CREATE TABLE IF NOT EXISTS recon_scores (
@@ -130,7 +130,7 @@ class Store:
                    "closed_price": "REAL", "given_stop": "REAL"},
         "trade_events": {"notified": "INTEGER NOT NULL DEFAULT 0", "price": "REAL"},
         "traps": {"resolved_ms": "INTEGER", "resolved_price": "REAL", "notes": "TEXT", "score": "REAL",
-                  "head_call": "TEXT"},
+                  "head_call": "TEXT", "detail": "TEXT"},
     }
 
     def _add_missing_columns(self) -> None:
@@ -366,7 +366,7 @@ class Store:
     # ---- TRAP desk: a declared trap is anchored until price settles it ----
     def put_trap(self, category: str, side: str, timeframe: str, level: float, invalidation: float,
                  plays_out: float, declared_ms: int, score: float | None, head_call: str,
-                 evidence: list[str], notes: list[str] | None = None) -> int:
+                 evidence: list[str], notes: list[str] | None = None, detail: dict | None = None) -> int:
         """Declare a trap, or return the id of the live one it repeats.
 
         A trap is a market event, not a desk's opinion of one: the same 4h raid is the same raid whether
@@ -393,10 +393,11 @@ class Store:
                     return int(existing["id"])
                 cur = self._conn.execute(
                     "INSERT INTO traps (category, side, timeframe, level, invalidation, plays_out, "
-                    "declared_ms, score, head_call, evidence, notes, status) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,'active')",
+                    "declared_ms, score, head_call, evidence, notes, status, detail) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,'active',?)",
                     (category, side, timeframe, level, invalidation, plays_out, declared_ms, score,
-                     head_call, json.dumps(evidence), json.dumps(notes or [])))
+                     head_call, json.dumps(evidence), json.dumps(notes or []),
+                     json.dumps(detail) if detail else None))
                 self._conn.commit()
                 return int(cur.lastrowid)
             except BaseException:

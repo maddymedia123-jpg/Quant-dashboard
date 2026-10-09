@@ -304,3 +304,36 @@ def test_watched_candidates_are_not_stored_as_traps(store):
                                        candidate(), LIVE))
     assert td.record(store, v, "live", 1_000) is None
     assert store.traps(category="live") == []
+
+
+def test_a_declared_trap_keeps_its_judgement_for_the_card(store):
+    """The anchored card shows the domain points, the Head's confidence and the desk's read for as long as
+    the trap stands, so they are stored with it rather than held only in the session that declared it."""
+    from ui import panels
+
+    v = asyncio.run(td.judge_candidate(judge_with(responder(noul=0.9)), {"spot": {"price": 80_900.0}},
+                                       candidate(), LIVE))
+    td.record(store, v, "live", 1_000)
+    stored = json.loads(store.traps(category="live")[0]["detail"])
+    assert [d["title"] for d in stored["domains"]] == [d.title for d in v.domains]
+    assert stored["head_confidence"] == v.head_confidence and stored["desk_reads"] == v.desk.reads
+    card = panels.trap_card_html(store.traps(category="live")[0], 2_000, "Live Recon")
+    assert f"{v.domains[0].points:.0f}/20" in card and "Desk says:" in card
+
+
+def test_an_older_ledger_gains_the_detail_column(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "old.sqlite"
+    con = sqlite3.connect(path)
+    con.execute("CREATE TABLE traps (id INTEGER PRIMARY KEY AUTOINCREMENT, category TEXT NOT NULL, "
+                "side TEXT NOT NULL, timeframe TEXT NOT NULL, level REAL NOT NULL, invalidation REAL NOT NULL, "
+                "plays_out REAL NOT NULL, declared_ms INTEGER NOT NULL, evidence TEXT NOT NULL, "
+                "status TEXT NOT NULL DEFAULT 'active')")
+    con.commit()
+    con.close()
+    s = Store(path)
+    s.put_trap(category="live", side=BULL_TRAP, timeframe="1h", level=1.0, invalidation=2.0, plays_out=0.5,
+               declared_ms=1, score=70.0, head_call="ENGINEERED_TRAP", evidence=["x"], detail={"desk_reads": "quiet"})
+    assert json.loads(s.traps()[0]["detail"]) == {"desk_reads": "quiet"}
+    s.close()

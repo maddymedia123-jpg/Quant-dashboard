@@ -3,6 +3,7 @@
 These run the real app.py through Streamlit's AppTest against the offline fixtures, so a broken panel
 or a store that cannot serve the Live Recon anchor fails here instead of on the deployed site."""
 import pathlib
+import re
 
 import time
 
@@ -31,19 +32,42 @@ def visit(at, screen):
     return at.radio(key="screen").set_value(screen).run()
 
 
-class Tour:
-    """Everything the four desks render, gathered by opening each in turn - what one run of the old tab
-    strip used to show at once."""
+PROTOCOLS = ("Volatility", "Structure", "Liquidity", "Quant matrix")
 
-    def __init__(self, at, screens=DESKS):
+
+def protocol(at, desk, name):
+    """Flip a desk's protocol switch. One reading shows at a time, so a test opens the one it means."""
+    return at.button_group(key=f"proto_{desk}").set_value(name).run()
+
+
+class Tour:
+    """Everything the four desks render, gathered by opening each in turn and flipping each desk through
+    its four protocols - what one run of the old tab strip used to show at once. Desk-wide content (the
+    war room, the accuracy report) is read once per desk, on the first protocol."""
+
+    def __init__(self, at, screens=DESKS, protocols=True):
         self.markdown, self.buttons, self.warnings, self.exceptions = [], [], [], []
         for screen in screens:
             at = visit(at, screen)
-            self.exceptions += [e.value for e in at.exception]
+            self._take(at, everything=True)
+            if protocols and screen in DESKS:
+                for name in PROTOCOLS[1:]:
+                    at = protocol(at, screen, name)
+                    self._take(at, everything=False)
+                at = protocol(at, screen, PROTOCOLS[0])
+        self.text = " ".join(self.markdown)
+
+    def _take(self, at, everything: bool):
+        self.exceptions += [e.value for e in at.exception]
+        self.warnings += [w.value for w in at.warning]
+        if everything:
             self.markdown += [m.value for m in at.markdown]
             self.buttons += [b.label for b in at.button]
-            self.warnings += [w.value for w in at.warning]
-        self.text = " ".join(self.markdown)
+        else:
+            # only the protocol body, so desk-wide panels are not counted four times
+            self.markdown += [m.value for m in at.markdown
+                              if any(k in m.value for k in ("Market structure (SMC)", "Liquidity &amp; order flow",
+                                                            "Institutional quantitative matrix"))]
 
 
 @pytest.fixture
@@ -103,10 +127,15 @@ def test_the_live_recon_ledger_is_reachable(app):
 
 
 def test_the_live_recon_tab_shows_the_smc_and_liquidity_protocols(app):
-    markdown = " ".join(m.value for m in app.markdown)
-    assert "Market structure (SMC)" in markdown and "Liquidity &amp; order flow" in markdown
+    first = " ".join(m.value for m in app.markdown)
+    assert "Volatility matrix" in first and "Market structure (SMC)" not in first, "one protocol at a time"
+    smc = " ".join(m.value for m in protocol(app, "live", "Structure").markdown)
+    assert "Market structure (SMC)" in smc
+    liq = protocol(app, "live", "Liquidity")
+    markdown = " ".join(m.value for m in liq.markdown)
+    assert "Liquidity &amp; order flow" in markdown
     assert "candle close-position proxy" in markdown, "delta must be labelled, not passed off as tape"
-    assert not any("Protocols unavailable" in w.value for w in app.warning)
+    assert not any("Protocols unavailable" in w.value for w in liq.warning)
 
 
 def test_every_category_tab_has_its_own_war_room(tour):
@@ -178,7 +207,7 @@ def test_every_tab_shows_its_sub_agent_deck(tour):
 def test_the_trap_tab_is_present_with_its_console(app):
     app = visit(app, "trap")
     assert not app.exception, [e.value for e in app.exception]
-    assert "Sweep every timeframe for traps" in [b.label for b in app.button]
+    assert "Sweep every timeframe" in [b.label for b in app.button]
     markdown = " ".join(m.value for m in app.markdown)
     assert "TRAP intelligence · watchdog" in markdown
     # wording distinct from the desks' own "Nothing anchored for the current ... candle yet", which is
@@ -215,7 +244,7 @@ def test_an_anchored_trap_warns_every_desk_that_reads_its_timeframe(tmp_path, mo
     assert not at.exception, [e.value for e in at.exception]
     markdown = Tour(at, DESKS + ("trap",)).text
     assert markdown.count("TRAP warning") == 3, "the three desks that read the 1d, and not Live"
-    assert "1d at $78,600" in markdown and "invalidated at $78,900" in markdown.lower()
+    assert "1d at $78,600" in markdown and "invalidated above $78,900" in markdown.lower()
     assert "Anchored bull trap" in markdown, "and it appears in the console too"
     assert "buyside liquidity swept and reclaimed" in markdown, "the card carries its own evidence"
     assert "sub-agents 72/100" in markdown, "and the score that declared it"
@@ -286,15 +315,16 @@ def test_a_pinned_trade_renders_its_whole_plan_and_survives_a_rerun(tmp_path, mo
     markdown = " ".join(m.value for m in at.markdown)
 
     assert "BTC/USDT from $78,000" in markdown and "score 72/100" in markdown
+    words = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", markdown))
     assert "64% confluence estimate" in markdown
-    assert "stop would be hunted" in markdown and "you gave $77,900" in markdown
+    assert "stop would be hunted" in markdown and "Given $77,900" in words
     assert "resting liquidity at 77,800" in markdown
     for cell in ("TP1", "$78,600", "1.50R", "Fibonacci time window", "the 1 sigma band on the 4h"):
         assert cell in markdown, cell
     assert "a move to $77,600 is ordinary" in markdown and "$76,200 this is no longer a pullback" in markdown
     assert "the 4h close" in markdown
-    assert "Live Recon: BULL - supports this trade" in markdown
-    assert "Weekly: BEAR - against this trade" in markdown
+    assert "Live Recon BULL supports this trade" in words
+    assert "Weekly BEAR against this trade" in words
     assert "anchored bull trap on the 4h sits $50" in markdown
     assert "Head of the Active Trade desk: Wait" in markdown
     assert "not a backtested win rate" in markdown, "the estimate is not presented as a win rate"
@@ -318,7 +348,14 @@ def test_killing_a_trade_unpins_it(tmp_path, monkeypatch):
     assert "BTC/USDT from $78,000" in " ".join(m.value for m in at.markdown)
 
     kill = next(b for b in at.button if b.key == f"tr_kill_{tid}")
-    after = kill.click().run()
+    asked = kill.click().run()
+    assert "Kill this trade?" in " ".join(m.value for m in asked.markdown), "it asks first"
+    from core.store import Store as _S
+    _peek = _S()
+    assert _peek.trade(tid)["status"] == "open", "nothing is killed until it is confirmed"
+    _peek.close()
+    confirm = next(b for b in asked.button if b.key == f"tr_kill_confirm_{tid}")
+    after = confirm.click().run()
     assert not after.exception, [e.value for e in after.exception]
     markdown = " ".join(m.value for m in after.markdown)
     captions = " ".join(c.value for c in after.caption)
@@ -372,3 +409,18 @@ def test_clearing_the_strip_keeps_the_open_screen():
     assert pick_from_strip("weekly", None) == ("weekly", "weekly")
     assert pick_from_strip("weekly", "") == ("weekly", "weekly")
     assert pick_from_strip("weekly", "macro") == ("macro", "macro")
+
+
+def test_a_desk_warning_opens_the_trap_desk(tmp_path, monkeypatch):
+    store = _fresh_store(tmp_path, monkeypatch)
+    store.put_trap(category="weekly", side="bull_trap", timeframe="1d", level=78_600.0, invalidation=78_900.0,
+                   plays_out=78_000.0, declared_ms=1, score=72.0, head_call="ENGINEERED_TRAP",
+                   evidence=["swept"], notes=[])
+    store.close()
+    at = visit(pytest.importorskip("streamlit.testing.v1").AppTest.from_file(APP, default_timeout=180).run(),
+               "intraday")
+    jump = next(b for b in at.button if b.key == "open_trap_intraday")
+    at = jump.click().run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert at.radio(key="screen").value == "trap" and at.button_group(key="screen_nav").value == "trap"
+    assert "05 · Engine" in " ".join(m.value for m in at.markdown)

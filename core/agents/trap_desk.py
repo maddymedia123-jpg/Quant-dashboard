@@ -196,7 +196,12 @@ def record(store, verdict: TrapVerdict, category: str, now_ms: int) -> int | Non
     return store.put_trap(category=category, side=c.side, timeframe=c.timeframe, level=c.level,
                           invalidation=c.invalidation, plays_out=c.plays_out, declared_ms=now_ms,
                           score=verdict.score, head_call=verdict.head_call or "",
-                          evidence=list(c.evidence), notes=list(verdict.notes))
+                          evidence=list(c.evidence), notes=list(verdict.notes),
+                          detail={"domains": [{"title": d.title, "points": round(d.points, 2)}
+                                              for d in verdict.domains],
+                                  "head_confidence": verdict.head_confidence,
+                                  "desk_reads": verdict.desk.reads,
+                                  "desk_reasons": list(verdict.desk.reasons)})
 
 
 def settle(store, price: float, now_ms: int) -> list[dict]:

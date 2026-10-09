@@ -86,7 +86,7 @@ def test_an_undated_headline_says_undated_rather_than_now():
 def test_the_headline_limit_is_honoured():
     many = [headline(title=f"Story number {i}", url=f"https://x.test/{i}") for i in range(40)]
     h = panels.news_html(news(many), NOW, limit=5)
-    assert h.count("<tr><td") == 5, "the header row is a <tr> too"
+    assert h.count("class='ti-news'") == 5
     assert "40 headlines" in h, "the count is of everything received, not of what is shown"
 
 
@@ -237,3 +237,11 @@ def test_the_panels_survive_missing_fields():
     assert panels.news_html(news([{"title": "Only a title"}]), NOW)
     assert panels.predictions_html(preds([{"question": "Only a question"}]), NOW)
     assert panels.gold_html(MetalsSnapshot(source="s"), NOW)
+
+
+def test_the_topic_filter_narrows_the_list_but_not_the_count():
+    rows = [headline(title="ETF story", topic="etf"), headline(title="Macro story", topic="macro")]
+    h = panels.news_html(news(rows), NOW, topic="macro")
+    assert "Macro story" in h and "ETF story" not in h
+    assert "2 headlines" in h and "showing macro" in h, "the count is still of everything received"
+    assert panels.news_topics(news(rows + [headline(topic="macro")])) == ["macro", "etf"], "most common first"

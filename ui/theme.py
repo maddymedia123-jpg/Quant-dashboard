@@ -215,6 +215,115 @@ section[data-testid="stSidebar"] * {{ color: {p['text']}; }}
 .ti-pair > div {{ padding: 8px 0; }} .ti-pair > div + div {{ padding-left: 14px; border-left: 1px solid {p['border']}; }}
 .ti-pair .ti-label {{ margin: 0; }}
 .ti-pair-v {{ font-family: {_HEADING}; font-weight: 600; font-size: 1.5rem; }} .ti-pair-v.down {{ color: {p['down']}; }}
+/* design primitives: dash lists, labelled figures, bars, sections */
+.ti-dash {{ margin: 2px 0 !important; padding-left: 14px; text-indent: -14px; }}
+.ti-kv {{ display: flex; flex-direction: column; gap: 1px; padding: 8px 0; min-width: 0; }}
+.ti-kv .ti-label {{ margin: 0; }}
+.ti-kv-v {{ font-family: {_HEADING}; font-weight: 600; font-size: 1.2rem; line-height: 1.2; }}
+.ti-kv-v.big {{ font-size: 1.9rem; }} .ti-kv-v.up {{ color: {p['up']}; }} .ti-kv-v.down {{ color: {p['down']}; }}
+.ti-grid2, .ti-grid3, .ti-grid4 {{ display: grid; gap: 0 14px; border-top: 1px solid {p['border']}; margin: 6px 0; }}
+.ti-grid2 {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }} .ti-grid3 {{ grid-template-columns: repeat(3, minmax(0, 1fr)); }}
+.ti-grid4 {{ grid-template-columns: repeat(4, minmax(0, 1fr)); }}
+.ti-h2 {{ font-family: {_HEADING}; font-weight: 600; font-size: 2rem; line-height: 1.05; text-transform: uppercase; letter-spacing: 0.01em; margin: 4px 0 14px 0; padding: 0; }}
+.ti-h3 {{ font-family: {_HEADING}; font-weight: 600; font-size: 1.35rem; line-height: 1.15; text-transform: uppercase; letter-spacing: 0.03em; margin: 2px 0 6px 0; }}
+.ti-h3.up {{ color: {p['up']}; }} .ti-h3.down {{ color: {p['down']}; }}
+.ti-tags {{ display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 6px 0; }} .ti-tags .ti-chip {{ margin: 0; }}
+.ti-chip.accent {{ background: {p['accent_soft']}; border-color: transparent; color: {p['accent_ink']}; }}
+.ti-chip.outline {{ border-color: {p['accent']}; color: {p['accent']}; }}
+.ti-rows {{ display: flex; flex-direction: column; border-top: 1px solid {p['border']}; margin: 6px 0; }}
+.ti-rows > * {{ padding: 6px 0; border-bottom: 1px solid {p['grid']}; }}
+.ti-row3 {{ display: grid; grid-template-columns: 34px 1fr auto; gap: 8px; font-size: 0.86rem; }}
+.ti-split {{ display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }}
+.ti-foot {{ border-top: 1px solid {p['border']}; margin-top: 10px; }}
+.ti-note {{ font-size: 0.8rem; margin-top: 8px !important; }}
+.ti-section {{ display: flex; align-items: center; gap: 14px; margin: 34px 0 4px 0; }}
+.ti-rule {{ flex: 1; height: 1px; background: {p['border']}; }}
+.ti-head-summary {{ display: flex; flex-direction: column; gap: 8px; max-width: 900px; margin: 30px 0 10px 0; }}
+.ti-head-summary p {{ font-size: 1.06rem; line-height: 1.65; margin: 0; }}
+.ti-head-summary .muted {{ color: {p['muted']}; font-size: 0.8rem; }}
+.ti-bar.faint > div {{ background: {p['fib']}; }} .ti-bar.warn > div {{ background: {p['warn']}; }}
+.ti-bar.tick60 {{ position: relative; height: 8px; }}
+.ti-bar.tick60::after {{ content: ""; position: absolute; left: 60%; top: -3px; bottom: -3px; width: 1px; background: {p['text']}; }}
+.ti-mx-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); gap: 22px; margin: 10px 0; }}
+.ti-mx {{ padding: 14px 16px; display: flex; flex-direction: column; gap: 4px; font-size: 0.86rem; }}
+.ti-mx-row {{ border-bottom: 1px solid {p['grid']}; padding: 4px 0; }}
+/* TRAP */
+.ti-band {{ background: {p['accent_night']}; color: {p['bg']}; padding: 16px 20px; display: flex; flex-wrap: wrap; gap: 12px 28px; align-items: center; margin: 4px 0 18px 0; }}
+.ti-band * {{ color: {p['bg']} !important; }}
+.ti-band-title {{ font-family: {_HEADING}; font-weight: 600; font-size: 1.15rem; text-transform: uppercase; letter-spacing: 0.06em; }}
+.ti-band-lines {{ flex: 1 1 360px; }} .ti-band-lines p {{ margin: 2px 0; font-size: 0.9rem; }}
+.ti-band-lines strong {{ text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; }}
+.ti-band-note {{ opacity: 0.75; font-size: 0.8rem !important; }}
+.ti-counts {{ display: flex; flex-wrap: wrap; gap: 10px 40px; margin: 10px 0; }}
+.ti-count {{ display: flex; flex-direction: column; }} .ti-count .ti-label {{ margin: 0; }}
+.ti-count .n {{ font-family: {_HEADING}; font-weight: 600; font-size: 2.6rem; line-height: 1; }}
+.ti-range {{ margin: 8px 0; }} .ti-kv.right {{ text-align: right; }}
+.ti-track {{ position: relative; height: 4px; background: {p['grid']}; margin: 4px 0 6px 0; }}
+.ti-track-now {{ position: absolute; top: -5px; width: 2px; height: 14px; background: {p['text']}; }}
+.ti-mini-doms {{ display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin: 10px 0; font-size: 0.75rem; }}
+.ti-mini-doms > div {{ display: flex; flex-direction: column; gap: 2px; min-width: 0; }}
+.ti-mini-doms .muted {{ white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+.ti-mini-doms .ti-bar {{ margin: 0; }}
+.ti-watch {{ display: grid; grid-template-columns: 80px 44px 90px 1fr; gap: 10px; font-size: 0.86rem; align-items: baseline; }}
+/* active trade */
+.ti-trade-head {{ display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: baseline; margin-bottom: 8px; }}
+.ti-trade-head .ti-chip {{ margin: 0; }} .ti-trade-head .ti-h3 {{ margin: 0; }}
+.ti-ladder {{ position: relative; height: 92px; margin: 14px 8px 18px 8px; }}
+.ti-ladder-track {{ position: absolute; left: 0; right: 0; top: 45px; height: 2px; background: {p['border']}; }}
+.ti-ladder-seg {{ position: absolute; top: 42px; height: 8px; }}
+.ti-ladder-seg.risk {{ background: color-mix(in srgb, {p['down']} 22%, transparent); }}
+.ti-ladder-seg.reward {{ background: color-mix(in srgb, {p['up']} 22%, transparent); }}
+.ti-ladder-mark {{ position: absolute; top: 0; bottom: 0; width: 0; }}
+.ti-ladder-mark .tick {{ position: absolute; top: 38px; left: -1px; width: 2px; height: 16px; background: {p['text']}; }}
+.ti-ladder-mark.down .tick {{ background: {p['down']}; }} .ti-ladder-mark.up .tick {{ background: {p['up']}; }}
+.ti-ladder-mark.now .tick {{ background: {p['accent']}; height: 22px; top: 35px; }} .ti-ladder-mark.muted .tick {{ background: {p['muted']}; }}
+.ti-ladder-mark .lab {{ position: absolute; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; font-size: 0.75rem; line-height: 1.15; white-space: nowrap; }}
+.ti-ladder-mark .lab span:first-child {{ font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: {p['muted']}; }}
+.ti-ladder-mark.top .lab {{ top: 0; }} .ti-ladder-mark.bottom .lab {{ top: 60px; }}
+.ti-two {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 18px 30px; margin: 10px 0; }}
+.ti-three {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); gap: 18px 30px; margin: 14px 0 6px 0; border-top: 1px solid {p['border']}; padding-top: 6px; }}
+.ti-verdict {{ font-family: {_HEADING}; font-weight: 600; font-size: 2.3rem; line-height: 1; text-transform: uppercase; margin: 4px 0; }}
+.ti-fa {{ font-size: 0.82rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; margin: 8px 0 4px 0; }}
+.ti-fa .up, .ti-row-rule .up {{ color: {p['up']}; }} .ti-fa .down, .ti-row-rule .down {{ color: {p['down']}; }}
+.ti-row-rule .muted {{ color: {p['muted']}; }}
+.ti-twin {{ display: grid; grid-template-columns: minmax(0, 1.4fr) 1fr auto; gap: 10px; align-items: center; font-size: 0.8rem; margin: 4px 0; }}
+.ti-twin-bars {{ display: flex; flex-direction: column; gap: 2px; }}
+.ti-twin-bars > div {{ height: 3px; background: {p['grid']}; }} .ti-twin-bars .f > div {{ height: 100%; background: {p['up']}; }}
+.ti-twin-bars .a > div {{ height: 100%; background: {p['down']}; }}
+.ti-targets {{ width: 100%; margin: 10px 0 !important; }}
+.ti-handshake {{ border-left: 3px solid {p['warn']}; padding: 4px 0 4px 12px; margin: 10px 0; }}
+.ti-row-rule {{ border-bottom: 1px solid {p['grid']}; padding: 6px 0; font-size: 0.86rem; }}
+.ti-chan {{ grid-template-columns: 8px 110px 1fr; font-size: 0.86rem; }}
+/* director */
+.ti-chip.neutral-fill {{ background: {p['surface']}; border-color: transparent; color: {p['text']}; }}
+.ti-scen {{ margin: 8px 0; }} .ti-scen p {{ font-size: 0.8rem; margin: 0 !important; }} .ti-scen .ti-bar {{ margin: 3px 0; }}
+.ti-desk-sum {{ border-top: 1px solid {p['border']}; padding-top: 8px; }}
+.ti-brief {{ border-top: 1px solid {p['grid']}; padding: 10px 0; }} .ti-brief .ti-bar {{ margin: 4px 0; }}
+.ti-agents {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 4px 14px; font-size: 0.8rem; }}
+.ti-agents > div {{ display: flex; justify-content: space-between; gap: 6px; border-bottom: 1px solid {p['grid']}; padding: 2px 0; }}
+/* macro and news */
+.ti-big {{ font-family: {_HEADING}; font-weight: 600; font-size: 2.6rem; line-height: 1; margin: 4px 0; }}
+.ti-news {{ display: grid; grid-template-columns: 64px 1fr; gap: 12px; font-size: 0.9rem; }}
+.ti-news-title {{ font-weight: 500; }} .ti-news-title a {{ color: {p['text']}; text-decoration: none; }}
+.ti-news-title a:hover {{ color: {p['accent_deep']}; text-decoration: underline; }}
+.ti-news .ti-tags {{ margin: 4px 0 0 0; align-items: center; font-size: 0.78rem; }}
+.ti-odds {{ display: grid; grid-template-columns: minmax(0, 2.2fr) minmax(120px, 1fr) minmax(90px, 0.8fr); gap: 14px; align-items: center; font-size: 0.88rem; }}
+.ti-odds-p {{ display: grid; grid-template-columns: 1fr 52px; gap: 8px; align-items: center; }} .ti-odds-p .ti-bar {{ margin: 0; }}
+.ti-cal {{ display: flex; flex-direction: column; gap: 1px; font-size: 0.88rem; }} .ti-cal .ti-chip {{ margin: 0; }}
+@media (max-width: 768px) {{ .ti-odds {{ grid-template-columns: 1fr; gap: 4px; }} }}
+/* war room */
+.ti-card-meta {{ position: absolute; top: 16px; right: 18px; font-size: 0.78rem; color: {p['muted']}; }}
+.ti-team-pts {{ font-family: {_HEADING}; font-weight: 600; font-size: 3rem; line-height: 1; margin: 6px 0; }}
+.ti-team-pts span {{ font-size: 1rem; color: {p['muted']}; }} .ti-team-pts.up {{ color: {p['up']}; }} .ti-team-pts.down {{ color: {p['down']}; }}
+.ti-dom {{ margin: 6px 0; font-size: 0.86rem; }} .ti-dom .ti-bar {{ margin: 3px 0 0 0; }}
+.ti-prob {{ display: grid; grid-template-columns: 110px 1fr 44px; gap: 10px; align-items: center; font-size: 0.88rem; margin: 6px 0; }}
+.ti-prob .ti-bar {{ margin: 0; }} .ti-prob .v {{ text-align: right; }}
+.ti-sum {{ display: flex; flex-wrap: wrap; gap: 16px 40px; align-items: center; margin: 8px 0; }}
+.ti-sum > div:first-child {{ flex: 1 1 300px; }}
+.ti-teams {{ flex: 1 1 320px; display: flex; flex-direction: column; gap: 8px; font-size: 0.86rem; }}
+.ti-team-row {{ display: grid; grid-template-columns: 130px 1fr; gap: 10px; align-items: center; }} .ti-team-row .ti-bar {{ margin: 0; }}
+.ti-tag-solid {{ background: {p['accent_night']}; color: {p['bg']}; font-size: 0.75rem; padding: 2px 9px; letter-spacing: 0.04em; }}
+.ti-note-item {{ border-top: 1px solid {p['grid']}; padding: 8px 0; }} .ti-note-item:first-of-type {{ border-top: 0; padding-top: 0; }}
 /* feeds: square marks, filled when the feed answered, hollow when it did not */
 .ti-feeds {{ display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }}
 .ti-feed {{ display: grid; grid-template-columns: 8px 82px 1fr; gap: 8px; align-items: center; font-size: 0.78rem; line-height: 1.2; }}
@@ -233,12 +342,18 @@ section[data-testid="stSidebar"] [data-testid="stRadio"] label[data-testid="stRa
 section[data-testid="stSidebar"] [data-testid="stRadio"] label[data-testid="stRadioOption"]:nth-of-type(5) {{ margin-top: 34px; }}
 section[data-testid="stSidebar"] [data-testid="stRadio"] label[data-testid="stRadioOption"]:nth-of-type(5)::before {{ content: "Engines"; position: absolute; left: 10px; top: -26px; {label} color: {p['accent_deep']}; }}
 section[data-testid="stSidebar"] [data-testid="stRadio"] > label p {{ {label} color: {p['accent_deep']}; }}
+/* segmented switches: square, the open option filled steel */
+[data-testid="stButtonGroup"] button {{ border-radius: 0 !important; font-family: {_BODY}; }}
+[data-testid="stButtonGroup"] button[aria-checked="true"] {{ background: {p['accent']} !important; border-color: {p['accent']} !important; color: {p['bg']} !important; }}
+[data-testid="stButtonGroup"] button[aria-checked="true"] p {{ color: {p['bg']} !important; }}
 /* the phone screen strip: hidden where the rail is visible */
-@media (min-width: 769px) {{ .st-key-ti_mobile_nav {{ display: none; }} }}
+@media (min-width: 769px) {{ .st-key-ti_mobile_nav, .st-key-ti_mobile_foot {{ display: none; }} }}
+.st-key-ti_mobile_foot {{ border-top: 1px solid {p['border']}; margin-top: 40px; padding-top: 16px; }}
 .st-key-ti_mobile_nav [data-testid="stButtonGroup"] {{ flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; border-top: 1px solid {p['border']}; border-bottom: 1px solid {p['border']}; }}
 .st-key-ti_mobile_nav button {{ border-radius: 0 !important; border: 0 !important; border-bottom: 2px solid transparent !important; background: transparent !important; min-height: 44px; white-space: nowrap; }}
 .st-key-ti_mobile_nav button p {{ font-family: {_HEADING}; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }}
-.st-key-ti_mobile_nav button[aria-checked="true"] {{ border-bottom-color: {p['accent']} !important; color: {p['text']} !important; }}
+.st-key-ti_mobile_nav button[aria-checked="true"] {{ border-bottom-color: {p['accent']} !important; color: {p['text']} !important; background: transparent !important; }}
+.st-key-ti_mobile_nav button[aria-checked="true"] p {{ color: {p['text']} !important; }}
 @media (max-width: 768px) {{
   .block-container {{ padding-left: 1rem; padding-right: 1rem; }}
   .ti-kpis {{ grid-template-columns: repeat(2, 1fr); }}

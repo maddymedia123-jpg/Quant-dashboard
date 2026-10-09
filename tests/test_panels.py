@@ -1,3 +1,4 @@
+import re
 import html
 import json
 import pathlib
@@ -43,7 +44,7 @@ def test_panels_render_strings_and_squeeze_banner():
     assert "ti-card" in panels.direction_html(a)
     lay = panels.layman_html(a)
     assert "BTC trades at" in lay and "2σ band" in lay and "flips if" in lay
-    assert "2σ band (20-bar)" in panels.volatility_html(a)
+    assert "2σ band, 20-bar" in panels.volatility_html(a)
     assert "RSI" in panels.divergence_html(a)
     assert a.vol.horizon_label in panels.volatility_html(a)
     assert "Run Analysis" in panels.agent_placeholder_html(a)
@@ -80,7 +81,7 @@ def test_agent_summary_and_report_stats():
                    runs=[AgentRun(agent_id="B1", ok=True, model="m", latency_s=1, prompt_tokens=10, completion_tokens=5),
                          AgentRun(agent_id="B2", ok=False, model="m", latency_s=1, error="x")])
     h = panels.agent_summary_html(a, r)
-    assert "Live paragraph &lt;b&gt;" in h and "BULL TRAP" in h and "ti-card down" in h
+    assert "Live paragraph &lt;b&gt;" in h and "Director verdict: bull trap" in h and "Head-agent summary" in h
     st = panels.report_stats_html(r)
     assert "agents 1/2 ok" in st and "tokens 15" in st and "failed: B2" in st and "free tier" in st
 
@@ -142,10 +143,13 @@ def test_fib_and_pattern_cards_render_and_escape():
     assert "Fibonacci time" in h and "Anchors:" in h and "Retracement of the" in h
     a.reversal = ReversalWindow("ACTIVE", "bearish", 5, a.fib.upcoming[0].timestamp_ms, 0, 2, ["at resistance 78,600 (4 touches)"])
     h = panels.fib_html(a)
-    assert "Reversal window open" in h and "bearish" in h and "ti-card warn" in h
+    assert "Window open" in h and "Reversal window open" in h and "bearish" in h and "ti-card warn" in h
     a.patterns = [Pattern("<b>Double top</b>", "bearish", "forming", 0.8, 77000.0, 75000.0, 79000.0, [], 0, note="second top being tested now")]
     p = panels.patterns_html(a)
-    assert "&lt;b&gt;Double top" in p and "breakout $77,000" in p and "target $75,000" in p and "invalidation $79,000" in p
+    assert "&lt;b&gt;Double top" in p
+    # each level bound to its own label, so a swapped target and invalidation cannot pass
+    for label, value in (("Breakout", "$77,000"), ("Target", "$75,000"), ("Invalidation", "$79,000")):
+        assert f"<span class='ti-label'>{label}</span><span class='ti-kv-v '>{value}</span>" in p, label
     lay = panels.layman_html(a)
     assert "Pattern:" in lay and "reversal window is open" in lay
     a.patterns = []
@@ -174,7 +178,7 @@ def _recon(bull_p=0.8, bear_p=0.3, trap=None):
 def test_team_scorecard_shows_five_domain_agents_and_their_points():
     res = _recon()
     h = panels.team_html(res.bull)
-    assert "80 / 100" in h and "high confluence" in h and "typesafe" in h and "1.4s" in h
+    assert "80<span> / 100</span>" in h and "high confluence" in h and "typesafe" in h and "1.4s" in h
     for n, title in ((1, "Quant &amp; Statistics"), (2, "Auction Market &amp; Volume Profile"),
                      (3, "Order Flow &amp; Delta"), (4, "ICT &amp; Liquidity"),
                      (5, "On-Chain &amp; Derivatives")):
@@ -192,16 +196,22 @@ def test_a_failed_team_says_it_failed_rather_than_showing_zero():
     assert "0 / 100" not in h
 
 
+def _prob(h: str, label: str) -> str | None:
+    """The percentage printed on the same row as a trap label."""
+    m = re.search(rf"<span class='l'>{re.escape(label)}</span>.*?<span class='v'>([^<]*)</span>", h)
+    return m.group(1) if m else None
+
+
 def test_war_room_panel_shows_the_trap_distribution_and_any_override():
     h = panels.war_room_html(_recon())
     # each number bound to its own row: asserting the labels and the percentages separately passed
     # just as happily with the distribution rendered backwards
-    assert "<td>bull trap</td><td>70%</td>" in h, "70% belongs to the bull trap, not merely present"
-    assert "<td>no trap</td><td>30%</td>" in h
-    assert h.index("<td>bull trap</td>") < h.index("<td>no trap</td>"), "most likely first"
+    assert _prob(h, "bull trap") == "70%", "70% belongs to the bull trap, not merely present"
+    assert _prob(h, "no trap") == "30%"
+    assert h.index("<span class='l'>bull trap<") < h.index("<span class='l'>no trap<"), "most likely first"
     assert "ti-card warn" in h
     assert "override" in h and "overrides the long bias" in h
-    assert "not required" in h  # a 50-point margin needs no consult
+    assert "Not required" in h  # a 50-point margin needs no consult
 
 
 def test_the_war_room_distribution_cannot_render_backwards():
@@ -209,9 +219,9 @@ def test_the_war_room_distribution_cannot_render_backwards():
 
     inverted = panels.war_room_html(_recon(trap=ChoiceResult(
         choice="NO_TRAP", probabilities={"BULL_TRAP": 0.3, "NO_TRAP": 0.7}, provider="typesafe")))
-    assert "<td>no trap</td><td>70%</td>" in inverted
-    assert "<td>bull trap</td><td>30%</td>" in inverted
-    assert inverted.index("<td>no trap</td>") < inverted.index("<td>bull trap</td>")
+    assert _prob(inverted, "no trap") == "70%"
+    assert _prob(inverted, "bull trap") == "30%"
+    assert inverted.index("<span class='l'>no trap<") < inverted.index("<span class='l'>bull trap<")
 
     from core.agents.judge import ChoiceResult
     silent = panels.war_room_html(_recon(trap=ChoiceResult(error="timeout")))
@@ -237,7 +247,7 @@ def test_side_note_panel_lists_appended_notes_and_says_when_there_are_none():
     rows = [{"kind": "BIAS_FLIP", "headline": "Bias has changed from BULL to BEAR since the anchored summary.",
              "detail": "Bullish team 20/100, bearish team 90/100.", "price": 76_500.0}]
     h = panels.side_notes_html(rows)
-    assert "Interim side notes (1)" in h and "bias flip" in h and "changed from BULL to BEAR" in h
+    assert "Interim side notes · 1" in h and "bias flip" in h and "changed from BULL to BEAR" in h
     assert "$76,500" in h and "bearish team 90/100" in h
 
 
@@ -349,3 +359,73 @@ def test_a_missing_number_renders_as_a_dash_not_as_a_dash_with_a_unit():
                       "bands": {}, "note": ""}}
     h = panels.vol_matrix_html(partial)
     assert "—%" not in h, "a dash carrying a percent sign reads as a measured zero"
+
+
+# ---------- Director report screen ----------
+def _report(**over):
+    from datetime import datetime, timezone
+
+    from core.agents.schemas import Contradiction, DirectorReport, Scenario, TradePlan, TrapReport
+    d = DirectorReport(
+        executive_summary="Value holds <b>between</b> the edges.", trap_classification="RANGE_TRAP",
+        classification_rationale="Neither desk sees acceptance.",
+        contradictions=[Contradiction(metric="funding", bull_read="shorts pay", bear_read="crowded",
+                                      stronger_evidence="bear")],
+        convergence=["value between 111,420 and 112,900"], blind_spots=[],
+        scenarios=[Scenario(name="Upside break", probability=30, path="p1", invalidation="i1"),
+                   Scenario(name="Range holds", probability=45, path="p2", invalidation="i2"),
+                   Scenario(name="Downside sweep", probability=25, path="p3", invalidation="i3")],
+        trade_plan=TradePlan(existing_position_management="hold", new_entry_conditions="No longs into 113,420.",
+                             position_sizing="half", stop_loss="113,980", max_leverage="3x",
+                             take_profit_ladder=["112,150"]),
+        category_summaries={"live": "Live paragraph", "weekly": "Weekly paragraph"}, **over)
+    return TrapReport(report_id="TIR-9", generated_at=datetime.now(timezone.utc), window="w", provider="p",
+                      director=d)
+
+
+def test_the_director_card_leads_with_the_classification_and_orders_the_scenarios():
+    h = panels.director_html(_report())
+    assert "Range trap" in h and "Value holds &lt;b&gt;between" in h and "Report TIR-9" in h
+    assert h.index("Range holds") < h.index("Upside break") < h.index("Downside sweep"), "most likely first"
+    assert "width:45%" in h, "the bar is drawn to the probability"
+    assert "No longs into 113,420." in h and "113,980" in h and "3x" in h and "112,150" in h
+
+
+def test_the_lists_say_none_rather_than_leaving_a_blank_column():
+    h = panels.director_lists_html(_report())
+    assert "funding: the bulls read shorts pay; the bears read crowded. Stronger: bear" in h
+    assert "value between 111,420 and 112,900" in h
+    assert "Blind spots" in h and "None reported." in h
+
+
+def test_each_desk_paragraph_is_labelled_with_its_desk_and_timeframe():
+    h = panels.director_desks_html(_report(), {"live": "Live Recon", "weekly": "Weekly"}, {"live": "15m", "weekly": "4h"})
+    assert "Live Recon <span class='muted'>15m</span>" in h and "Weekly paragraph" in h
+
+
+def test_a_report_without_a_director_says_so():
+    from datetime import datetime, timezone
+
+    from core.agents.schemas import TrapReport
+    r = TrapReport(report_id="TIR-0", generated_at=datetime.now(timezone.utc), window="w", provider="p")
+    assert "did not answer" in panels.director_html(r) and panels.director_lists_html(r) == ""
+
+
+def test_the_raw_metric_table_and_the_audit_escape_their_strings():
+    h = panels.raw_metrics_html([("Spot <b>", "$1", "kraken <i>")])
+    assert "Spot &lt;b&gt;" in h and "kraken &lt;i&gt;" in h and "<b>" not in h and "<i>" not in h
+    a = panels.anchor_audit_html([{"ts_ms": 0, "category": "<x>", "from_dir": None, "to_dir": "BULLISH",
+                                   "price": 1.0, "triggers": ["<y>"]}])
+    assert "&lt;x&gt;" in a and "&lt;y&gt;" in a and "— → <strong>BULLISH" in a
+    assert "No anchor changes" in panels.anchor_audit_html([])
+
+
+def test_the_pinned_teams_are_rebuilt_from_the_anchor_on_their_own_side():
+    from core import live_anchor
+
+    payload = live_anchor.anchor_payload(_recon(bull_p=0.8, bear_p=0.3), price=78_000.0)
+    bull, bear = panels.payload_team_html("bullish", payload), panels.payload_team_html("bearish", payload)
+    assert "80<span> / 100</span>" in bull and "16.0 / 20" in bull and "ti-card up" in bull
+    assert "30<span> / 100</span>" in bear and "6.0 / 20" in bear and "ti-card down" in bear
+    assert "1. Quant &amp; Statistics" in bull and "5. On-Chain &amp; Derivatives" in bear
+    assert "did not score" in panels.payload_team_html("bearish", {**payload, "domains": {"bullish": {}}})

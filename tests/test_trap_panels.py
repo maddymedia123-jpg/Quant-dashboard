@@ -5,9 +5,17 @@ enabled, so every string from the database has to be escaped; and they are a saf
 that renders the wrong number, loses its evidence, or quietly says "nothing anchored" while traps are
 live is worse than no card at all.
 """
+import re
+
 import pytest
 
 from ui import panels
+
+
+def text(h: str) -> str:
+    """What the reader sees: the card's words with the markup removed. The design sets a figure as a
+    label over a value, so "Invalidated above" and "$78,900" are separate elements in the HTML."""
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", h)).strip()
 
 NOW = 1_760_000_000_000
 HOUR = 3_600_000
@@ -34,10 +42,10 @@ class Candidate:
 
 # ---------- the card ----------
 def test_the_card_names_the_trap_its_level_and_what_settles_it():
-    h = panels.trap_card_html(row(), NOW, "Weekly")
+    h = text(panels.trap_card_html(row(), NOW, "Weekly"))
     assert "bull trap" in h and "1d at $78,600" in h
     assert "Invalidated above $78,900" in h, "a bull trap dies above the raid"
-    assert "pays off back at $78,000" in h
+    assert "Pays off back at $78,000" in h
     assert "declared 3h 00m ago" in h
     assert "sub-agents 72/100" in h
     assert "Weekly desk" in h
@@ -46,17 +54,17 @@ def test_the_card_names_the_trap_its_level_and_what_settles_it():
 
 
 def test_a_bear_trap_dies_below_the_raid():
-    h = panels.trap_card_html(row(side="bear_trap", level=78_000.0, invalidation=77_700.0,
-                                  plays_out=78_600.0), NOW)
+    h = text(panels.trap_card_html(row(side="bear_trap", level=78_000.0, invalidation=77_700.0,
+                                       plays_out=78_600.0), NOW))
     assert "bear trap" in h and "Invalidated below $77,700" in h
     assert "Invalidated above" not in h
 
 
 def test_the_invalidation_and_the_target_are_not_interchangeable():
     """Swapping them would advertise the stop as the target. Both numbers are pinned to their own words."""
-    h = panels.trap_card_html(row(), NOW)
-    assert "Invalidated above $78,900" in h and "pays off back at $78,000" in h
-    assert "Invalidated above $78,000" not in h and "pays off back at $78,900" not in h
+    h = text(panels.trap_card_html(row(), NOW))
+    assert "Invalidated above $78,900" in h and "Pays off back at $78,000" in h
+    assert "Invalidated above $78,000" not in h and "Pays off back at $78,900" not in h
 
 
 def test_a_settled_card_says_how_it_ended():
@@ -121,10 +129,35 @@ def test_stored_evidence_is_escaped():
 
 
 def test_the_console_escapes_the_candidates_and_the_settled_line():
-    h = panels.trap_console_html(
-        [row()], [Candidate(evidence=("<b>spoofed</b>", "x"), timeframe="<i>4h</i>")], NOW,
-        settled=[row(status="<script>x</script>", side="bear_trap")])
+    h = panels.trap_watch_html([Candidate(evidence=("<b>spoofed</b>", "x"), timeframe="<i>4h</i>")], NOW)
+    h += panels.trap_settled_html([row(status="<script>x</script>", side="bear_trap", category="<b>c</b>")], NOW)
+    h += panels.trap_console_html([row()], [], NOW, {"<i>x</i>": "<i>x</i>"}, plan=[("<i>x</i>", "<i>1h</i>")])
     assert "<b>spoofed</b>" not in h and "<i>4h</i>" not in h and "<script>" not in h
+    assert "<b>c</b>" not in h and "<i>x</i>" not in h and "<i>1h</i>" not in h
+
+
+def test_the_card_draws_price_between_its_two_settling_levels():
+    h = panels.trap_card_html(row(), NOW, price_now=78_180.0)
+    # a bull trap pays off at 78,000 (left) and dies at 78,900 (right): 78,180 is a fifth of the way along,
+    # off-centre so a bar measured from the wrong end reads 80% and fails
+    assert "left:20%" in h and "Now $78,180" in h
+    assert "ti-track-now" not in panels.trap_card_html(row(), NOW), "no price, no marker"
+
+
+def test_the_card_shows_the_judgement_stored_with_the_trap():
+    detail = ('{"domains": [{"title": "Quant & Statistics", "points": 15}], "head_confidence": 0.74, '
+              '"desk_reads": "engineered or unclear", "desk_reasons": ["no acceptance above value"]}')
+    h = panels.trap_card_html(row(detail=detail), NOW)
+    assert "Head: engineered, 74%" in h and "15/20" in h and "Quant &amp; Statistics" in h
+    assert "Desk says:</strong> engineered or unclear - no acceptance above value" in h
+    bare = panels.trap_card_html(row(detail="{broken"), NOW)
+    assert "Desk says" not in bare and "Head: engineered" in bare, "an unreadable detail is omitted, not fatal"
+
+
+def test_the_sweep_plan_names_each_desk_and_the_one_that_scans_nothing():
+    h = text(panels.sweep_plan_html([("live", "15m"), ("live", "1h"), ("weekly", "1w")],
+                                    {"live": "Live Recon", "weekly": "Weekly", "monthly": "Monthly"}))
+    assert "15m · 1h → Live Recon" in h and "1w → Weekly" in h and "none → Monthly" in h
 
 
 def test_the_warning_escapes_its_row():
@@ -136,6 +169,7 @@ def test_the_warning_escapes_its_row():
 def test_an_empty_console_says_nothing_is_anchored_in_its_own_words():
     h = panels.trap_console_html([], [], NOW)
     assert "No trap is anchored." in h
+    assert "<span class='n'>0</span><span class='ti-label'>Anchored</span>" in h
     assert "0 anchored" in h
 
 
@@ -154,18 +188,17 @@ def test_a_watch_candidate_is_never_counted_as_anchored():
 def test_the_watch_list_is_dated_and_a_stale_scan_is_called_out():
     """Candidates live in session state and survive every auto-refresh, so an undated watch list read as
     current three quarters of an hour after the scan that produced it."""
-    fresh = panels.trap_console_html([], [Candidate()], NOW, swept_ms=NOW - 5 * 60_000)
+    fresh = panels.trap_watch_html([Candidate()], NOW, swept_ms=NOW - 5 * 60_000)
     assert "0h 05m ago" in fresh and "Sweep again" not in fresh
 
-    stale = panels.trap_console_html([], [Candidate()], NOW, swept_ms=NOW - 47 * 60_000)
+    stale = panels.trap_watch_html([Candidate()], NOW, swept_ms=NOW - 47 * 60_000)
     assert "0h 47m ago" in stale and "Sweep again" in stale
 
 
 def test_the_settled_line_says_which_desk_each_trap_belonged_to():
-    h = panels.trap_console_html([], [], NOW, {"weekly": "Weekly", "live": "Live Recon"},
-                                 settled=[row(status="played_out"),
-                                          row(id=2, category="live", timeframe="1h",
-                                              status="invalidated")])
+    h = panels.trap_settled_html([row(status="played_out"),
+                                  row(id=2, category="live", timeframe="1h", status="invalidated")],
+                                 NOW, {"weekly": "Weekly", "live": "Live Recon"})
     assert "Weekly" in h and "Live Recon" in h
     assert "played out" in h and "invalidated" in h
 
@@ -178,8 +211,13 @@ def test_no_warning_when_the_desk_has_no_live_trap():
 
 def test_the_warning_carries_the_level_and_the_invalidation():
     h = panels.trap_warning_html([row()], NOW)
-    assert "1d at $78,600" in h and "invalidated at $78,900" in h
+    assert "1d at $78,600" in h and "invalidated above $78,900" in h
     assert "1d at $78,900" not in h, "the level and the invalidation must not be swapped"
+
+
+def test_a_bear_trap_warning_dies_below_the_raid():
+    h = panels.trap_warning_html([row(side="bear_trap", level=78_000.0, invalidation=77_700.0, plays_out=78_600.0)], NOW)
+    assert "invalidated below $77,700" in h and "invalidated above" not in h
 
 
 def test_the_warning_reports_how_many_more_it_is_not_showing():

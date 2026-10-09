@@ -65,10 +65,25 @@ def test_dollar_signs_are_escaped_for_markdown():
     assert md_safe("no money here") == "no money here"
 
 
-def test_every_markdown_render_of_model_text_goes_through_md_safe():
+def test_model_text_reaches_the_page_as_escaped_html_not_as_markdown():
+    """The report used to go out as Markdown, where "$81,500 and $82,300" became a LaTeX expression, so
+    every string went through md_safe. It now renders through the HTML panels, where a dollar sign is
+    just a character - and those panels must escape it, because it is model output."""
+    from datetime import datetime, timezone
+
+    from core.agents.schemas import SpecialistBrief, TrapReport
+    from ui import panels
+
     src = (ROOT / "app.py").read_text(encoding="utf-8")
-    assert "st.markdown(md_safe(md))" in src
-    assert "md_safe(b.interpretation)" in src and "md_safe(b.key_risk_to_thesis)" in src
+    assert "st.markdown(md_safe(md))" not in src, "the raw report Markdown is no longer printed"
+    brief = SpecialistBrief(agent_id="B1", desk="Bullish", domain="Options", conviction=6,
+                            interpretation="support $81,500 and resistance $82,300 <script>",
+                            key_risk_to_thesis="a close below $80,000 <b>")
+    r = TrapReport(report_id="TIR-1", generated_at=datetime.now(timezone.utc), window="w", provider="p",
+                   briefs=[brief])
+    h = panels.briefs_html(r)
+    assert "support $81,500 and resistance $82,300 &lt;script&gt;" in h and "<script>" not in h
+    assert "a close below $80,000 &lt;b&gt;" in h
 
 
 # ---------- copy ----------

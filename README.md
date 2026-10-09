@@ -480,4 +480,11 @@ in a strip under the header. The look is the Industry design system from Hammad'
 project: steel on a light technical ground, Barlow, square hairline cards with registration marks.
 Up and down are monochrome by default (hollow steel up, solid ink down); "Signal colours" in the
 sidebar switches to green and red.
+
+Each desk opens with its hero and candle countdown, the chart beside the anchored call, then the
+cards, the protocols behind a Volatility / Structure / Liquidity / Quant-matrix switch, and the war room:
+the pinned summary with both teams' bars, each team's five domain agents, the trap audit, the side notes
+and the accuracy report - all rebuilt from the pinned anchor, so they stay on screen for the whole candle.
+Anchored traps store their domain points, Head confidence and desk read (`traps.detail`), so the TRAP
+card can show them for as long as the trap stands. KILL on an Active Trade card asks before it closes.
 Design spec and implementation plans live under `docs/superpowers/`.
