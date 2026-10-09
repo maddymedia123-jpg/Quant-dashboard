@@ -174,10 +174,19 @@ class PredictionSnapshot(Availability):
                 if m.get("band") in bands and (not asset or asset in (m.get("assets") or []))]
 
 
+class MacroSnapshot(Availability):
+    """US macro context from FRED: each series {id, label, unit, value, as_of_ms, week_ago, change,
+    stale, age_days} or {available: False, note}. The 2s10s spread is computed on the latest date both
+    yields share, and carries that date."""
+    series: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    spread_2s10s: Optional[float] = None
+    spread_as_of_ms: Optional[int] = None
+
+
 class MarketSnapshot(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    SOURCES: ClassVar[tuple[str, ...]] = ("spot", "futures", "options", "sentiment", "hyperliquid", "liquidations", "whales", "stablecoins", "calendar", "news", "metals", "predictions")
+    SOURCES: ClassVar[tuple[str, ...]] = ("spot", "futures", "options", "sentiment", "hyperliquid", "liquidations", "whales", "stablecoins", "calendar", "news", "metals", "predictions", "macro")
 
     spot: SpotSnapshot
     futures: FuturesSnapshot
@@ -191,6 +200,7 @@ class MarketSnapshot(BaseModel):
     news: NewsSnapshot = Field(default_factory=lambda: NewsSnapshot.unavailable("rss", "not fetched"))
     metals: MetalsSnapshot = Field(default_factory=lambda: MetalsSnapshot.unavailable("goldprice.dev", "not fetched"))
     predictions: PredictionSnapshot = Field(default_factory=lambda: PredictionSnapshot.unavailable("voxodds", "not fetched"))
+    macro: MacroSnapshot = Field(default_factory=lambda: MacroSnapshot.unavailable("fred", "not fetched"))
     generated_at: datetime = Field(default_factory=_now)
 
     def unavailable(self) -> list[str]:

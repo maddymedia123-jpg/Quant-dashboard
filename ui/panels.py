@@ -1097,3 +1097,53 @@ def clock_html(dark: bool) -> str:
     """Both zones, ticking. PKT first because it is the one the trader lives in; UTC second because
     every candle boundary in this system is a UTC boundary."""
     return CLOCK_HTML.replace("__TEXT__", palette(dark)["text"])
+
+
+def rates_html(macro, now_ms: int) -> str:
+    """The dollar, the 10-year, the 2-year and the 2s10s spread, each with the date it is from.
+
+    Every value carries its own as-of date because these are daily series published with a lag - a
+    reading two days old is normal and is labelled so, rather than presented as live."""
+    if not getattr(macro, "available", False):
+        return card_html("US macro",
+                         f"<p class='muted'>No macro feed: "
+                         f"{html.escape(str(getattr(macro, 'error', '') or 'unavailable'))}.</p>", "neutral")
+    from core.trades import fmt_when
+
+    rows = ""
+    for s in (getattr(macro, "series", {}) or {}).values():
+        label = html.escape(str(s.get("label") or s.get("id") or ""))
+        if not s.get("available"):
+            rows += (f"<tr><td>{label}</td><td colspan='3' class='muted'>"
+                     f"{html.escape(str(s.get('note') or 'unavailable'))}</td></tr>")
+            continue
+        unit = str(s.get("unit") or "")
+        is_yield = unit == "%"
+        value = fmt_num(s.get("value"), 2, suffix="%" if is_yield else "")
+        change = s.get("change")
+        if change is None:
+            moved = "<span class='muted'>no week-ago value</span>"
+        else:
+            # yields move in basis points, the dollar index in points
+            size = change * 100 if is_yield else change
+            text = f"{size:+.0f} bp" if is_yield else f"{size:+.2f}"
+            loud = abs(change) >= (0.15 if is_yield else 1.5)
+            moved = f"<span class='ti-chip {'warn' if loud else 'neutral'}'>{html.escape(text)}</span>"
+        when = html.escape(fmt_when(s.get("as_of_ms"), both=False).split(" ", 2)[-1])
+        stale = (" <span class='ti-chip down'>stale</span>" if s.get("stale") else "")
+        rows += (f"<tr><td>{label}</td><td><strong>{value}</strong></td><td>{moved}</td>"
+                 f"<td class='muted'>as of {when}{stale}</td></tr>")
+
+    body = ("<table><thead><tr><th>Series</th><th>Latest</th><th>1 week</th><th>Date</th></tr></thead>"
+            f"<tbody>{rows}</tbody></table>")
+    spread = getattr(macro, "spread_2s10s", None)
+    if spread is not None:
+        state = "inverted - the market prices cuts ahead" if spread < 0 else "positively sloped"
+        body += (f"<p>2s10s spread <strong>{spread * 100:+.0f} bp</strong> "
+                 f"<span class='muted'>({html.escape(state)}; both yields from the same day)</span></p>")
+    if getattr(macro, "error", None):
+        body += (f"<p class='muted'>Partial: {html.escape(str(macro.error))[:200]}</p>")
+    body += ("<p class='muted'>Daily series from FRED, published with a business-day lag or two - a "
+             "reading a couple of days old is normal. A move of 15 bp in a yield or 1.5 points in the "
+             "dollar over a week is highlighted.</p>")
+    return card_html("US macro", body, "neutral")

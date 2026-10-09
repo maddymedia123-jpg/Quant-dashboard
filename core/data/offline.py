@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+from datetime import datetime, timezone
 
 from core.data.binance_futures import parse_binance
 from core.data.calendar import parse_calendar
@@ -14,6 +15,7 @@ from core.data.coinlobster import parse_liquidations, parse_whales
 from core.data.deribit_options import parse_book_summary
 from core.data.hyperliquid import parse_meta
 from core.data.kraken_spot import parse_ohlc, parse_ticker
+from core.data.macro import build as build_macro
 from core.data.metals import parse_gold
 from core.data.news import merge, parse_aggregator, parse_feed
 from core.data.prediction import parse_markets
@@ -64,6 +66,7 @@ def fixture_context() -> dict:
         "news": _mark(_fixture_news()),
         "metals": _mark(parse_gold(_load("goldprice_xau.json"))),
         "predictions": _mark(parse_markets(_load("voxodds_crypto.json"))),
+        "macro": _mark(_fixture_macro()),
     }
 
 
@@ -74,6 +77,16 @@ def _fixture_news() -> NewsSnapshot:
              parse_feed("Cointelegraph", _load_text("cointelegraph_rss.xml")),
              parse_aggregator(_load("cryptocv_breaking.json"))]
     return NewsSnapshot(source="fixture", headlines=merge(feeds))
+
+
+def _fixture_macro():
+    """The recorded FRED windows, judged against the day they were recorded rather than today, so the
+    offline view does not flag every series stale just because time has passed since the recording."""
+    texts = {sid: _load_text(f"fred_{sid}.csv") for sid in ("DTWEXBGS", "DGS10", "DGS2")}
+    # written as a date, not an epoch integer: the integer first typed here decoded to 2025-10-09,
+    # a year early, and every series came out 363 days in the future
+    recorded_ms = int(datetime(2026, 10, 9, tzinfo=timezone.utc).timestamp() * 1000)
+    return build_macro(texts, recorded_ms)
 
 
 def fixture_market() -> MarketSnapshot:

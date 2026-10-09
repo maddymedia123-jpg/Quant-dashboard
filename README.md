@@ -35,7 +35,7 @@ Deribit options for max pain, put/call and IV skew · DefiLlama stablecoin suppl
 Greed · Forex Factory weekly economic calendar (high-impact USD prints with forecast/previous; drives the
 macro-window trigger) · CoinDesk and Cointelegraph RSS plus the cryptocurrency.cv aggregator for headlines · goldprice.dev for XAU/USD spot
 (gold only; silver and copper are plan-gated) · Polymarket odds via voxodds.com, with an execution-quality
-band per market.
+band per market · FRED for the dollar index, 10Y and 2Y yields.
 
 Binance and Bybit geo-block US egress, and Streamlit Cloud is US-hosted, which is why Gate.io sits in the
 chain — the live site sources futures from it. Whichever provider answered is labelled in the sidebar.
@@ -318,6 +318,18 @@ chosen by calling them, not by reading a directory's Auth column, and each hid s
   13 of 40 crypto markets carried a quote worth quoting. A 6% probability on a market flagged "extreme
   price" is a printed number, not a forecast, and the panel says so. Attribution ("Data from Polymarket.
   Powered by VoxOdds") is required by the feed and is rendered, not dropped.
+
+- **US rates and the dollar — FRED** (`fredgraph.csv`, keyless): the broad dollar index, the 10-year,
+  the 2-year, and the 2s10s spread, each with its own as-of date and a one-week change. *Four traps,
+  each handled:* holidays are **empty values**, so the last row is not the last value; the 10-year and
+  2-year can publish on different days, so the spread uses the **latest date both share**; the dollar
+  index is the Fed's H.10, released **weekly**, so staleness is per series (12 days for it, 5 for the
+  daily yields) - one shared threshold would flag it stale every week before each release; and a
+  response naming a different series is refused, the same shape of bug as goldprice.dev answering in
+  AUD. `cosd=` keeps each response to a few hundred bytes instead of 104 KB of history since 2006. The
+  observation dates are shown as dates, not as PKT clock times - they are calendar dates, and a time of
+  day beside one would be invented precision. Reached via Firecrawl's Alexandria catalogue, but called
+  directly: Alexandria itself needs a key, and this needs none.
 
 Headlines are **tagged, not judged**: topic and impact come from keyword matching over the headline text,
 which cannot tell a rumour from a confirmation. They are shown as tags so the list can be sorted, and the

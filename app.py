@@ -878,6 +878,11 @@ with tabs[7]:
             st.warning(f"Calendar unavailable: {e}")
 
     try:
+        panels.render(panels.rates_html(m.macro, now_ms))
+    except Exception as e:  # noqa: BLE001
+        st.warning(f"Rates unavailable: {e}")
+
+    try:
         panels.render(panels.news_html(m.news, now_ms, limit=14))
     except Exception as e:  # noqa: BLE001
         st.error(f"The headline feed could not be drawn ({type(e).__name__}: {e}). "
