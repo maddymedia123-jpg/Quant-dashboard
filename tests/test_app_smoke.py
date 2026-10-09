@@ -22,12 +22,43 @@ REQUIRED_STORE_METHODS = (
 )
 
 
+DESKS = ("live", "intraday", "weekly", "monthly")
+SCREENS = DESKS + ("trap", "trade", "director", "macro")
+
+
+def visit(at, screen):
+    """Open one screen from the rail. Only the open screen renders, so a test reads the screen it means."""
+    return at.radio(key="screen").set_value(screen).run()
+
+
+class Tour:
+    """Everything the four desks render, gathered by opening each in turn - what one run of the old tab
+    strip used to show at once."""
+
+    def __init__(self, at, screens=DESKS):
+        self.markdown, self.buttons, self.warnings, self.exceptions = [], [], [], []
+        for screen in screens:
+            at = visit(at, screen)
+            self.exceptions += [e.value for e in at.exception]
+            self.markdown += [m.value for m in at.markdown]
+            self.buttons += [b.label for b in at.button]
+            self.warnings += [w.value for w in at.warning]
+        self.text = " ".join(self.markdown)
+
+
 @pytest.fixture
 def app(tmp_path, monkeypatch):
     monkeypatch.setenv("TI_OFFLINE_FIXTURES", "1")
     monkeypatch.setenv("TI_DATA_DIR", str(tmp_path))
     at = pytest.importorskip("streamlit.testing.v1").AppTest.from_file(APP, default_timeout=180)
     return at.run()
+
+
+@pytest.fixture
+def tour(app):
+    t = Tour(app)
+    assert not t.exceptions, t.exceptions
+    return t
 
 
 def test_the_store_exposes_every_method_the_page_calls():
@@ -37,7 +68,29 @@ def test_the_store_exposes_every_method_the_page_calls():
 
 def test_the_page_renders_with_no_exception(app):
     assert not app.exception, [e.value for e in app.exception]
-    assert "Run Live Recon war room" in [b.label for b in app.sidebar.button]
+    assert "Run Analysis" in [b.label for b in app.button]
+    assert "Run Live Recon war room" in [b.label for b in app.button], "the default screen is the Live desk"
+
+
+def test_the_rail_lists_four_desks_then_four_engines_and_opens_on_live(app):
+    rail = app.radio(key="screen")
+    assert list(rail.options) == ["Live Recon", "Intraday", "Weekly", "Monthly",
+                                  "TRAP Intelligence", "Active Trade", "Director report", "Macro & News"]
+    assert rail.value == "live"
+
+
+def test_every_screen_renders_on_its_own(app):
+    for screen in SCREENS:
+        at = visit(app, screen)
+        assert not at.exception, (screen, [e.value for e in at.exception])
+
+
+def test_only_the_open_screen_renders(app):
+    markdown = " ".join(m.value for m in app.markdown)
+    assert "4-hour anchored summary" in markdown and "Daily anchored summary" not in markdown
+    assert "· Engine</span>" not in markdown and "TRAP intelligence · watchdog" not in markdown,         "no engine renders under a desk"
+    weekly = " ".join(m.value for m in visit(app, "weekly").markdown)
+    assert "Weekly anchored summary" in weekly and "4-hour anchored summary" not in weekly
 
 
 def test_the_live_recon_ledger_is_reachable(app):
@@ -56,11 +109,11 @@ def test_the_live_recon_tab_shows_the_smc_and_liquidity_protocols(app):
     assert not any("Protocols unavailable" in w.value for w in app.warning)
 
 
-def test_every_category_tab_has_its_own_war_room(app):
-    labels = [b.label for b in app.button]
+def test_every_category_tab_has_its_own_war_room(tour):
+    labels = tour.buttons
     for name in ("Live Recon", "Intraday", "Weekly", "Monthly"):
         assert f"Run {name} war room" in labels, f"{name} tab has no war-room button"
-    markdown = " ".join(m.value for m in app.markdown)
+    markdown = tour.text
     for title in ("4-hour anchored summary", "Daily anchored summary", "Weekly anchored summary",
                   "Monthly anchored summary"):
         assert title in markdown, f"missing: {title}"
@@ -69,18 +122,18 @@ def test_every_category_tab_has_its_own_war_room(app):
         assert window in markdown
 
 
-def test_every_category_tab_shows_protocols_for_its_own_timeframes(app):
-    markdown = " ".join(m.value for m in app.markdown)
+def test_every_category_tab_shows_protocols_for_its_own_timeframes(tour):
+    markdown = tour.text
     assert markdown.count("Market structure (SMC)") == 4, "one SMC panel per category tab"
     assert "<td>1w</td>" in markdown, "weekly and monthly read the weekly candle"
 
 
-def test_every_category_tab_shows_its_accuracy_report(app):
-    markdown = " ".join(m.value for m in app.markdown)
+def test_every_category_tab_shows_its_accuracy_report(tour):
+    markdown = tour.text
     assert markdown.count("Accuracy report") >= 4
     for window in ("4h windows scored", "daily windows scored", "weekly windows scored", "monthly windows scored"):
         assert window in markdown
-    assert not any("Accuracy audit unavailable" in w.value for w in app.warning)
+    assert not any("Accuracy audit unavailable" in w for w in tour.warnings)
 
 
 def test_a_module_left_stale_by_a_redeploy_is_reloaded(tmp_path, monkeypatch):
@@ -111,9 +164,9 @@ def test_a_module_left_stale_by_a_redeploy_is_reloaded(tmp_path, monkeypatch):
         sys.modules.update(saved)
 
 
-def test_every_tab_shows_its_sub_agent_deck(app):
+def test_every_tab_shows_its_sub_agent_deck(tour):
     """The deck reads the judges' own state, so it must appear once per category tab."""
-    markdown = " ".join(m.value for m in app.markdown)
+    markdown = tour.text
     assert markdown.count("Institutional quantitative matrix") == 4
     # labels that belong to the deck alone - "Hurst" also appears in the volatility matrix above it
     for reading in ("Point of control", "Options max pain", "Taker buy/sell", "Range position",
@@ -123,6 +176,7 @@ def test_every_tab_shows_its_sub_agent_deck(app):
 
 
 def test_the_trap_tab_is_present_with_its_console(app):
+    app = visit(app, "trap")
     assert not app.exception, [e.value for e in app.exception]
     assert "Sweep every timeframe for traps" in [b.label for b in app.button]
     markdown = " ".join(m.value for m in app.markdown)
@@ -159,7 +213,7 @@ def test_an_anchored_trap_warns_every_desk_that_reads_its_timeframe(tmp_path, mo
 
     at = pytest.importorskip("streamlit.testing.v1").AppTest.from_file(APP, default_timeout=180).run()
     assert not at.exception, [e.value for e in at.exception]
-    markdown = " ".join(m.value for m in at.markdown)
+    markdown = Tour(at, DESKS + ("trap",)).text
     assert markdown.count("TRAP warning") == 3, "the three desks that read the 1d, and not Live"
     assert "1d at $78,600" in markdown and "invalidated at $78,900" in markdown.lower()
     assert "Anchored bull trap" in markdown, "and it appears in the console too"
@@ -181,12 +235,13 @@ def _fresh_store(tmp_path, monkeypatch):
 
 
 def test_the_active_trade_tab_offers_the_form_and_says_nothing_is_tracked(app):
+    app = visit(app, "trade")
     assert not app.exception, [e.value for e in app.exception]
     labels = [b.label for b in app.button]
     assert "Open and track this trade" in labels
     assert "Run stress-test" in labels, "the leverage stress-test is still there"
     markdown = " ".join(m.value for m in app.markdown)
-    assert "Active trade desk" in markdown
+    assert "Active Trade" in markdown
     captions = " ".join(c.value for c in app.caption)
     assert "No position is being tracked" in captions
     assert "No alert channel is configured" in captions, "and it says so rather than implying alerts work"
@@ -226,7 +281,7 @@ def test_a_pinned_trade_renders_its_whole_plan_and_survives_a_rerun(tmp_path, mo
                            category="live", plan=plan)
     store.close()
 
-    at = pytest.importorskip("streamlit.testing.v1").AppTest.from_file(APP, default_timeout=180).run()
+    at = visit(pytest.importorskip("streamlit.testing.v1").AppTest.from_file(APP, default_timeout=180).run(), "trade")
     assert not at.exception, [e.value for e in at.exception]
     markdown = " ".join(m.value for m in at.markdown)
 
@@ -258,7 +313,7 @@ def test_killing_a_trade_unpins_it(tmp_path, monkeypatch):
                                  "notes": ["no provider configured"]})
     store.close()
 
-    at = pytest.importorskip("streamlit.testing.v1").AppTest.from_file(APP, default_timeout=180).run()
+    at = visit(pytest.importorskip("streamlit.testing.v1").AppTest.from_file(APP, default_timeout=180).run(), "trade")
     assert not at.exception, [e.value for e in at.exception]
     assert "BTC/USDT from $78,000" in " ".join(m.value for m in at.markdown)
 
@@ -292,9 +347,28 @@ def test_an_unscored_card_still_shows_its_levels(tmp_path, monkeypatch):
                            "notes": ["No model provider is configured, so the ten sub-agents were not run."]})
     store.close()
 
-    at = pytest.importorskip("streamlit.testing.v1").AppTest.from_file(APP, default_timeout=180).run()
+    at = visit(pytest.importorskip("streamlit.testing.v1").AppTest.from_file(APP, default_timeout=180).run(), "trade")
     assert not at.exception, [e.value for e in at.exception]
     markdown = " ".join(m.value for m in at.markdown)
     assert "unscored: the sub-agents did not answer" in markdown
     assert "$77,400" in markdown and "the last swing sits at 78,300" in markdown
     assert "score" not in markdown.split("unscored")[1][:40], "no score is claimed"
+
+
+def test_the_phone_strip_and_the_rail_open_the_same_screen(app):
+    """Two controls, one screen: the strip is what a phone sees, the rail what a desktop sees."""
+    at = app.button_group(key="screen_nav").set_value("macro").run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert at.radio(key="screen").value == "macro"
+    assert "08 · Engine</span><h1>Macro &amp; News" in " ".join(m.value for m in at.markdown)
+    at = visit(at, "weekly")
+    assert at.button_group(key="screen_nav").value == "weekly", "the rail moves the strip with it"
+
+
+def test_clearing_the_strip_keeps_the_open_screen():
+    # tested as a rule rather than through AppTest, whose set_value(None) on pills is a no-op - the
+    # first version of this test passed with the guard deleted
+    from ui.nav import pick_from_strip
+    assert pick_from_strip("weekly", None) == ("weekly", "weekly")
+    assert pick_from_strip("weekly", "") == ("weekly", "weekly")
+    assert pick_from_strip("weekly", "macro") == ("macro", "macro")

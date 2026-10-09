@@ -61,6 +61,7 @@ from core.store import Store
 from core.indicators.trade_map import map_trade
 from ui import panels
 from ui.charts import render_chart
+from ui.nav import pick_from_strip
 from ui.theme import inject_css, kpi_strip, md_safe
 
 st.set_page_config(page_title="Trap Intelligence | BTC", layout="wide", initial_sidebar_state="auto")
@@ -113,7 +114,9 @@ def _drop_store(s) -> None:
 st.session_state.setdefault("dark", False)
 st.session_state.setdefault("signal", False)
 
-st.sidebar.markdown("<p class='ti-title'>Trap Intelligence</p><p class='ti-sub'>BTC market surveillance</p>", unsafe_allow_html=True)
+st.sidebar.markdown("<p class='ti-title'>Trap Intelligence</p><p class='ti-sub'>BTC market-surveillance terminal</p>", unsafe_allow_html=True)
+# filled once the desks have a read; created here so it sits at the top of the rail
+rail_slot = st.sidebar.container()
 dark = st.sidebar.toggle("Dark mode", value=st.session_state["dark"])
 st.session_state["dark"] = dark
 # the design is monochrome by default (hollow steel up, solid ink down); this restores green and red
@@ -121,15 +124,21 @@ signal = st.sidebar.toggle("Signal colours", value=st.session_state["signal"],
                            help="Green and red for up and down, instead of the monochrome steel and ink.")
 st.session_state["signal"] = signal
 inject_css(dark, signal)
+top = st.container()
+with top:
+    _price_col, _auto_col, _refresh_col, _run_col = st.columns([5, 2.2, 1.5, 1.7], vertical_alignment="bottom")
+price_slot = _price_col.empty()
+# phones get the screens as a strip under the header (the rail is hidden in the collapsed sidebar there)
+nav_slot = top.container(key="ti_mobile_nav")
 
-if st.sidebar.button("Refresh data", width="stretch"):
+if _refresh_col.button("Refresh data", width="stretch"):
     _spot.clear()
     _context.clear()
     st.rerun()
 
 AUTO_OPTIONS = (0, 30, 60, 120)
 st.session_state.setdefault("auto_refresh", 0)
-auto_every = st.sidebar.selectbox(
+auto_every = _auto_col.selectbox(
     "Auto-refresh", AUTO_OPTIONS, index=AUTO_OPTIONS.index(st.session_state["auto_refresh"]),
     format_func=lambda v: "Off" if v == 0 else f"every {v}s",
     help="Reruns the page on a timer. Data caches still apply (spot 25s, context 120s), so this adds no API load.",
@@ -149,17 +158,10 @@ if auto_every:
         _auto_tick()
 settings = load_settings()
 st.session_state.setdefault("trap_report", None)
-run_clicked = st.sidebar.button(
+run_clicked = _run_col.button(
     "Run Analysis", type="primary", width="stretch", disabled=settings is None,
     help=(f"13-agent Trap Intelligence report via {settings.provider}: specialists on {settings.specialist_model}, Director on {settings.director_model}."
           if settings else "Add GEMINI_API_KEY or OPENROUTER_API_KEY to .streamlit/secrets.toml (or Streamlit Cloud Secrets) to enable."),
-)
-
-recon_clicked = st.sidebar.button(
-    "Run Live Recon war room", width="stretch", disabled=settings is None,
-    help=("Eleven Live Recon agents: five bullish and five bearish domain agents scored on the 100-point "
-          "checklist, plus the war room trap audit. The 4h summary stays pinned; re-runs add side notes."
-          if settings else "Add an API key to enable."),
 )
 
 with st.spinner("Loading market data"):
@@ -308,12 +310,9 @@ if run_clicked and settings is not None and analyses:
             status.update(label=f"Pipeline failed: {e}", state="error")
     st.rerun()
 
-# ---------- war rooms: the sidebar button is the Live Recon shortcut ----------
+# ---------- war rooms ----------
 if not isinstance(st.session_state.get("recon"), dict):
     st.session_state["recon"] = {}
-if recon_clicked and settings is not None and analyses:
-    run_war_room(LIVE)
-    st.rerun()
 
 report = st.session_state.get("trap_report")
 
@@ -358,17 +357,42 @@ except Exception as e:  # noqa: BLE001 - scoring problems must never blank the p
 st.sidebar.markdown(f"<span class='ti-chip'>ledger: {store.path}</span>", unsafe_allow_html=True)
 st.sidebar.caption("Anchors and accuracy persist in SQLite. On Streamlit Cloud this resets on reboot until a hosted database is configured.")
 
-# ---------- header ----------
-st.markdown("<p class='ti-title'>BTC / USD · Trap Intelligence Terminal</p>"
-            "<p class='ti-sub'>Deterministic market structure, SMC and liquidity per timeframe, with a war room per category. "
-            "Run Analysis adds the Director report and desk briefs.</p>",
-            unsafe_allow_html=True)
+# ---------- top bar ----------
+_live_a = analyses.get("live")
+price_slot.markdown(panels.top_bar_html(
+    m.spot.last if m.spot.last is not None else (_live_a.price if _live_a else None),
+    _live_a.price_change_24h_pct if _live_a else None,
+    f"Updated {m.generated_at.astimezone(timezone.utc):%H:%M:%S} UTC"), unsafe_allow_html=True)
 if not m.spot.available:
     st.error(f"Spot data unavailable from {m.spot.source}: {m.spot.error}. Nothing to analyse.")
 
-tab_labels = ([c.label for c in CATEGORIES.values()]
-              + ["TRAP Intelligence", "Active Trade", "War Room", "Macro & News"])
-tabs = st.tabs(tab_labels)
+# ---------- the rail: four desks, then four engines; only the open screen renders ----------
+ENGINES = {"trap": "TRAP Intelligence", "trade": "Active Trade", "director": "Director report", "macro": "Macro & News"}
+SCREENS = list(CATEGORIES) + list(ENGINES)
+_labels = {**{k: c.label for k, c in CATEGORIES.items()}, **ENGINES}
+_captions = ([f"{CATEGORIES[k].chart_tf} · {panels.rail_read(verdicts.get(k), analyses.get(k))}" for k in CATEGORIES]
+             + ["Sweep, anchored traps, watch list", "Positions, stops and targets",
+                f"Report {report.report_id}" if report is not None else "Run Analysis to generate",
+                "Headlines, gold, rates, odds"])
+st.session_state.setdefault("screen", SCREENS[0])
+
+
+def _from_rail():
+    st.session_state["screen_nav"] = st.session_state["screen"]
+
+
+def _from_strip():
+    st.session_state["screen"], st.session_state["screen_nav"] = pick_from_strip(
+        st.session_state["screen"], st.session_state.get("screen_nav"))
+
+
+st.session_state.setdefault("screen_nav", st.session_state["screen"])
+with nav_slot:
+    st.pills("Screen", SCREENS, format_func=_labels.get, key="screen_nav", on_change=_from_strip,
+             label_visibility="collapsed")
+with rail_slot:
+    screen = st.radio("Desks", SCREENS, format_func=_labels.get, captions=_captions, key="screen",
+                      on_change=_from_rail)
 
 
 def _data_stamp() -> str:
@@ -472,34 +496,39 @@ def render_war_room(profile) -> None:
                f"{recon.prompt_tokens + recon.completion_tokens:,} tokens")
 
 
-def category_tab(tab, key):
-    with tab:
+def category_tab(key):
+    with st.container():
         a = analyses.get(key)
         if a is None:
             st.info(f"Not enough {CATEGORIES[key].chart_tf} history to analyse this category.")
             return
+        panels.render(panels.desk_hero_html(SCREENS.index(key) + 1, PROFILES[key], CATEGORIES[key], now_ms))
         kpi_strip(panels.kpis_for(a, m))
         if key in ("weekly", "monthly"):
             last_sig = store.last_signal(key, before_ms=now_ms)
             banner = panels.early_warning_html(early_warnings(a, m.futures, last_sig["squeeze_score"] if last_sig else None))
             if banner:
                 panels.render(banner)
-        render_chart(a, dark, signal=signal)
-        panels.render(panels.layman_html(a))
-        c1, c2 = st.columns(2)
-        with c1:
+        # the chart and the call it supports sit side by side, as the design draws them
+        c_chart, c_dir = st.columns([2, 1], gap="large")
+        with c_chart:
+            render_chart(a, dark, height=520, signal=signal)
+        with c_dir:
             v = verdicts.get(key)
             panels.render(panels.anchored_direction_html(a, v, now_ms) if v else panels.direction_html(a))
+        panels.render(panels.layman_html(a))
+        c1, c2 = st.columns(2, gap="large")
+        with c1:
             panels.render(panels.patterns_html(a))
-            panels.render(panels.volatility_html(a))
+            panels.render(panels.divergence_html(a))
         with c2:
             panels.render(panels.fib_html(a))
-            panels.render(panels.divergence_html(a))
-            panels.render(panels.agent_summary_html(a, report))
+            panels.render(panels.volatility_html(a))
         profile = PROFILES.get(key)
         if profile is not None:
             render_protocols(profile)
             render_war_room(profile)
+        panels.render(panels.agent_summary_html(a, report))
         if key in ("weekly", "monthly"):
             panels.render(panels.calendar_html(m, now_ms))
             # weekly positioning belongs on the weekly and monthly view only: it is three to ten days
@@ -510,12 +539,12 @@ def category_tab(tab, key):
                 st.warning(f"Positioning report unavailable: {e}")
 
 
-for tab, key in zip(tabs[:4], CATEGORIES.keys()):
-    category_tab(tab, key)
+if screen in CATEGORIES:
+    category_tab(screen)
 
 # ---------- TRAP intelligence ----------
-with tabs[4]:
-    st.markdown("### TRAP intelligence")
+if screen == "trap":
+    panels.render(panels.engine_hero_html(5, "TRAP Intelligence", "Ten trap sub-agents, a Head that consults the affected desk"))
     st.caption("Ten trap sub-agents across the five domains, a Head that consults the affected desk, and "
                "traps anchored to that desk until price settles them.")
     if st.button("Sweep every timeframe for traps", key="trap_sweep_btn", disabled=settings is None,
@@ -680,8 +709,8 @@ def trade_alert_pass(row: dict, prog) -> None:
         st.caption(f"Alerts: {note}")
 
 
-with tabs[5]:
-    st.markdown("### Active trade desk")
+if screen == "trade":
+    panels.render(panels.engine_hero_html(6, "Active Trade", "Positions judged against every desk until you close them"))
     st.caption("Ten sub-agents on the position, the four category heads and the TRAP head consulted, and "
                "a card that stays pinned until you kill it. Cards live in the database, so they survive a "
                "refresh and a redeploy.")
@@ -830,7 +859,8 @@ with tabs[5]:
                  "needs a scheduled worker, which Streamlit Cloud does not provide.")
 
 # ---------- war room ----------
-with tabs[6]:
+if screen == "director":
+    panels.render(panels.engine_hero_html(7, "Director report", "Thirteen agents, one classification, scored when its horizon closes"))
     if report is not None:
         panels.render(panels.report_stats_html(report))
         md = to_markdown(report)
@@ -871,8 +901,8 @@ with tabs[6]:
 
 
 # ---------- macro and news engines (spec section 2) ----------
-with tabs[7]:
-    st.markdown("### Macro and news")
+if screen == "macro":
+    panels.render(panels.engine_hero_html(8, "Macro & News", "Global engines: not a read on any one timeframe"))
     st.caption("The global engines: publisher headlines, gold, and what the prediction markets are "
                "pricing. Global rather than per-desk, because none of it is a read on one timeframe.")
 

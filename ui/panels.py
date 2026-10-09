@@ -9,7 +9,7 @@ import streamlit as st
 from core.data.types import MarketSnapshot
 from core.indicators.category import CategoryAnalysis
 from core.indicators.trade_map import TradeMap
-from ui.theme import card_html, chip, fmt_num, fmt_pct, palette, tone_for_direction
+from ui.theme import CORNERS, card_html, chip, fmt_num, fmt_pct, palette, tone_for_direction
 
 
 def render(markup: str) -> None:
@@ -126,18 +126,23 @@ TRIGGERS_WATCHED = ("funding flip · OI ±5% · long/short crosses 1.0 · squeez
 def anchored_direction_html(a: CategoryAnalysis, v, now_ms: int) -> str:
     """Anchored verdict card: the displayed direction holds until a trigger fires."""
     an = v.anchored
-    body = (f"<p><strong>{an.direction}</strong> · confidence {an.confidence:.0%} · anchored {_ago(now_ms - v.since_ms)} ago "
-            f"at {fmt_num(an.price, 0, '$')} · {a.chart_tf} chart</p>")
-    if v.changed and v.triggers_fired and v.triggers_fired != ["initial"]:
-        body += f"<p class='muted'>Re-anchored now on: {html.escape(', '.join(v.triggers_fired))}</p>"
-    body += f"<p>Anchor {fmt_num(an.anchor, 0, '$')} · Invalidation {fmt_num(an.invalidation, 0, '$')}</p>"
-    body += f"<p class='muted'>Flips if: {html.escape(an.flips_if)}</p>"
+    tone = tone_for_direction(an.direction)
+    body = (f"<div class='ti-dir {tone}'>{DIR_GLYPH.get(an.direction, '◆')} {an.direction}</div>"
+            f"<p>Confidence {an.confidence:.0%} · anchored {_ago(now_ms - v.since_ms)} ago "
+            f"at {fmt_num(an.price, 0, '$')} · {a.chart_tf} chart</p>"
+            f"<div class='ti-bar {tone}'><div style='width:{round(an.confidence * 100)}%'></div></div>")
     if v.unconfirmed:
         body += (f"<p><span class='ti-chip warn'>live read {html.escape(v.live.direction)} ({v.live.confidence:.0%})</span> "
                  f"unconfirmed until a trigger fires</p>")
-    body += _li(an.drivers)
+    if v.changed and v.triggers_fired and v.triggers_fired != ["initial"]:
+        body += f"<p class='muted'>Re-anchored now on: {html.escape(', '.join(v.triggers_fired))}</p>"
+    body += (f"<div class='ti-pair'><div><span class='ti-label'>Anchor</span><span class='ti-pair-v'>"
+             f"{fmt_num(an.anchor, 0, '$')}</span></div><div><span class='ti-label'>Invalidation</span>"
+             f"<span class='ti-pair-v down'>{fmt_num(an.invalidation, 0, '$')}</span></div></div>")
+    body += f"<span class='ti-label'>Flips if</span><p>{html.escape(an.flips_if)}</p>"
+    body += f"<span class='ti-label'>Drivers</span>" + _li(an.drivers)
     body += f"<p class='muted'>Triggers watched: {TRIGGERS_WATCHED}</p>"
-    return card_html("Market direction (anchored)", body, tone_for_direction(an.direction))
+    return card_html("Market direction · anchored", body, tone)
 
 
 def early_warning_html(ws) -> str | None:
@@ -346,12 +351,15 @@ def calendar_html(m: MarketSnapshot, now_ms: int, limit: int = 8) -> str:
 
 
 def data_status_html(m: MarketSnapshot) -> str:
-    out = []
+    """One row per feed: a square status mark, the feed, and where it came from - filled when the feed
+    answered, hollow when it did not, so a dead feed is visible without relying on colour."""
+    rows = []
     for name in MarketSnapshot.SOURCES:
         s = getattr(m, name)
-        label = f"{name}: {s.source}" + ("" if s.available else " unavailable")
-        out.append(chip(label, "up" if s.available else "down"))
-    return "".join(out)
+        src = html.escape(str(s.source)) + ("" if s.available else " · unavailable")
+        rows.append(f"<div class='ti-feed{'' if s.available else ' off'}'><span class='dot'></span>"
+                    f"<span>{html.escape(name)}</span><span class='src' title='{src}'>{src}</span></div>")
+    return "<span class='ti-label'>Feeds</span><div class='ti-feeds'>" + "".join(rows) + "</div>"
 
 
 def raw_metrics_rows(m: MarketSnapshot) -> list[tuple[str, str, str]]:
@@ -1217,3 +1225,65 @@ def cot_html(cot, now_ms: int) -> str:
              "the weekly and monthly view, never for an intraday call. A reading of "
              f"{CROWDED_LONG}+ is conventionally crowded long, {CROWDED_SHORT} or below crowded short.</p>")
     return card_html("CME Bitcoin positioning (CFTC)", body, "warn" if cot.stale else "neutral")
+
+
+# ---------- Industry layout: hero, header bar, rail ----------
+
+DIR_GLYPH = {"BULLISH": "▲", "BEARISH": "▼"}
+
+
+def _left(ms: int) -> str:
+    mins = max(0, int(ms // 60_000))
+    if mins >= 1440:
+        return f"{mins // 1440}d {(mins % 1440) // 60:02d}h"
+    return f"{mins // 60}h {mins % 60:02d}m"
+
+
+def desk_hero_html(number: int, profile, category, now_ms: int) -> str:
+    """The desk's title block and the countdown to the candle its summary is pinned to.
+
+    The countdown is the one number on the desk that changes the reading of everything else: a summary
+    anchored three minutes before its candle closes is about to be scored, not about to be acted on."""
+    from core.trades import fmt_when
+
+    opened, closes = profile.window_open(now_ms), profile.window_close(now_ms)
+    span = max(1, closes - opened)
+    pct = min(100, max(0, round(100 * (now_ms - opened) / span)))
+    tfs = " / ".join(profile.timeframes)
+    meta = "".join(f"<span>{html.escape(x)}</span>" for x in (
+        f"{category.chart_tf} chart · {category.context_tf} context", f"Reads {tfs}",
+        f"Judges the next {profile.horizon}", f"Anchored to the {profile.window_label} candle"))
+    return (f"<div class='ti-hero'><div class='ti-hero-main'>"
+            f"<span class='ti-kicker'>{number:02d} · Desk</span><h1>{html.escape(profile.label)}</h1>"
+            f"<div class='ti-hero-meta'>{meta}</div></div>"
+            f"<div class='ti-countdown blueprint'>{CORNERS}"
+            f"<div class='ti-countdown-top'><span>{html.escape(profile.window_title)} candle closes in</span>"
+            f"<span>{pct}% elapsed</span></div>"
+            f"<span class='ti-countdown-left'>{_left(closes - now_ms)}</span>"
+            f"<div class='ti-bar'><div style='width:{pct}%'></div></div>"
+            f"<span class='ti-countdown-at'>{html.escape(fmt_when(closes))}</span></div></div>")
+
+
+def engine_hero_html(number: int, title: str, sub: str) -> str:
+    return (f"<div class='ti-hero'><div class='ti-hero-main'><span class='ti-kicker'>{number:02d} · Engine</span>"
+            f"<h1>{html.escape(title)}</h1><div class='ti-hero-meta'><span>{html.escape(sub)}</span></div></div></div>")
+
+
+def top_bar_html(price, change_pct, updated: str) -> str:
+    """BTC price, its 24h move and the snapshot time - the line every screen is read against."""
+    tone = "" if change_pct is None else ("up" if change_pct >= 0 else "down")
+    change = "" if change_pct is None else f"<span class='ti-top-chg {tone}'>{fmt_pct(change_pct)} 24h</span>"
+    return (f"<div class='ti-top'><span class='ti-label'>BTC / USD</span>"
+            f"<span class='ti-top-price'>{fmt_num(price, 0, '$')}</span>{change}"
+            f"<span class='ti-top-upd'>{html.escape(updated)}</span></div>")
+
+
+def rail_read(verdict, analysis) -> str:
+    """The one-line read under a desk in the rail: the anchored call if there is one, else the live read."""
+    if verdict is not None:
+        d, c = verdict.anchored.direction, verdict.anchored.confidence
+    elif analysis is not None:
+        d, c = analysis.direction.direction, analysis.direction.confidence
+    else:
+        return "no data"
+    return f"{DIR_GLYPH.get(d, '◆')} {d} · {c:.0%}"

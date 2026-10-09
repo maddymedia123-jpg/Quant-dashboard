@@ -473,5 +473,11 @@ runner, report) → `core/store`, `core/anchors`, `core/accuracy`, `core/live_an
 `core/live_accuracy`, `core/alerts` (persistence, anchoring, scoring, notification) → `ui/` renderers
 → `app.py` shell.
 
-Tabs: Live Recon, Intraday, Weekly, Monthly, TRAP Intelligence, Active Trade, War Room, Macro & News.
+Screens, from the rail on the left: four desks (Live Recon, Intraday, Weekly, Monthly), each with its
+chart timeframe and current read, then four engines (TRAP Intelligence, Active Trade, Director report,
+Macro & News). Only the open screen renders. On a phone the rail folds away and the same screens sit
+in a strip under the header. The look is the Industry design system from Hammad's Claude Design
+project: steel on a light technical ground, Barlow, square hairline cards with registration marks.
+Up and down are monochrome by default (hollow steel up, solid ink down); "Signal colours" in the
+sidebar switches to green and red.
 Design spec and implementation plans live under `docs/superpowers/`.

@@ -179,6 +179,66 @@ section[data-testid="stSidebar"] * {{ color: {p['text']}; }}
 [data-testid="stMarkdownContainer"] table {{ display: block; overflow-x: auto; max-width: 100%; }}
 .ti-card th, .ti-card td {{ padding: 6px 12px 6px 0; border-bottom: 1px solid {p['grid']}; text-align: left; color: {p['text']}; }}
 .ti-card th {{ {label} color: {p['muted']}; border-bottom-color: {p['border']}; }}
+.ti-card table, .ti-card th, .ti-card td {{ border-top: 0 !important; border-left: 0 !important; border-right: 0 !important; background: transparent; }}
+/* labels and kickers */
+.ti-label {{ display: block; {label} color: {p['muted']}; margin: 10px 0 2px 0; }}
+.ti-kicker {{ {label} color: {p['accent_deep']}; }}
+/* top bar: the price line every screen is read against */
+.ti-top {{ display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; padding: 4px 0 14px 0; margin-bottom: 18px; border-bottom: 1px solid {p['border']}; }}
+.ti-top .ti-label {{ margin: 0; }}
+.ti-top-price {{ font-family: {_HEADING}; font-weight: 600; font-size: 2rem; line-height: 1; }}
+.ti-top-chg {{ font-size: 0.9rem; }} .ti-top-chg.up {{ color: {p['up']}; }} .ti-top-chg.down {{ color: {p['down']}; }}
+.ti-top-upd {{ font-size: 0.78rem; color: {p['muted']}; }}
+/* hero: the desk title and its candle countdown */
+.ti-hero {{ display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-end; justify-content: space-between; margin: 6px 0 26px 0; }}
+.ti-hero-main {{ display: flex; flex-direction: column; gap: 10px; flex: 1 1 380px; min-width: 0; }}
+.ti-hero h1 {{ font-family: {_HEADING}; font-weight: 600; font-size: clamp(2.5rem, 6vw, 4rem); line-height: 0.95; text-transform: uppercase; letter-spacing: 0.01em; margin: 0; padding: 0; }}
+.ti-hero-meta {{ display: flex; flex-wrap: wrap; gap: 4px 20px; font-size: 0.88rem; color: {p['muted']}; }}
+.blueprint {{ position: relative; border: 1px solid {p['border']}; }}
+.blueprint > .corner {{ position: absolute; width: 11px; height: 11px; color: color-mix(in srgb, {p['text']} 55%, transparent); }}
+.blueprint > .corner::before, .blueprint > .corner::after {{ content: ""; position: absolute; background: currentColor; }}
+.blueprint > .corner::before {{ left: 5px; top: 0; width: 1px; height: 100%; }}
+.blueprint > .corner::after {{ top: 5px; left: 0; width: 100%; height: 1px; }}
+.blueprint > .corner.tl {{ top: -6px; left: -6px; }} .blueprint > .corner.tr {{ top: -6px; right: -6px; }}
+.blueprint > .corner.bl {{ bottom: -6px; left: -6px; }} .blueprint > .corner.br {{ bottom: -6px; right: -6px; }}
+.ti-countdown {{ flex: 0 1 340px; padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; }}
+.ti-countdown-top {{ display: flex; justify-content: space-between; gap: 12px; {label} color: {p['muted']}; }}
+.ti-countdown-left {{ font-family: {_HEADING}; font-weight: 600; font-size: 2.1rem; line-height: 1; }}
+.ti-countdown-at {{ font-size: 0.78rem; color: {p['muted']}; }}
+.ti-bar {{ height: 4px; background: {p['grid']}; margin: 4px 0 8px 0; }}
+.ti-bar > div {{ height: 100%; background: {p['accent']}; }}
+.ti-bar.up > div {{ background: {p['up']}; }} .ti-bar.down > div {{ background: {p['down']}; }}
+/* the anchored direction */
+.ti-dir {{ font-family: {_HEADING}; font-weight: 600; font-size: 2.9rem; line-height: 1; text-transform: uppercase; margin: 2px 0 6px 0; }}
+.ti-dir.up {{ color: {p['up']}; }} .ti-dir.down {{ color: {p['down']}; }}
+.ti-pair {{ display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid {p['border']}; border-bottom: 1px solid {p['border']}; margin: 10px 0 4px 0; }}
+.ti-pair > div {{ padding: 8px 0; }} .ti-pair > div + div {{ padding-left: 14px; border-left: 1px solid {p['border']}; }}
+.ti-pair .ti-label {{ margin: 0; }}
+.ti-pair-v {{ font-family: {_HEADING}; font-weight: 600; font-size: 1.5rem; }} .ti-pair-v.down {{ color: {p['down']}; }}
+/* feeds: square marks, filled when the feed answered, hollow when it did not */
+.ti-feeds {{ display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }}
+.ti-feed {{ display: grid; grid-template-columns: 8px 82px 1fr; gap: 8px; align-items: center; font-size: 0.78rem; line-height: 1.2; }}
+.ti-feed .dot {{ width: 7px; height: 7px; background: {p['accent']}; border: 1px solid {p['accent']}; }}
+.ti-feed.off .dot {{ background: transparent; border-color: {p['down']}; }}
+.ti-feed.off {{ color: {p['down']}; }}
+.ti-feed .src {{ color: {p['muted']}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
+/* the rail: desks then engines, the open screen marked by a steel bar */
+section[data-testid="stSidebar"] [data-testid="stRadio"] [role="radiogroup"] {{ gap: 2px; }}
+section[data-testid="stSidebar"] [data-testid="stRadio"] label[data-testid="stRadioOption"] {{ position: relative; padding: 7px 10px; border-left: 2px solid transparent; margin: 0; width: 100%; cursor: pointer; }}
+section[data-testid="stSidebar"] [data-testid="stRadio"] label[data-testid="stRadioOption"] > div > div > div:first-child:not([data-testid]) {{ display: none; }}
+section[data-testid="stSidebar"] [data-testid="stRadio"] label[data-testid="stRadioOption"][data-selected="true"] {{ border-left-color: {p['accent']}; background: color-mix(in srgb, {p['accent']} 12%, transparent); }}
+section[data-testid="stSidebar"] [data-testid="stRadio"] label[data-testid="stRadioOption"]:hover {{ background: color-mix(in srgb, {p['text']} 6%, transparent); }}
+section[data-testid="stSidebar"] [data-testid="stRadio"] label[data-testid="stRadioOption"] [data-testid="stMarkdownContainer"] p {{ font-family: {_HEADING}; font-weight: 600; font-size: 1.05rem; text-transform: uppercase; letter-spacing: 0.03em; margin: 0; }}
+section[data-testid="stSidebar"] [data-testid="stRadio"] label[data-testid="stRadioOption"] [data-testid="stCaptionContainer"] p {{ font-family: {_BODY}; font-size: 0.78rem; font-weight: 400; text-transform: none; letter-spacing: 0; color: {p['muted']}; margin: 0; }}
+section[data-testid="stSidebar"] [data-testid="stRadio"] label[data-testid="stRadioOption"]:nth-of-type(5) {{ margin-top: 34px; }}
+section[data-testid="stSidebar"] [data-testid="stRadio"] label[data-testid="stRadioOption"]:nth-of-type(5)::before {{ content: "Engines"; position: absolute; left: 10px; top: -26px; {label} color: {p['accent_deep']}; }}
+section[data-testid="stSidebar"] [data-testid="stRadio"] > label p {{ {label} color: {p['accent_deep']}; }}
+/* the phone screen strip: hidden where the rail is visible */
+@media (min-width: 769px) {{ .st-key-ti_mobile_nav {{ display: none; }} }}
+.st-key-ti_mobile_nav [data-testid="stButtonGroup"] {{ flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; border-top: 1px solid {p['border']}; border-bottom: 1px solid {p['border']}; }}
+.st-key-ti_mobile_nav button {{ border-radius: 0 !important; border: 0 !important; border-bottom: 2px solid transparent !important; background: transparent !important; min-height: 44px; white-space: nowrap; }}
+.st-key-ti_mobile_nav button p {{ font-family: {_HEADING}; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }}
+.st-key-ti_mobile_nav button[aria-checked="true"] {{ border-bottom-color: {p['accent']} !important; color: {p['text']} !important; }}
 @media (max-width: 768px) {{
   .block-container {{ padding-left: 1rem; padding-right: 1rem; }}
   .ti-kpis {{ grid-template-columns: repeat(2, 1fr); }}

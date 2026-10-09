@@ -287,9 +287,11 @@ def test_positioning_shows_on_the_weekly_and_monthly_tabs_only(tmp_path, monkeyp
     monkeypatch.setenv("TI_DATA_DIR", str(tmp_path))
     app_py = str(pathlib.Path(__file__).resolve().parent.parent / "app.py")
     at = pytest.importorskip("streamlit.testing.v1").AppTest.from_file(app_py, default_timeout=180).run()
-    assert not at.exception, [e.value for e in at.exception]
-    shown = {t.label: "CME Bitcoin positioning (CFTC)" in " ".join(m.value for m in t.markdown)
-             for t in at.tabs}
-    assert shown.get("Weekly") and shown.get("Monthly"), shown
-    assert not any(v for k, v in shown.items() if k not in ("Weekly", "Monthly")), shown
-    assert not any("Positioning report unavailable" in w.value for w in at.warning)
+    shown = {}
+    for screen in ("live", "intraday", "weekly", "monthly", "trap", "trade", "director", "macro"):
+        at = at.radio(key="screen").set_value(screen).run()
+        assert not at.exception, (screen, [e.value for e in at.exception])
+        assert not any("Positioning report unavailable" in w.value for w in at.warning)
+        shown[screen] = "CME Bitcoin positioning (CFTC)" in " ".join(m.value for m in at.markdown)
+    assert shown == {"live": False, "intraday": False, "weekly": True, "monthly": True,
+                     "trap": False, "trade": False, "director": False, "macro": False}
