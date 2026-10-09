@@ -236,7 +236,9 @@ def test_anchored_summary_panel_states_how_long_it_stays_pinned():
     now = 1_726_750_000_000
     h = panels.anchored_summary_html(payload, now + 95 * 60_000, now, anchored_now=True)
     assert "BULL TRAP RISK" in h and "margin +50" in h
-    assert "Bullish 80 / 100" in h and "Bearish 30 / 100" in h and "bull trap" in h
+    # each total bound to its own row, so the two teams cannot be swapped
+    assert re.search(r"<span>Bullish</span>.*?<span class='n'>80</span>", h)
+    assert re.search(r"<span>Bearish</span>.*?<span class='n'>30</span>", h) and "bull trap" in h
     assert "$78,000" in h and "pinned for 1h 35m more" in h and "Published by this run." in h
     held = panels.anchored_summary_html(payload, now + 60_000, now, anchored_now=False)
     assert "never rewrite this summary" in held
@@ -429,3 +431,15 @@ def test_the_pinned_teams_are_rebuilt_from_the_anchor_on_their_own_side():
     assert "30<span> / 100</span>" in bear and "6.0 / 20" in bear and "ti-card down" in bear
     assert "1. Quant &amp; Statistics" in bull and "5. On-Chain &amp; Derivatives" in bear
     assert "did not score" in panels.payload_team_html("bearish", {**payload, "domains": {"bullish": {}}})
+
+
+def test_the_rail_reads_take_the_signal_colours_when_they_are_on():
+    from ui.theme import palette
+    mono = panels.rail_style_html(["up", "down", "neutral"], ["15m", "1h", "4h"], False, False)
+    sig = panels.rail_style_html(["up", "down", "neutral"], ["15m", "1h", "4h"], False, True)
+    p, q = palette(False), palette(False, signal=True)
+    assert f"nth-of-type(1) [data-testid=\"stCaptionContainer\"] p {{ color: {q['up']}" in sig
+    assert f"nth-of-type(2) [data-testid=\"stCaptionContainer\"] p {{ color: {q['down']}" in sig
+    assert f"nth-of-type(1) [data-testid=\"stCaptionContainer\"] p {{ color: {p['up']}" in mono
+    assert f"nth-of-type(3) [data-testid=\"stCaptionContainer\"] p {{ color: {p['muted']}" in sig, "no call, no colour"
+    assert 'content: "1h"' in sig, "the timeframe sits beside the desk's name"

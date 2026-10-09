@@ -317,7 +317,7 @@ def test_a_pinned_trade_renders_its_whole_plan_and_survives_a_rerun(tmp_path, mo
     assert "BTC/USDT from $78,000" in markdown and "score 72/100" in markdown
     words = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", markdown))
     assert "64% confluence estimate" in markdown
-    assert "stop would be hunted" in markdown and "Given $77,900" in words
+    assert "ti-stopv down'>would be hunted<" in markdown and "Given $77,900" in words
     assert "resting liquidity at 77,800" in markdown
     for cell in ("TP1", "$78,600", "1.50R", "Fibonacci time window", "the 1 sigma band on the 4h"):
         assert cell in markdown, cell
@@ -349,7 +349,7 @@ def test_killing_a_trade_unpins_it(tmp_path, monkeypatch):
 
     kill = next(b for b in at.button if b.key == f"tr_kill_{tid}")
     asked = kill.click().run()
-    assert "Kill this trade?" in " ".join(m.value for m in asked.markdown), "it asks first"
+    assert "The card is unpinned and every alert for this position stops" in         " ".join(m.value for m in asked.markdown), "it asks first, in the dialog"
     from core.store import Store as _S
     _peek = _S()
     assert _peek.trade(tid)["status"] == "open", "nothing is killed until it is confirmed"

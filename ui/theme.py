@@ -145,9 +145,9 @@ section[data-testid="stSidebar"] * {{ color: {p['text']}; }}
 /* KPIs: a ruled grid of equal cells, not floating tiles */
 .ti-kpis {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin: 0 0 16px 0;
   border-top: 1px solid {p['border']}; border-left: 1px solid {p['border']}; }}
-.ti-kpi {{ padding: 12px 14px; border-right: 1px solid {p['border']}; border-bottom: 1px solid {p['border']}; min-width: 0; }}
+.ti-kpi {{ padding: 14px 16px; border-right: 1px solid {p['border']}; border-bottom: 1px solid {p['border']}; min-width: 0; }}
 .ti-kpi .l {{ {label} color: {p['muted']}; }}
-.ti-kpi .v {{ font-family: {_HEADING}; font-size: 1.55rem; line-height: 1.2; font-weight: 600; margin-top: 2px; color: {p['text']}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+.ti-kpi .v {{ font-family: {_HEADING}; font-size: 1.625rem; line-height: 1.875rem; font-weight: 600; margin-top: 2px; color: {p['text']}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
 .ti-kpi .d {{ font-size: 0.78rem; margin-top: 2px; color: {p['muted']}; }}
 .ti-kpi .d.up, .ti-chip.up {{ color: {p['up']}; }}
 .ti-kpi .d.down, .ti-chip.down {{ color: {p['down']}; }}
@@ -161,7 +161,7 @@ section[data-testid="stSidebar"] * {{ color: {p['text']}; }}
 .ti-card > .corner.tl {{ top: -6px; left: -6px; }} .ti-card > .corner.tr {{ top: -6px; right: -6px; }}
 .ti-card > .corner.bl {{ bottom: -6px; left: -6px; }} .ti-card > .corner.br {{ bottom: -6px; right: -6px; }}
 .ti-card h4 {{ {label} margin: 0 0 10px 0; color: {p['accent_deep']}; }}
-.ti-card p, .ti-card li {{ font-size: 0.92rem; line-height: 1.5; margin: 0.2rem 0; color: {p['text']}; }}
+.stApp [data-testid="stMarkdownContainer"] .ti-card p, .stApp [data-testid="stMarkdownContainer"] .ti-card li, .ti-card p, .ti-card li {{ font-size: 0.875rem; line-height: 1.43; margin: 0.2rem 0; color: {p['text']}; }}
 .ti-card ul {{ padding-left: 1.1rem; margin: 0.2rem 0; }}
 .ti-card .muted {{ color: {p['muted']}; }}
 .ti-card strong {{ font-weight: 600; }}
@@ -186,7 +186,7 @@ section[data-testid="stSidebar"] * {{ color: {p['text']}; }}
 /* top bar: the price line every screen is read against */
 .ti-top {{ display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; padding: 4px 0 14px 0; margin-bottom: 18px; border-bottom: 1px solid {p['border']}; }}
 .ti-top .ti-label {{ margin: 0; }}
-.ti-top-price {{ font-family: {_HEADING}; font-weight: 600; font-size: 2rem; line-height: 1; }}
+.ti-top-price {{ font-family: {_HEADING}; font-weight: 600; font-size: 1.875rem; line-height: 1; }}
 .ti-top-chg {{ font-size: 0.9rem; }} .ti-top-chg.up {{ color: {p['up']}; }} .ti-top-chg.down {{ color: {p['down']}; }}
 .ti-top-upd {{ font-size: 0.78rem; color: {p['muted']}; }}
 /* hero: the desk title and its candle countdown */
@@ -224,7 +224,7 @@ section[data-testid="stSidebar"] * {{ color: {p['text']}; }}
 .ti-grid2, .ti-grid3, .ti-grid4 {{ display: grid; gap: 0 14px; border-top: 1px solid {p['border']}; margin: 6px 0; }}
 .ti-grid2 {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }} .ti-grid3 {{ grid-template-columns: repeat(3, minmax(0, 1fr)); }}
 .ti-grid4 {{ grid-template-columns: repeat(4, minmax(0, 1fr)); }}
-.ti-h2 {{ font-family: {_HEADING}; font-weight: 600; font-size: 2rem; line-height: 1.05; text-transform: uppercase; letter-spacing: 0.01em; margin: 4px 0 14px 0; padding: 0; }}
+.stApp h2.ti-h2, .ti-h2 {{ font-family: {_HEADING}; font-weight: 600; font-size: 1.875rem !important; line-height: 2rem !important; text-transform: uppercase; letter-spacing: 0.01em; margin: 4px 0 14px 0; padding: 0; }}
 .ti-h3 {{ font-family: {_HEADING}; font-weight: 600; font-size: 1.35rem; line-height: 1.15; text-transform: uppercase; letter-spacing: 0.03em; margin: 2px 0 6px 0; }}
 .ti-h3.up {{ color: {p['up']}; }} .ti-h3.down {{ color: {p['down']}; }}
 .ti-tags {{ display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 6px 0; }} .ti-tags .ti-chip {{ margin: 0; }}
@@ -256,7 +256,7 @@ section[data-testid="stSidebar"] * {{ color: {p['text']}; }}
 .ti-band-note {{ opacity: 0.75; font-size: 0.8rem !important; }}
 .ti-counts {{ display: flex; flex-wrap: wrap; gap: 10px 40px; margin: 10px 0; }}
 .ti-count {{ display: flex; flex-direction: column; }} .ti-count .ti-label {{ margin: 0; }}
-.ti-count .n {{ font-family: {_HEADING}; font-weight: 600; font-size: 2.6rem; line-height: 1; }}
+.ti-count .n {{ font-family: {_HEADING}; font-weight: 600; font-size: 3.25rem; line-height: 1; }}
 .ti-range {{ margin: 8px 0; }} .ti-kv.right {{ text-align: right; }}
 .ti-track {{ position: relative; height: 4px; background: {p['grid']}; margin: 4px 0 6px 0; }}
 .ti-track-now {{ position: absolute; top: -5px; width: 2px; height: 14px; background: {p['text']}; }}
@@ -282,7 +282,7 @@ section[data-testid="stSidebar"] * {{ color: {p['text']}; }}
 .ti-ladder-mark.top .lab {{ top: 0; }} .ti-ladder-mark.bottom .lab {{ top: 60px; }}
 .ti-two {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 18px 30px; margin: 10px 0; }}
 .ti-three {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); gap: 18px 30px; margin: 14px 0 6px 0; border-top: 1px solid {p['border']}; padding-top: 6px; }}
-.ti-verdict {{ font-family: {_HEADING}; font-weight: 600; font-size: 2.3rem; line-height: 1; text-transform: uppercase; margin: 4px 0; }}
+.ti-verdict {{ font-family: {_HEADING}; font-weight: 600; font-size: 2.5rem; line-height: 1; text-transform: uppercase; margin: 4px 0; }}
 .ti-fa {{ font-size: 0.82rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; margin: 8px 0 4px 0; }}
 .ti-fa .up, .ti-row-rule .up {{ color: {p['up']}; }} .ti-fa .down, .ti-row-rule .down {{ color: {p['down']}; }}
 .ti-row-rule .muted {{ color: {p['muted']}; }}
@@ -296,13 +296,13 @@ section[data-testid="stSidebar"] * {{ color: {p['text']}; }}
 .ti-chan {{ grid-template-columns: 8px 110px 1fr; font-size: 0.86rem; }}
 /* director */
 .ti-chip.neutral-fill {{ background: {p['surface']}; border-color: transparent; color: {p['text']}; }}
-.ti-scen {{ margin: 8px 0; }} .ti-scen p {{ font-size: 0.8rem; margin: 0 !important; }} .ti-scen .ti-bar {{ margin: 3px 0; }}
+.ti-scen {{ margin: 8px 0; }} .stApp .ti-scen p {{ font-size: 0.8125rem; margin: 0 !important; }} .ti-scen .ti-bar {{ margin: 3px 0; }}
 .ti-desk-sum {{ border-top: 1px solid {p['border']}; padding-top: 8px; }}
 .ti-brief {{ border-top: 1px solid {p['grid']}; padding: 10px 0; }} .ti-brief .ti-bar {{ margin: 4px 0; }}
 .ti-agents {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 4px 14px; font-size: 0.8rem; }}
 .ti-agents > div {{ display: flex; justify-content: space-between; gap: 6px; border-bottom: 1px solid {p['grid']}; padding: 2px 0; }}
 /* macro and news */
-.ti-big {{ font-family: {_HEADING}; font-weight: 600; font-size: 2.6rem; line-height: 1; margin: 4px 0; }}
+.ti-big {{ font-family: {_HEADING}; font-weight: 600; font-size: 3rem; line-height: 2.875rem; margin: 4px 0; }}
 .ti-news {{ display: grid; grid-template-columns: 64px 1fr; gap: 12px; font-size: 0.9rem; }}
 .ti-news-title {{ font-weight: 500; }} .ti-news-title a {{ color: {p['text']}; text-decoration: none; }}
 .ti-news-title a:hover {{ color: {p['accent_deep']}; text-decoration: underline; }}
@@ -311,11 +311,51 @@ section[data-testid="stSidebar"] * {{ color: {p['text']}; }}
 .ti-odds-p {{ display: grid; grid-template-columns: 1fr 52px; gap: 8px; align-items: center; }} .ti-odds-p .ti-bar {{ margin: 0; }}
 .ti-cal {{ display: flex; flex-direction: column; gap: 1px; font-size: 0.88rem; }} .ti-cal .ti-chip {{ margin: 0; }}
 @media (max-width: 768px) {{ .ti-odds {{ grid-template-columns: 1fr; gap: 4px; }} }}
+/* sizes the design sets explicitly */
+.stApp [data-testid="stMarkdownContainer"] p, .stApp [data-testid="stMarkdownContainer"] li {{ font-size: 0.9375rem; line-height: 1.5; }}
+.stApp .stButton button p, .stApp [data-testid="stFormSubmitButton"] button p, .stApp [data-testid="stDownloadButton"] button p {{ font-family: {_HEADING}; font-weight: 600; font-size: 0.875rem; text-transform: uppercase; letter-spacing: 0.04em; }}
+.ti-dir.xl {{ font-size: 3.25rem; line-height: 3rem; }}
+.ti-verdict.xl {{ font-size: 3.25rem; line-height: 3rem; }}
+.ti-h3.lg {{ font-size: 1.5rem; }}
+.ti-h4 {{ display: block; font-family: {_HEADING}; font-weight: 600; font-size: 1.25rem; text-transform: uppercase; letter-spacing: 0.03em; margin: 2px 0 6px 0; }}
+.ti-card h4.big {{ font-family: {_HEADING}; font-size: 1.25rem; letter-spacing: 0.03em; color: {p['text']}; }}
+.ti-grid4.live .ti-kv-v {{ font-size: 1.75rem; }} .ti-grid4.stress .ti-kv-v {{ font-size: 1.5rem; }} .ti-grid2.acc .ti-kv-v {{ font-size: 1.375rem; }}
+.ti-trade-head .ti-h3 {{ font-size: 1.625rem; line-height: 1.75rem; }}
+.ti-stopv {{ font-family: {_HEADING}; font-weight: 600; font-size: 1.625rem; line-height: 1.75rem; text-transform: uppercase; margin: 4px 0; }}
+.ti-stopv.up {{ color: {p['up']}; }} .ti-stopv.down {{ color: {p['down']}; }}
+.ti-mx .ti-kicker {{ font-family: {_HEADING}; font-size: 1.06rem; letter-spacing: 0.03em; }}
+.ti-team-row {{ grid-template-columns: 70px 1fr 36px !important; }}
+.ti-team-row .n {{ font-family: {_HEADING}; font-weight: 600; font-size: 1.375rem; text-align: right; }}
+.ti-read {{ display: flex; flex-direction: column; gap: 10px; max-width: 900px; margin: 18px 0 26px 0; }}
+.ti-read p {{ font-size: 1.125rem !important; line-height: 1.8rem !important; margin: 0; }}
+.ti-hero-p {{ font-size: 0.9375rem !important; line-height: 1.44rem !important; color: {p['muted']}; max-width: 760px; margin: 0; }}
+.stApp [data-testid="stMarkdownContainer"] .ti-card p.ti-sum-p, .stApp [data-testid="stMarkdownContainer"] .ti-desk-sum p {{ font-size: 1rem; line-height: 1.56rem; }}
+.ti-early {{ border-color: {p['accent']} !important; box-shadow: none !important; padding: 16px 20px; }}
+.ti-early-row {{ display: flex; flex-wrap: wrap; gap: 8px 28px; align-items: baseline; }}
+.ti-early-title {{ font-family: {_HEADING}; font-weight: 600; font-size: 1.125rem; text-transform: uppercase; letter-spacing: 0.06em; color: {p['accent_ink']}; }}
+.ti-early-drivers {{ display: flex; flex-wrap: wrap; gap: 4px 20px; font-size: 0.875rem; margin-top: 6px; }}
+.ti-triggers summary {{ cursor: pointer; color: {p['accent']}; font-family: {_HEADING}; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.875rem; margin-top: 10px; }}
+.ti-triggers .ti-tags {{ margin-top: 8px; }}
+.st-key-ti_chart {{ position: relative; border: 1px solid {p['border']}; padding: 16px 16px 12px 16px; }}
+.st-key-ti_chart::before, .st-key-ti_chart::after {{ content: "+"; position: absolute; font-size: 15px; line-height: 1; color: color-mix(in srgb, {p['text']} 55%, transparent); }}
+.st-key-ti_chart::before {{ top: -8px; left: -5px; }} .st-key-ti_chart::after {{ bottom: -8px; right: -5px; }}
+.ti-chart-head {{ display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 16px; align-items: center; }}
+.ti-chart-title {{ font-family: {_HEADING}; font-weight: 600; font-size: 1.125rem; text-transform: uppercase; letter-spacing: 0.05em; }}
+.ti-legend {{ display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 0.75rem; color: {p['muted']}; }}
+.ti-legend span {{ display: flex; align-items: center; gap: 6px; }}
+.ti-legend .sw {{ display: inline-block; width: 14px; height: 2px; }}
+.ti-legend .sw.ema21 {{ background: #416180; }} .ti-legend .sw.ema50 {{ background: #94BCE3; }}
+.ti-legend .sw.up {{ width: 8px; height: 10px; border: 1px solid {p['up']}; }} .ti-legend .sw.down {{ width: 8px; height: 10px; background: {p['down']}; }}
+.ti-legend .sw.env {{ width: 8px; height: 10px; border: 1px dashed {p['accent']}; }}
+.ti-chart-cap {{ font-size: 0.75rem; line-height: 1.125rem; color: {p['muted']}; margin: 0; }}
+/* dialogs: square, hairline, the design's condensed title */
+[data-testid="stDialog"] [role="dialog"] {{ border-radius: 0 !important; border: 1px solid {p['border']}; }}
+[data-testid="stDialog"] [role="dialog"] h2 {{ font-family: {_HEADING}; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; font-size: 1.25rem !important; }}
 /* war room */
 .ti-card-meta {{ position: absolute; top: 16px; right: 18px; font-size: 0.78rem; color: {p['muted']}; }}
 .ti-team-pts {{ font-family: {_HEADING}; font-weight: 600; font-size: 3rem; line-height: 1; margin: 6px 0; }}
 .ti-team-pts span {{ font-size: 1rem; color: {p['muted']}; }} .ti-team-pts.up {{ color: {p['up']}; }} .ti-team-pts.down {{ color: {p['down']}; }}
-.ti-dom {{ margin: 6px 0; font-size: 0.86rem; }} .ti-dom .ti-bar {{ margin: 3px 0 0 0; }}
+.ti-dom {{ margin: 6px 0; font-size: 0.9375rem; line-height: 1.3rem; }} .ti-dom .ti-bar {{ margin: 3px 0 0 0; }}
 .ti-prob {{ display: grid; grid-template-columns: 110px 1fr 44px; gap: 10px; align-items: center; font-size: 0.88rem; margin: 6px 0; }}
 .ti-prob .ti-bar {{ margin: 0; }} .ti-prob .v {{ text-align: right; }}
 .ti-sum {{ display: flex; flex-wrap: wrap; gap: 16px 40px; align-items: center; margin: 8px 0; }}
@@ -331,6 +371,9 @@ section[data-testid="stSidebar"] * {{ color: {p['text']}; }}
 .ti-feed.off .dot {{ background: transparent; border-color: {p['down']}; }}
 .ti-feed.off {{ color: {p['down']}; }}
 .ti-feed .src {{ color: {p['muted']}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
+section[data-testid="stSidebar"] label[data-testid="stRadioOption"] [data-testid="stMarkdownContainer"] {{ width: 100%; }}
+section[data-testid="stSidebar"] label[data-testid="stRadioOption"] > div {{ flex: 1; }}
+section[data-testid="stSidebar"] label[data-testid="stRadioOption"] [data-testid="stMarkdownContainer"] p {{ display: flex; justify-content: space-between; align-items: baseline; }}
 /* the rail: desks then engines, the open screen marked by a steel bar */
 section[data-testid="stSidebar"] [data-testid="stRadio"] [role="radiogroup"] {{ gap: 2px; }}
 section[data-testid="stSidebar"] [data-testid="stRadio"] label[data-testid="stRadioOption"] {{ position: relative; padding: 7px 10px; border-left: 2px solid transparent; margin: 0; width: 100%; cursor: pointer; }}

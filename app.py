@@ -127,7 +127,7 @@ st.session_state["signal"] = signal
 inject_css(dark, signal)
 top = st.container()
 with top:
-    _price_col, _auto_col, _refresh_col, _run_col = st.columns([5, 2.2, 1.5, 1.7], vertical_alignment="bottom")
+    _price_col, _auto_col, _refresh_col, _run_col = st.columns([4.2, 3, 1.5, 1.7], vertical_alignment="bottom")
 price_slot = _price_col.empty()
 # phones get the screens as a strip under the header (the rail is hidden in the collapsed sidebar there)
 nav_slot = top.container(key="ti_mobile_nav")
@@ -139,11 +139,11 @@ if _refresh_col.button("Refresh data", width="stretch"):
 
 AUTO_OPTIONS = (0, 30, 60, 120)
 st.session_state.setdefault("auto_refresh", 0)
-auto_every = _auto_col.selectbox(
-    "Auto-refresh", AUTO_OPTIONS, index=AUTO_OPTIONS.index(st.session_state["auto_refresh"]),
-    format_func=lambda v: "Off" if v == 0 else f"every {v}s",
+auto_every = _auto_col.segmented_control(
+    "Auto-refresh", AUTO_OPTIONS, default=st.session_state["auto_refresh"], key="auto_refresh_ctl",
+    format_func=lambda v: "Off" if v == 0 else f"{v}s",
     help="Reruns the page on a timer. Data caches still apply (spot 25s, context 120s), so this adds no API load.",
-)
+) or 0
 st.session_state["auto_refresh"] = auto_every
 st.session_state["last_full_run_ms"] = int(time.time() * 1000)
 
@@ -376,7 +376,7 @@ if not m.spot.available:
 ENGINES = {"trap": "TRAP Intelligence", "trade": "Active Trade", "director": "Director report", "macro": "Macro & News"}
 SCREENS = list(CATEGORIES) + list(ENGINES)
 _labels = {**{k: c.label for k, c in CATEGORIES.items()}, **ENGINES}
-_captions = ([f"{CATEGORIES[k].chart_tf} · {panels.rail_read(verdicts.get(k), analyses.get(k))}" for k in CATEGORIES]
+_captions = ([panels.rail_read(verdicts.get(k), analyses.get(k)) for k in CATEGORIES]
              + ["Sweep, anchored traps, watch list", "Positions, stops and targets",
                 f"Report {report.report_id}" if report is not None else "Run Analysis to generate",
                 "Headlines, gold, rates, odds"])
@@ -399,6 +399,9 @@ with nav_slot:
 with rail_slot:
     screen = st.radio("Desks", SCREENS, format_func=_labels.get, captions=_captions, key="screen",
                       on_change=_from_rail)
+    panels.render(panels.rail_style_html(
+        [panels.rail_tone(verdicts.get(k), analyses.get(k)) for k in CATEGORIES],
+        [CATEGORIES[k].chart_tf for k in CATEGORIES], dark, signal))
 
 
 def _data_stamp() -> str:
@@ -556,7 +559,10 @@ def category_tab(key):
         # the chart and the call it supports sit side by side, as the design draws them
         c_chart, c_dir = st.columns([2, 1], gap="large")
         with c_chart:
-            render_chart(a, dark, height=520, signal=signal)
+            with st.container(key="ti_chart"):
+                panels.render(panels.chart_head_html(a, signal))
+                render_chart(a, dark, height=480, signal=signal)
+                panels.render(f"<p class='ti-chart-cap'>{panels.CHART_CAPTION}</p>")
         with c_dir:
             v = verdicts.get(key)
             panels.render(panels.anchored_direction_html(a, v, now_ms) if v else panels.direction_html(a))
@@ -770,6 +776,21 @@ def trade_alert_pass(row: dict, prog) -> None:
         st.caption(f"Alerts: {note}")
 
 
+@st.dialog("Kill this trade?")
+def _kill_dialog(row: dict, price_now) -> None:
+    st.markdown(f"<p>#{row['id']} {html.escape(str(row['side']))} {html.escape(str(row['asset']))} from "
+                f"${float(row['entry']):,.0f}. The card is unpinned and every alert for this position stops. "
+                "It moves to recently closed.</p>", unsafe_allow_html=True)
+    k1, k2 = st.columns(2)
+    if k1.button("Keep tracking", key=f"tr_keep_{row['id']}", width="stretch"):
+        st.session_state.pop("kill_pending", None)
+        st.rerun()
+    if k2.button("KILL", key=f"tr_kill_confirm_{row['id']}", type="primary", width="stretch"):
+        st.session_state.pop("kill_pending", None)
+        store.close_trade(row["id"], "killed by the trader", price_now, now_ms)
+        st.rerun()
+
+
 if screen == "trade":
     panels.render(panels.engine_hero_html(
         6, "Active Trade",
@@ -886,20 +907,8 @@ if screen == "trade":
                      help="Unpins the card and stops every alert for this position."):
             st.session_state["kill_pending"] = row["id"]
         if st.session_state.get("kill_pending") == row["id"]:
-            # the design asks before it kills: a misclick must not unpin a live position
-            with st.container(border=True):
-                st.markdown(f"<span class='ti-h3'>Kill this trade?</span><p>#{row['id']} {row['side']} "
-                            f"{row['asset']} from ${float(row['entry']):,.0f}. The card is unpinned and every "
-                            "alert for this position stops. It moves to recently closed.</p>",
-                            unsafe_allow_html=True)
-                k1, k2, _ = st.columns([1, 1, 3])
-                if k1.button("Keep tracking", key=f"tr_keep_{row['id']}", width="stretch"):
-                    st.session_state.pop("kill_pending", None)
-                    st.rerun()
-                if k2.button("KILL", key=f"tr_kill_confirm_{row['id']}", type="primary", width="stretch"):
-                    st.session_state.pop("kill_pending", None)
-                    store.close_trade(row["id"], "killed by the trader", price_now, now_ms)
-                    st.rerun()
+            # the design asks before it kills, in a dialog: a misclick must not unpin a live position
+            _kill_dialog(row, price_now)
 
     if closed_trades:
         with st.expander(f"Recently closed ({len(closed_trades)})", expanded=False):

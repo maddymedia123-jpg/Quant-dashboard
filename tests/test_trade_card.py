@@ -99,7 +99,7 @@ def test_a_first_target_nearer_than_the_stop_is_called_out():
 def test_a_corrected_stop_says_what_was_given_and_what_is_traded():
     h = panels.trade_card_html(row(given_stop=77_900.0,
                                    plan=plan(stop_verdict="would be hunted")), None, NOW)
-    assert "stop would be hunted" in h
+    assert "ti-stopv down'>would be hunted<" in h
     t = text(h)
     assert "Desk stop $77,600" in t, "the stop actually traded"
     assert "Given $77,900" in t and "corrected here" in t
@@ -107,7 +107,7 @@ def test_a_corrected_stop_says_what_was_given_and_what_is_traded():
 
 def test_a_sound_stop_does_not_nag_about_the_given_one():
     h = panels.trade_card_html(row(given_stop=77_600.0, plan=plan(stop_verdict="sound")), None, NOW)
-    assert "stop sound" in h and "corrected here" not in h
+    assert "ti-stopv up'>sound<" in h and "corrected here" not in h
 
 
 def test_the_pullback_guardrail_reads_as_plain_english():

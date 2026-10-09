@@ -4,7 +4,8 @@ primaryColor = "#5980A6"
 backgroundColor = "#F2F2F3"
 secondaryBackgroundColor = "#E9E9EA"
 textColor = "#1D1F20"
-font = "sans serif"
+font = "Barlow:https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&display=swap, sans-serif"
+headingFont = "Barlow Condensed:https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600&display=swap, sans-serif"
 
 [server]
 headless = true

@@ -122,7 +122,8 @@ def layman_html(a: CategoryAnalysis) -> str:
         parts.append(f"The call stays anchored at {fmt_num(d.anchor, 0, '$')} and flips if: {d.flips_if.lower()}.")
     else:
         parts.append(f"It flips if: {d.flips_if.lower()}.")
-    return card_html("Summary", "<p>" + html.escape(" ".join(parts)) + "</p>", tone_for_direction(d.direction))
+    return ("<div class='ti-read'><span class='ti-kicker'>Plain-English read</span>"
+            f"<p>{html.escape(' '.join(parts))}</p></div>")
 
 
 def _ago(delta_ms: int) -> str:
@@ -157,7 +158,9 @@ def anchored_direction_html(a: CategoryAnalysis, v, now_ms: int) -> str:
              f"<span class='ti-pair-v down'>{fmt_num(an.invalidation, 0, '$')}</span></div></div>")
     body += f"<span class='ti-label'>Flips if</span><p>{html.escape(an.flips_if)}</p>"
     body += f"<span class='ti-label'>Drivers</span>" + _li(an.drivers)
-    body += f"<p class='muted'>Triggers watched: {TRIGGERS_WATCHED}</p>"
+    body += ("<details class='ti-triggers'><summary>Show the eight re-anchor triggers</summary><div class='ti-tags'>"
+             + "".join(chip(t.strip(), "neutral-fill") for t in TRIGGERS_WATCHED.split("·"))
+             + f"</div><p class='muted'>Triggers watched: {TRIGGERS_WATCHED}</p></details>")
     return card_html("Market direction · anchored", body, tone)
 
 
@@ -166,10 +169,10 @@ def early_warning_html(ws) -> str | None:
         return None
     body = ""
     for w in ws:
-        body += f"<p><strong>{html.escape(w.kind.replace('_', ' '))}</strong> · {html.escape(w.level)}</p>" + _li(w.drivers)
-    return card_html("Early warning", body, "warn")
-
-
+        body += (f"<div class='ti-early-row'><span class='ti-early-title'>Early warning · "
+                 f"{html.escape(w.kind.replace('_', ' '))}</span><strong>{html.escape(w.level)}</strong></div>"
+                 + "<div class='ti-early-drivers'>" + "".join(f"<span>— {html.escape(d)}</span>" for d in w.drivers) + "</div>")
+    return f"<div class='ti-early blueprint ti-card warn'>{CORNERS}{body}</div>"
 def _rate_rows(d: dict) -> str:
     rows = ""
     for k, h in sorted(d.items()):
@@ -354,8 +357,8 @@ def director_html(report) -> str:
         plan += "<span class='ti-label'>Time rules</span>" + _li(tp.time_rules)
     tone = {"BULL_TRAP": "down", "BEAR_TRAP": "up", "RANGE_TRAP": "warn"}.get(d.trap_classification, "neutral")
     body = (f"<div class='ti-two'><div><span class='ti-label'>Trap classification</span>"
-            f"<div class='ti-verdict'>{CLASS_WORDS.get(d.trap_classification, d.trap_classification)}</div>"
-            f"<p>{html.escape(d.executive_summary)}</p><p class='muted'>{html.escape(d.classification_rationale)}</p></div>"
+            f"<div class='ti-verdict xl'>{CLASS_WORDS.get(d.trap_classification, d.trap_classification)}</div>"
+            f"<p class='ti-sum-p'>{html.escape(d.executive_summary)}</p><p class='muted'>{html.escape(d.classification_rationale)}</p></div>"
             f"<div><span class='ti-label'>Probability-weighted scenarios</span>{scen}</div></div>"
             f"<div class='ti-foot'><span class='ti-label'>Trade plan</span>{plan}</div>")
     return card_html(f"Report {report.report_id}", body, tone)
@@ -370,7 +373,7 @@ def director_lists_html(report) -> str:
               for c in d.contradictions]
     cols = (("Contradictions", contra), ("Convergence", d.convergence), ("Blind spots", d.blind_spots))
     return "<div class='ti-three'>" + "".join(
-        f"<div><span class='ti-label'>{t}</span>" + (_li(items) or "<p class='muted'>None reported.</p>") + "</div>"
+        f"<div><span class='ti-h4'>{t}</span>" + (_li(items) or "<p class='muted'>None reported.</p>") + "</div>"
         for t, items in cols) + "</div>"
 
 
@@ -425,7 +428,7 @@ def agent_placeholder_html(a: CategoryAnalysis) -> str:
 def trade_result_html(tm: TradeMap) -> str:
     tone = {"OPTIMAL": "up", "ELEVATED": "warn", "EXTREME": "down"}[tm.risk_label]
     body = (f"<div class='ti-h3'>{tm.classification} · {tm.direction} {tm.leverage:.0f}x from {fmt_num(tm.entry, 0, '$')}</div>"
-            "<div class='ti-grid4'>" + _kv("Liquidation", fmt_num(tm.liquidation_price, 0, "$"), "down")
+            "<div class='ti-grid4 stress'>" + _kv("Liquidation", fmt_num(tm.liquidation_price, 0, "$"), "down")
             + _kv("Distance", f"{tm.dist_to_liq_pct:.1f}% away") + _kv("Reward : risk", fmt_num(tm.rr, 2))
             + _kv("Risk", tm.risk_label) + "</div>")
     body += (f"<p class='muted'>Stop {fmt_num(tm.stop, 0, '$')} · target {fmt_num(tm.target, 0, '$')} · "
@@ -538,7 +541,7 @@ def team_html(team) -> str:
                       [(d.agent_no, d.title, d.points, d.max_points) for d in team.domains], meta)
     if team.missing:
         body += f"<p class='muted'>{len(team.missing)} checklist items unanswered and scored 0.</p>"
-    return card_html(f"{team.side.title()} team", body, "up" if team.side == "bullish" else "down")
+    return card_html(f"{team.side.title()} team", body, "up" if team.side == "bullish" else "down").replace("<h4>", "<h4 class='big'>", 1)
 
 
 def payload_team_html(side: str, anchor: dict) -> str:
@@ -550,7 +553,7 @@ def payload_team_html(side: str, anchor: dict) -> str:
     domains = [(d.agent_no, d.title, float(pts.get(d.key) or 0), d.max_points) for d in DOMAINS]
     body = _team_card(side, anchor.get(f"{'bull' if side == 'bullish' else 'bear'}_points"),
                       str(anchor.get(f"{'bull' if side == 'bullish' else 'bear'}_verdict") or ""), domains, "pinned run")
-    return card_html(f"{side.title()} team", body, "up" if side == "bullish" else "down")
+    return card_html(f"{side.title()} team", body, "up" if side == "bullish" else "down").replace("<h4>", "<h4 class='big'>", 1)
 def trap_audit_html(choice, probabilities: dict, consulted: bool, override=None, error=None) -> str:
     """The trap agent's distribution, most likely first, and whether the Head had to consult it."""
     if error:
@@ -561,7 +564,7 @@ def trap_audit_html(choice, probabilities: dict, consulted: bool, override=None,
     for i, (k, v) in enumerate(sorted((probabilities or {}).items(), key=lambda kv: -kv[1])):
         rows += (f"<div class='ti-prob'><span class='l'>{html.escape(TRAP_LABELS.get(k, k))}</span>"
                  f"{_bar(v * 100, '' if i == 0 else 'faint')}<span class='v'>{v:.0%}</span></div>")
-    body = f"<div class='ti-h3'>{html.escape(label)}</div>{rows}"
+    body = f"<div class='ti-h3 lg'>{html.escape(label)}</div>{rows}"
     body += ("<p class='muted'>Consulted: neither team cleared the bar on its own.</p>" if consulted else
              "<p class='muted'>Not required: consulted only when both teams clear 60 or neither leads by ten.</p>")
     if override:
@@ -595,12 +598,12 @@ def anchored_summary_html(anchor: dict, window_close_ms: int, now_ms: int, ancho
                  (f" · {fmt_num(anchor.get('price'), 0, '$')}" if anchor.get("price") else ""))
     body = (f"<div class='ti-split ti-sum-head'><span class='ti-tag-solid'>Pinned · {_remaining(mins)} left</span>"
             f"<span class='muted'>{published}</span></div>")
-    body += (f"<div class='ti-sum'><div><div class='ti-dir {tone}'>{glyph} {html.escape(bias)}</div>"
+    body += (f"<div class='ti-sum'><div><div class='ti-dir xl {tone}'>{glyph} {html.escape(bias)}</div>"
              f"<p>Confidence {float(anchor.get('confidence') or 0):.0%} · margin "
              f"{float(anchor.get('margin') or 0):+.0f} points · trap read: {html.escape(trap)}</p></div>"
              f"<div class='ti-teams'>"
-             f"<div class='ti-team-row'><span>Bullish {bull:.0f} / 100</span>{_bar(bull, 'up tick60')}</div>"
-             f"<div class='ti-team-row'><span>Bearish {bear:.0f} / 100</span>{_bar(bear, 'down tick60')}</div>"
+             f"<div class='ti-team-row'><span>Bullish</span>{_bar(bull, 'up tick60')}<span class='n'>{bull:.0f}</span></div>"
+             f"<div class='ti-team-row'><span>Bearish</span>{_bar(bear, 'down tick60')}<span class='n'>{bear:.0f}</span></div>"
              f"<span class='muted'>Out of 100 per team. The tick marks 60, where the trap agent is consulted "
              f"if both teams clear it.</span></div></div>")
     body += (f"<p class='muted ti-note'>Anchored {html.escape(str(anchor.get('published_at_utc', '')))} "
@@ -715,7 +718,7 @@ def accuracy_report_html(rep) -> str:
 
     label = "Healthy" if rep.status == "healthy" else "Calibration needed"
     body = (f"<div class='ti-tags'>{chip(label, 'outline' if rep.status == 'healthy' else 'warn')}</div>"
-            f"<p>{html.escape(rep.headline)}</p><div class='ti-grid2'>"
+            f"<p>{html.escape(rep.headline)}</p><div class='ti-grid2 acc'>"
             + _kv("Direction right", pct(rep.hit_rate)) + _kv("Trap call right", pct(rep.trap_hit_rate))
             + _kv("Bullish Brier", brier(rep.bull_brier)) + _kv("Bearish Brier", brier(rep.bear_brier)) + "</div>")
     body += ("<p class='muted'>Team scores are Brier scores: 0 is perfect, 0.25 is a coin flip, higher is "
@@ -1081,7 +1084,7 @@ def trade_card_html(trade: dict, prog=None, now_ms: int = 0, price_now: float | 
     elif prog is not None:
         reached = f"{len(prog.hit)} / {len(targets)} · " + (", ".join(prog.hit) if prog.hit else "none yet")
         pnl_tone = "up" if prog.pnl_pct >= 0 else "down"
-        body += ("<div class='ti-grid4'>" + _kv("Now", fmt_num(prog.price, 0, "$"))
+        body += ("<div class='ti-grid4 live'>" + _kv("Now", fmt_num(prog.price, 0, "$"))
                  + _kv("PnL", f"{prog.pnl_pct:+.2f}%", pnl_tone) + _kv("In R", f"{prog.pnl_r:+.2f}R", pnl_tone)
                  + _kv("Targets reached", html.escape(reached)) + "</div>")
         # the price is recomputed on every rerun, so it is stamped with now; `refreshed_ms` is reported
@@ -1136,7 +1139,7 @@ def trade_card_html(trade: dict, prog=None, now_ms: int = 0, price_now: float | 
              "desks' alignment. They are a measure of confluence, not a backtested win rate - nothing "
              "here counts how often a setup like this has worked.</p>")
     right = (f"<span class='ti-label'>Stop verification</span>"
-             f"<div class='ti-tags'>{chip('stop ' + verdict, STOP_TONE.get(verdict, 'neutral'))}</div>"
+             f"<div class='ti-stopv {STOP_TONE.get(verdict, 'neutral')}'>{html.escape(verdict)}</div>"
              f"<div class='ti-grid2'>{_kv('Given', fmt_num(given, 0, '$') if given is not None else 'none given')}"
              f"{_kv('Desk stop', fmt_num(stop, 0, '$'))}</div>"
              + _li([str(r) for r in (plan.get("stop_reasons") or [])]))
@@ -1373,8 +1376,10 @@ def predictions_html(preds, now_ms: int, asset: str | None = None, limit: int = 
 # ---------- the sidebar clock ----------
 # Rendered as a self-contained ticking component rather than a formatted string: Streamlit only redraws
 # on a rerun, so a server-rendered clock sits frozen at the page-load time, which is worse than none.
-CLOCK_HTML = """<div id="ti-clock" style="font:13px Barlow,system-ui,sans-serif;color:__TEXT__;
-line-height:1.5"><span id="ti-pkt" style="font-weight:600"></span><br>
+CLOCK_HTML = """<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;600&family=Barlow+Condensed:wght@600&display=swap" rel="stylesheet">
+<div id="ti-clock" style="font:12px Barlow,system-ui,sans-serif;color:__TEXT__;line-height:1.35">
+<div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;font-weight:600;opacity:.7">Clock</div>
+<span id="ti-pkt" style="font:600 24px 'Barlow Condensed',Barlow,system-ui,sans-serif"></span><br>
 <span id="ti-utc" style="opacity:.7"></span></div>
 <script>
 function pad(n){return String(n).padStart(2,'0')}
@@ -1559,7 +1564,7 @@ def desk_hero_html(number: int, profile, category, now_ms: int) -> str:
 
 def engine_hero_html(number: int, title: str, sub: str) -> str:
     return (f"<div class='ti-hero'><div class='ti-hero-main'><span class='ti-kicker'>{number:02d} · Engine</span>"
-            f"<h1>{html.escape(title)}</h1><div class='ti-hero-meta'><span>{html.escape(sub)}</span></div></div></div>")
+            f"<h1>{html.escape(title)}</h1><p class='ti-hero-p'>{html.escape(sub)}</p></div></div>")
 
 
 def top_bar_html(price, change_pct, updated: str) -> str:
@@ -1571,6 +1576,29 @@ def top_bar_html(price, change_pct, updated: str) -> str:
             f"<span class='ti-top-upd'>{html.escape(updated)}</span></div>")
 
 
+def rail_tone(verdict, analysis) -> str:
+    """up, down or neutral for the desk's current call, so the rail can colour its read."""
+    d = (verdict.anchored.direction if verdict is not None else
+         analysis.direction.direction if analysis is not None else "")
+    return tone_for_direction(d)
+
+
+def rail_style_html(tones: list[str], timeframes: list[str], dark: bool, signal: bool) -> str:
+    """Per-desk rules for the rail: each read in its direction's colour (green and red when signal colours
+    are on, steel and ink when not), and the chart timeframe set beside the desk's name. Generated per run
+    because Streamlit gives no way to style one radio caption differently from the next."""
+    pal = palette(dark, signal)
+    colour = {"up": pal["up"], "down": pal["down"], "neutral": pal["muted"]}
+    opt = 'section[data-testid="stSidebar"] label[data-testid="stRadioOption"]'
+    rules = []
+    for i, (tone, tf) in enumerate(zip(tones, timeframes), start=1):
+        rules.append(f"{opt}:nth-of-type({i}) [data-testid=\"stCaptionContainer\"] p {{ color: {colour.get(tone, pal['muted'])} !important; }}")
+        rules.append(f"{opt}:nth-of-type({i}) [data-testid=\"stMarkdownContainer\"] p::after {{ content: \"{html.escape(tf)}\"; "
+                     f"font-family: 'Barlow', sans-serif; font-weight: 400; font-size: 0.75rem; "
+                     f"letter-spacing: 0; text-transform: none; color: {pal['muted']}; margin-left: 10px; }}")
+    return "<style>" + "\n".join(rules) + "</style>"
+
+
 def rail_read(verdict, analysis) -> str:
     """The one-line read under a desk in the rail: the anchored call if there is one, else the live read."""
     if verdict is not None:
@@ -1580,3 +1608,20 @@ def rail_read(verdict, analysis) -> str:
     else:
         return "no data"
     return f"{DIR_GLYPH.get(d, '◆')} {d} · {c:.0%}"
+
+
+def chart_head_html(a, signal: bool = False) -> str:
+    """The chart's title and legend, as the design frames the figure."""
+    legend = ("<span><i class='sw ema21'></i>EMA 21</span><span><i class='sw ema50'></i>EMA 50</span>"
+              "<span><i class='sw up'></i>up</span><span><i class='sw down'></i>down</span>"
+              "<span title='The volatility envelope drawn as bars: body ±0.5σ, wick ±1σ. Not predicted candles.'>"
+              "<i class='sw env'></i>envelope</span>")
+    # the series legend is drawn inside the chart itself (it also covers EMA 100/200 and the forecast),
+    # so the frame carries the title only rather than a second, shorter legend
+    del legend
+    return (f"<div class='ti-chart-head'><span class='ti-chart-title'>BTC / USD · {html.escape(a.chart_tf)}</span>"
+            "</div>")
+
+
+CHART_CAPTION = ("Dotted bars after now are the volatility envelope drawn as bars: body ±0.5σ, wick ±1σ, widening "
+                 "with the square root of bars ahead. They are not predicted candles.")
