@@ -1147,3 +1147,73 @@ def rates_html(macro, now_ms: int) -> str:
              "reading a couple of days old is normal. A move of 15 bp in a yield or 1.5 points in the "
              "dollar over a week is highlighted.</p>")
     return card_html("US macro", body, "neutral")
+
+
+def cot_html(cot, now_ms: int) -> str:
+    """Who is positioned which way in CME Bitcoin futures, from the CFTC's weekly report.
+
+    The as-of date leads, because this is weekly data: positions as of Tuesday, released Friday, and by
+    the following Thursday it describes positioning from before the current weekly candle opened. The
+    headline is the COT index - where the large speculators' net sits within its own 52-week range -
+    because that, not the raw number, is what says whether the trade is crowded."""
+    if not getattr(cot, "available", False):
+        return card_html("CME Bitcoin positioning (CFTC)",
+                         f"<p class='muted'>No positioning report: "
+                         f"{html.escape(str(getattr(cot, 'error', '') or 'unavailable'))}.</p>", "neutral")
+    from core.data.cot import CROWDED_LONG, CROWDED_SHORT
+    from core.trades import fmt_when
+
+    when = html.escape(fmt_when(cot.as_of_ms, both=False).split(" ", 2)[-1]) if cot.as_of_ms else "unknown"
+    age = cot.age_days
+    # the weekday comes from the date itself: holiday weeks move the as-of day off its usual Tuesday
+    body = (f"<p><strong>Positions as of {when}</strong> <span class='muted'>· released the following Friday"
+            + (f" · {age:.0f} days old" if age is not None else "") + "</span>")
+    if cot.stale:
+        body += (" <span class='ti-chip down'>stale</span></p><p class='muted'>Older than this report "
+                 "should ever be - a release was missed, as happens during a US government shutdown. "
+                 "Do not read this as current positioning.</p>")
+    else:
+        body += "</p>"
+
+    def contracts(n):
+        if n is None:
+            return "—"
+        text = f"{n:+,} contracts"
+        if cot.contract_btc:
+            text += f" (~{n * cot.contract_btc:+,.0f} BTC)"
+        return text
+
+    index = cot.cot_index
+    if index is None:
+        body += (f"<p class='muted'>Not enough history for a positioning index "
+                 f"({cot.weeks_in_index} weeks; needs 26).</p>")
+    else:
+        if index >= CROWDED_LONG:
+            read, tone = "crowded long", "down"
+        elif index <= CROWDED_SHORT:
+            read, tone = "crowded short", "up"
+        else:
+            read, tone = "neither extreme", "neutral"
+        body += (f"<p>Large speculators: <span class='ti-chip {tone}'>{html.escape(read)}</span> "
+                 f"<strong>{index:.0f} of 100</strong> <span class='muted'>against their own "
+                 f"{cot.weeks_in_index}-week range</span></p>")
+
+    rows = [("Large speculators (net)", contracts(cot.spec_net),
+             f"{cot.spec_net_change:+,} on the week" if cot.spec_net_change is not None else ""),
+            ("Commercials (net)", contracts(cot.commercial_net), ""),
+            ("Small traders (net)", contracts(cot.small_trader_net), ""),
+            ("Open interest", f"{cot.open_interest:,} contracts" if cot.open_interest is not None else "—",
+             f"{cot.open_interest_change:+,} on the week" if cot.open_interest_change is not None else "")]
+    body += "<table><tbody>" + "".join(
+        f"<tr><td>{html.escape(a)}</td><td><strong>{html.escape(b)}</strong></td>"
+        f"<td class='muted'>{html.escape(c)}</td></tr>" for a, b, c in rows) + "</tbody></table>"
+
+    traders = cot.traders or {}
+    if traders.get("commercials_long") is not None and traders.get("commercials_short") is not None:
+        body += (f"<p class='muted'>Commercials are only {traders['commercials_long']} long and "
+                 f"{traders['commercials_short']} short traders here, so their net is a handful of "
+                 "hedgers rather than a market read; the speculators are the signal.</p>")
+    body += (f"<p class='muted'>{html.escape(cot.market or 'CME Bitcoin')}. Weekly data - context for "
+             "the weekly and monthly view, never for an intraday call. A reading of "
+             f"{CROWDED_LONG}+ is conventionally crowded long, {CROWDED_SHORT} or below crowded short.</p>")
+    return card_html("CME Bitcoin positioning (CFTC)", body, "warn" if cot.stale else "neutral")

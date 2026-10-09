@@ -35,7 +35,8 @@ Deribit options for max pain, put/call and IV skew · DefiLlama stablecoin suppl
 Greed · Forex Factory weekly economic calendar (high-impact USD prints with forecast/previous; drives the
 macro-window trigger) · CoinDesk and Cointelegraph RSS plus the cryptocurrency.cv aggregator for headlines · goldprice.dev for XAU/USD spot
 (gold only; silver and copper are plan-gated) · Polymarket odds via voxodds.com, with an execution-quality
-band per market · FRED for the dollar index, 10Y and 2Y yields.
+band per market · FRED for the dollar index, 10Y and 2Y yields · CFTC Commitments of Traders for
+CME Bitcoin futures (Weekly and Monthly tabs only).
 
 Binance and Bybit geo-block US egress, and Streamlit Cloud is US-hosted, which is why Gate.io sits in the
 chain — the live site sources futures from it. Whichever provider answered is labelled in the sidebar.
@@ -330,6 +331,21 @@ chosen by calling them, not by reading a directory's Auth column, and each hid s
   observation dates are shown as dates, not as PKT clock times - they are calendar dates, and a time of
   day beside one would be invented precision. Reached via Firecrawl's Alexandria catalogue, but called
   directly: Alexandria itself needs a key, and this needs none.
+
+- **Who is positioned which way — CFTC Commitments of Traders** (`publicreporting.cftc.gov`, keyless,
+  legacy futures-only report, CME Bitcoin contract `133741`): large-speculator, commercial and
+  small-trader net positions, the week-on-week change, open interest, and the **COT index** - where the
+  speculators' net sits within its own 52-week range (80+ crowded long, 20 or below crowded short; no
+  index under 26 weeks of history). It is **weekly** - positions as of Tuesday, released Friday, three to
+  ten days old in normal operation - so it is shown on the **Weekly and Monthly tabs only**, never feeds
+  the fast desks or the trap detector, and leads with its as-of date. *Traps found by calling it:* a name
+  match on "Bitcoin" also returns Bitcoin Cash, so the market is chosen by exact contract code; codes are
+  reused across exchanges, so the exchange name is checked too; the CFTC misspells some of its own
+  columns, so every field read is checked for presence and a missing one makes the feed unavailable
+  rather than zero; and a CME contract is **5 BTC**, parsed from the report's own units string (no BTC
+  figure is shown if it cannot be). Older than 10 days means a missed release (as in a US government
+  shutdown) and is flagged stale. Commercials here are a handful of traders, so the panel says their net
+  is hedging, not a market read.
 
 Headlines are **tagged, not judged**: topic and impact come from keyword matching over the headline text,
 which cannot tell a rumour from a confirmation. They are shown as tags so the list can be sorted, and the

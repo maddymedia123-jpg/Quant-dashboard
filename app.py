@@ -497,6 +497,12 @@ def category_tab(tab, key):
             render_war_room(profile)
         if key in ("weekly", "monthly"):
             panels.render(panels.calendar_html(m, now_ms))
+            # weekly positioning belongs on the weekly and monthly view only: it is three to ten days
+            # old in normal operation, which is meaningless against a four-hour or 24-hour horizon
+            try:
+                panels.render(panels.cot_html(m.cot, now_ms))
+            except Exception as e:  # noqa: BLE001
+                st.warning(f"Positioning report unavailable: {e}")
 
 
 for tab, key in zip(tabs[:4], CATEGORIES.keys()):

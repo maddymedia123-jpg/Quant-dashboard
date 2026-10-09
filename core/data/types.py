@@ -183,10 +183,33 @@ class MacroSnapshot(Availability):
     spread_as_of_ms: Optional[int] = None
 
 
+class COTSnapshot(Availability):
+    """CFTC Commitments of Traders for CME Bitcoin futures. Weekly: positions as of Tuesday, released
+    Friday. Positions are in CONTRACTS; `contract_btc` is bitcoin per contract, parsed from the report's
+    own units string, and None when it cannot be - in which case no bitcoin figure is shown."""
+    market: str = ""
+    as_of_ms: Optional[int] = None
+    age_days: Optional[float] = None
+    stale: bool = False
+    contract_btc: Optional[float] = None
+    open_interest: Optional[int] = None
+    open_interest_change: Optional[int] = None
+    spec_long: Optional[int] = None
+    spec_short: Optional[int] = None
+    spec_net: Optional[int] = None
+    spec_net_change: Optional[int] = None
+    spec_net_pct_oi: Optional[float] = None
+    commercial_net: Optional[int] = None
+    small_trader_net: Optional[int] = None
+    traders: dict[str, Optional[int]] = Field(default_factory=dict)
+    cot_index: Optional[float] = None
+    weeks_in_index: int = 0
+
+
 class MarketSnapshot(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    SOURCES: ClassVar[tuple[str, ...]] = ("spot", "futures", "options", "sentiment", "hyperliquid", "liquidations", "whales", "stablecoins", "calendar", "news", "metals", "predictions", "macro")
+    SOURCES: ClassVar[tuple[str, ...]] = ("spot", "futures", "options", "sentiment", "hyperliquid", "liquidations", "whales", "stablecoins", "calendar", "news", "metals", "predictions", "macro", "cot")
 
     spot: SpotSnapshot
     futures: FuturesSnapshot
@@ -201,6 +224,7 @@ class MarketSnapshot(BaseModel):
     metals: MetalsSnapshot = Field(default_factory=lambda: MetalsSnapshot.unavailable("goldprice.dev", "not fetched"))
     predictions: PredictionSnapshot = Field(default_factory=lambda: PredictionSnapshot.unavailable("voxodds", "not fetched"))
     macro: MacroSnapshot = Field(default_factory=lambda: MacroSnapshot.unavailable("fred", "not fetched"))
+    cot: COTSnapshot = Field(default_factory=lambda: COTSnapshot.unavailable("cftc", "not fetched"))
     generated_at: datetime = Field(default_factory=_now)
 
     def unavailable(self) -> list[str]:
