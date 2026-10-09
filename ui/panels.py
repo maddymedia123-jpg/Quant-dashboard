@@ -1072,7 +1072,7 @@ def predictions_html(preds, now_ms: int, asset: str | None = None, limit: int = 
 # ---------- the sidebar clock ----------
 # Rendered as a self-contained ticking component rather than a formatted string: Streamlit only redraws
 # on a rerun, so a server-rendered clock sits frozen at the page-load time, which is worse than none.
-CLOCK_HTML = """<div id="ti-clock" style="font:12px Inter,system-ui,sans-serif;color:__TEXT__;
+CLOCK_HTML = """<div id="ti-clock" style="font:13px Barlow,system-ui,sans-serif;color:__TEXT__;
 line-height:1.5"><span id="ti-pkt" style="font-weight:600"></span><br>
 <span id="ti-utc" style="opacity:.7"></span></div>
 <script>

@@ -11,7 +11,9 @@ from core.indicators import volatility as vol
 from core.indicators.category import CategoryAnalysis
 from ui.theme import palette
 
-EMA_COLORS = {21: "#F59E0B", 50: "#3B82F6", 100: "#8B5CF6", 200: "#EF4444"}
+# The design draws the fast EMA in deep steel and the slow one in pale steel; the long averages step
+# down the neutral ramp so four lines stay tellable apart without adding a second hue.
+EMA_COLORS = {21: "#416180", 50: "#94BCE3", 100: "#98989B", 200: "#5D5D60"}
 
 
 def _f(v) -> float | None:
@@ -21,8 +23,8 @@ def _f(v) -> float | None:
     return None if math.isnan(v) or math.isinf(v) else v
 
 
-def chart_payload(a: CategoryAnalysis, dark: bool) -> dict:
-    p = palette(dark)
+def chart_payload(a: CategoryAnalysis, dark: bool, signal: bool = False) -> dict:
+    p = palette(dark, signal)
     df = a.chart_df
     n = len(df)
     t = (df["timestamp"] // 1000).astype("int64").tolist()
@@ -129,8 +131,8 @@ def chart_payload(a: CategoryAnalysis, dark: bool) -> dict:
 
 
 _TEMPLATE = """<!doctype html><html><head><meta charset="utf-8">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
-<style>html,body{margin:0;padding:0;background:__PANEL__;font-family:Inter,system-ui,sans-serif}#wrap{position:relative}#chart{width:100%;height:__HEIGHT__px}
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
+<style>html,body{margin:0;padding:0;background:__PANEL__;font-family:Barlow,system-ui,sans-serif}#wrap{position:relative}#chart{width:100%;height:__HEIGHT__px}
 #legend{position:absolute;left:10px;top:8px;z-index:5;font-size:11px;color:__TEXT__;display:flex;gap:10px;flex-wrap:wrap}
 #legend span::before{content:"";display:inline-block;width:10px;height:2px;margin-right:4px;vertical-align:middle;background:var(--c)}</style>
 <script src="__LIB__"></script></head><body><div id="wrap"><div id="legend"></div><div id="chart"></div></div>
@@ -143,7 +145,7 @@ const el = document.getElementById('chart');
 const NARROW = el.clientWidth < 640;
 const chart = LW.createChart(el, {
   width: el.clientWidth, height: __HEIGHT__,
-  layout: { background: { type: 'solid', color: T.panel }, textColor: T.text, fontFamily: 'Inter, system-ui, sans-serif',
+  layout: { background: { type: 'solid', color: T.panel }, textColor: T.text, fontFamily: 'Barlow, system-ui, sans-serif',
             panes: { separatorColor: T.border, separatorHoverColor: T.border, enableResize: false } },
   grid: { vertLines: { color: T.grid }, horzLines: { color: T.grid } },
   rightPriceScale: { borderColor: T.border },
@@ -152,7 +154,7 @@ const chart = LW.createChart(el, {
   // a vertical swipe over the chart scrolls the page instead of panning the price axis
   handleScroll: { vertTouchDrag: false },
 });
-const candles = chart.addSeries(LW.CandlestickSeries, { upColor: T.up, downColor: T.down, borderVisible: false, wickUpColor: T.up, wickDownColor: T.down });
+const candles = chart.addSeries(LW.CandlestickSeries, { upColor: T.panel, downColor: T.down, borderVisible: true, borderUpColor: T.up, borderDownColor: T.down, wickUpColor: T.up, wickDownColor: T.down });
 candles.setData(P.candles.concat(P.whitespace));
 const legend = document.getElementById('legend');
 P.emas.forEach(e => {
@@ -215,7 +217,7 @@ class VLineRenderer {
       if (this._dash) ctx.setLineDash([4 * hr, 4 * hr]);
       ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, s.bitmapSize.height); ctx.stroke();
       if (this._label) {
-        ctx.setLineDash([]); ctx.fillStyle = this._color; ctx.font = `${11 * vr}px Inter, sans-serif`;
+        ctx.setLineDash([]); ctx.fillStyle = this._color; ctx.font = `${11 * vr}px Barlow, sans-serif`;
         const y = this._dash ? s.bitmapSize.height - 6 * vr : 12 * vr;  // fib labels at the foot, now-label at the head
         ctx.fillText(this._label, x + 4 * hr, y);
       }
@@ -243,12 +245,12 @@ new ResizeObserver(() => chart.applyOptions({ width: el.clientWidth })).observe(
 </script></body></html>"""
 
 
-def build_chart_html(a: CategoryAnalysis, dark: bool, height: int = 560) -> str:
-    p = palette(dark)
-    payload = json.dumps(chart_payload(a, dark), separators=(",", ":"))
+def build_chart_html(a: CategoryAnalysis, dark: bool, height: int = 560, signal: bool = False) -> str:
+    p = palette(dark, signal)
+    payload = json.dumps(chart_payload(a, dark, signal), separators=(",", ":"))
     return (_TEMPLATE.replace("__LIB__", LIGHTWEIGHT_CHARTS_URL).replace("__HEIGHT__", str(height))
             .replace("__PANEL__", p["panel"]).replace("__TEXT__", p["text"]).replace("__PAYLOAD__", payload))
 
 
-def render_chart(a: CategoryAnalysis, dark: bool, height: int = 560) -> None:
-    components.html(build_chart_html(a, dark, height), height=height + 6, scrolling=False)
+def render_chart(a: CategoryAnalysis, dark: bool, height: int = 560, signal: bool = False) -> None:
+    components.html(build_chart_html(a, dark, height, signal), height=height + 6, scrolling=False)

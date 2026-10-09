@@ -111,11 +111,16 @@ def _drop_store(s) -> None:
 
 # ---------- sidebar ----------
 st.session_state.setdefault("dark", False)
+st.session_state.setdefault("signal", False)
 
 st.sidebar.markdown("<p class='ti-title'>Trap Intelligence</p><p class='ti-sub'>BTC market surveillance</p>", unsafe_allow_html=True)
 dark = st.sidebar.toggle("Dark mode", value=st.session_state["dark"])
 st.session_state["dark"] = dark
-inject_css(dark)
+# the design is monochrome by default (hollow steel up, solid ink down); this restores green and red
+signal = st.sidebar.toggle("Signal colours", value=st.session_state["signal"],
+                           help="Green and red for up and down, instead of the monochrome steel and ink.")
+st.session_state["signal"] = signal
+inject_css(dark, signal)
 
 if st.sidebar.button("Refresh data", width="stretch"):
     _spot.clear()
@@ -145,7 +150,7 @@ if auto_every:
 settings = load_settings()
 st.session_state.setdefault("trap_report", None)
 run_clicked = st.sidebar.button(
-    "Run Analysis", width="stretch", disabled=settings is None,
+    "Run Analysis", type="primary", width="stretch", disabled=settings is None,
     help=(f"13-agent Trap Intelligence report via {settings.provider}: specialists on {settings.specialist_model}, Director on {settings.director_model}."
           if settings else "Add GEMINI_API_KEY or OPENROUTER_API_KEY to .streamlit/secrets.toml (or Streamlit Cloud Secrets) to enable."),
 )
@@ -479,7 +484,7 @@ def category_tab(tab, key):
             banner = panels.early_warning_html(early_warnings(a, m.futures, last_sig["squeeze_score"] if last_sig else None))
             if banner:
                 panels.render(banner)
-        render_chart(a, dark)
+        render_chart(a, dark, signal=signal)
         panels.render(panels.layman_html(a))
         c1, c2 = st.columns(2)
         with c1:
