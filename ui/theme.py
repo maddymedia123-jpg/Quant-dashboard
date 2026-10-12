@@ -382,8 +382,8 @@ section[data-testid="stSidebar"] [data-testid="stRadio"] label[data-testid="stRa
 section[data-testid="stSidebar"] [data-testid="stRadio"] label[data-testid="stRadioOption"]:hover {{ background: color-mix(in srgb, {p['text']} 6%, transparent); }}
 section[data-testid="stSidebar"] [data-testid="stRadio"] label[data-testid="stRadioOption"] [data-testid="stMarkdownContainer"] p {{ font-family: {_HEADING}; font-weight: 600; font-size: 1.05rem; text-transform: uppercase; letter-spacing: 0.03em; margin: 0; }}
 section[data-testid="stSidebar"] [data-testid="stRadio"] label[data-testid="stRadioOption"] [data-testid="stCaptionContainer"] p {{ font-family: {_BODY}; font-size: 0.78rem; font-weight: 400; text-transform: none; letter-spacing: 0; color: {p['muted']}; margin: 0; }}
-section[data-testid="stSidebar"] [data-testid="stRadio"] label[data-testid="stRadioOption"]:nth-of-type(5) {{ margin-top: 34px; }}
-section[data-testid="stSidebar"] [data-testid="stRadio"] label[data-testid="stRadioOption"]:nth-of-type(5)::before {{ content: "Engines"; position: absolute; left: 10px; top: -26px; {label} color: {p['accent_deep']}; }}
+section[data-testid="stSidebar"] [data-testid="stRadio"] [role="radiogroup"] > :nth-child(5) {{ margin-top: 34px; position: relative; }}
+section[data-testid="stSidebar"] [data-testid="stRadio"] [role="radiogroup"] > :nth-child(5)::before {{ content: "Engines"; position: absolute; left: 10px; top: -26px; {label} color: {p['accent_deep']}; }}
 section[data-testid="stSidebar"] [data-testid="stRadio"] > label p {{ {label} color: {p['accent_deep']}; }}
 /* segmented switches: square, the open option filled steel */
 [data-testid="stButtonGroup"] button {{ border-radius: 0 !important; font-family: {_BODY}; }}

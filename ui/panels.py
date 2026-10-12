@@ -1589,11 +1589,13 @@ def rail_style_html(tones: list[str], timeframes: list[str], dark: bool, signal:
     because Streamlit gives no way to style one radio caption differently from the next."""
     pal = palette(dark, signal)
     colour = {"up": pal["up"], "down": pal["down"], "neutral": pal["muted"]}
-    opt = 'section[data-testid="stSidebar"] label[data-testid="stRadioOption"]'
+    # the n-th option is the n-th child of the radio group, whether Streamlit renders each option as a
+    # bare label or wraps it: label:nth-of-type matched every option as the first once it was wrapped
+    opt = 'section[data-testid="stSidebar"] [role="radiogroup"] > :nth-child'
     rules = []
     for i, (tone, tf) in enumerate(zip(tones, timeframes), start=1):
-        rules.append(f"{opt}:nth-of-type({i}) [data-testid=\"stCaptionContainer\"] p {{ color: {colour.get(tone, pal['muted'])} !important; }}")
-        rules.append(f"{opt}:nth-of-type({i}) [data-testid=\"stMarkdownContainer\"] p::after {{ content: \"{html.escape(tf)}\"; "
+        rules.append(f"{opt}({i}) [data-testid=\"stCaptionContainer\"] p {{ color: {colour.get(tone, pal['muted'])} !important; }}")
+        rules.append(f"{opt}({i}) [data-testid=\"stMarkdownContainer\"] p::after {{ content: \"{html.escape(tf)}\"; "
                      f"font-family: 'Barlow', sans-serif; font-weight: 400; font-size: 0.75rem; "
                      f"letter-spacing: 0; text-transform: none; color: {pal['muted']}; margin-left: 10px; }}")
     return "<style>" + "\n".join(rules) + "</style>"

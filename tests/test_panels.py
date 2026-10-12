@@ -438,8 +438,8 @@ def test_the_rail_reads_take_the_signal_colours_when_they_are_on():
     mono = panels.rail_style_html(["up", "down", "neutral"], ["15m", "1h", "4h"], False, False)
     sig = panels.rail_style_html(["up", "down", "neutral"], ["15m", "1h", "4h"], False, True)
     p, q = palette(False), palette(False, signal=True)
-    assert f"nth-of-type(1) [data-testid=\"stCaptionContainer\"] p {{ color: {q['up']}" in sig
-    assert f"nth-of-type(2) [data-testid=\"stCaptionContainer\"] p {{ color: {q['down']}" in sig
-    assert f"nth-of-type(1) [data-testid=\"stCaptionContainer\"] p {{ color: {p['up']}" in mono
-    assert f"nth-of-type(3) [data-testid=\"stCaptionContainer\"] p {{ color: {p['muted']}" in sig, "no call, no colour"
+    assert f"> :nth-child(1) [data-testid=\"stCaptionContainer\"] p {{ color: {q['up']}" in sig
+    assert f"> :nth-child(2) [data-testid=\"stCaptionContainer\"] p {{ color: {q['down']}" in sig
+    assert f"> :nth-child(1) [data-testid=\"stCaptionContainer\"] p {{ color: {p['up']}" in mono
+    assert f"> :nth-child(3) [data-testid=\"stCaptionContainer\"] p {{ color: {p['muted']}" in sig, "no call, no colour"
     assert 'content: "1h"' in sig, "the timeframe sits beside the desk's name"
