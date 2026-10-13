@@ -31,6 +31,13 @@ class ReconProfile:
     window: str                         # "4h", "1d", "1w" or "1M"
     window_title: str                   # "4-hour anchored summary"
     window_label: str                   # "the current 4h candle"
+    bias_tf: str = ""                   # the cascade's bias timeframe, one candle above the anchor
+
+    @property
+    def cascade(self) -> tuple[str, str, tuple[str, str]]:
+        """(bias, anchor, engine): the higher timeframe is the anchor, the two below it the engine."""
+        ltf, mtf, htf = self.timeframes
+        return self.bias_tf, htf, (ltf, mtf)
 
     @property
     def fmt(self) -> dict[str, str]:
@@ -71,9 +78,9 @@ PROFILES: dict[str, ReconProfile] = {
     # lower, middle, higher: the middle timeframe is the one the desk charts and forecasts, and the higher
     # one is the candle its summary is pinned to - so each desk judges the structure of its own window.
     # Monthly reads true calendar-month candles; it used to read the same 4h/1d/1w as Weekly.
-    "live": ReconProfile("live", "Live Recon", ("15m", "1h", "4h"), "four hours", "4h", "4-hour", "4h"),
-    "intraday": ReconProfile("intraday", "Intraday", ("1h", "4h", "1d"), "24 hours", "1d", "Daily", "daily"),
-    "weekly": ReconProfile("weekly", "Weekly", ("4h", "1d", "1w"), "seven days", "1w", "Weekly", "weekly"),
-    "monthly": ReconProfile("monthly", "Monthly", ("1d", "1w", "1M"), "30 days", "1M", "Monthly", "monthly"),
+    "live": ReconProfile("live", "Live Recon", ("15m", "1h", "4h"), "four hours", "4h", "4-hour", "4h", "1d"),
+    "intraday": ReconProfile("intraday", "Intraday", ("1h", "4h", "1d"), "24 hours", "1d", "Daily", "daily", "1w"),
+    "weekly": ReconProfile("weekly", "Weekly", ("4h", "1d", "1w"), "seven days", "1w", "Weekly", "weekly", "1M"),
+    "monthly": ReconProfile("monthly", "Monthly", ("1d", "1w", "1M"), "30 days", "1M", "Monthly", "monthly", "3M"),
 }
 LIVE = PROFILES["live"]

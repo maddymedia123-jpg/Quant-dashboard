@@ -32,11 +32,11 @@ CATEGORIES: dict[str, Category] = {
 TIMEFRAMES: tuple[str, ...] = ("15m", "1h", "4h", "1d", "1w")
 # Built from those: no free spot venue serves two-week or calendar-month candles, so 2W is two
 # Monday-aligned weeks and 1M is a calendar month of daily candles (see core.data.spot).
-DERIVED_TIMEFRAMES: tuple[str, ...] = ("2w", "1M")
+DERIVED_TIMEFRAMES: tuple[str, ...] = ("2w", "1M", "3M")
 
 # 1M is a nominal 30 days, used only where a duration is needed (annualising volatility, horizons);
 # month boundaries themselves are always taken from the calendar.
-TF_MINUTES: dict[str, int] = {"15m": 15, "1h": 60, "4h": 240, "1d": 1440, "1w": 10080, "2w": 20160, "1M": 43200}
+TF_MINUTES: dict[str, int] = {"15m": 15, "1h": 60, "4h": 240, "1d": 1440, "1w": 10080, "2w": 20160, "1M": 43200, "3M": 129600}
 
 # Cache TTLs (seconds)
 TTL = {"spot": 25, "context": 120, "futures": 60, "options": 120, "sentiment": 1800}

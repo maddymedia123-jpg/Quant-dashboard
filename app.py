@@ -413,7 +413,7 @@ def _data_stamp() -> str:
     still read the old one. Keying on the data means the cache follows the snapshot, not the minute."""
     last = getattr(m.spot, "last", None)
     stamps = [str(last)]
-    for tf in ("15m", "1h", "4h", "1d", "1w", "2w", "1M"):
+    for tf in ("15m", "1h", "4h", "1d", "1w", "2w", "1M", "3M"):
         df = m.spot.frames.get(tf)
         stamps.append(str(int(df["timestamp"].iloc[-1])) if df is not None and not df.empty else "-")
     return "|".join(stamps)
@@ -432,6 +432,13 @@ PROTOCOLS = ("Volatility", "Structure", "Liquidity", "Quant matrix")
 def _open_screen(screen: str) -> None:
     """Jump to a screen from inside another one; the rail and the phone strip follow."""
     st.session_state["screen"] = st.session_state["screen_nav"] = screen
+
+
+@st.cache_data(ttl=TTL["spot"], show_spinner=False)
+def _desk_cascade(category: str, data_stamp: str):
+    """The desk's cascade, cached per snapshot like the judges' state, and built by the same function."""
+    from core.indicators.cascade import classify
+    return classify(m.spot.frames, *PROFILES[category].cascade)
 
 
 def render_protocols(profile) -> None:
@@ -551,6 +558,14 @@ def category_tab(key):
             return
         panels.render(panels.desk_hero_html(SCREENS.index(key) + 1, PROFILES[key], CATEGORIES[key], now_ms))
         kpi_strip(panels.kpis_for(a, m))
+        # the cascade sits in the quick read: bias above, the anchor, the engine below
+        try:
+            v_ = verdicts.get(key)
+            panels.render(panels.cascade_html(
+                _desk_cascade(key, _data_stamp()),
+                invalidation=v_.anchored.invalidation if v_ is not None else None, price=a.price))
+        except Exception as e:  # noqa: BLE001 - a cascade failure must not blank the desk
+            st.warning(f"Timeframe cascade unavailable this refresh: {e}")
         if key in ("weekly", "monthly"):
             last_sig = store.last_signal(key, before_ms=now_ms)
             banner = panels.early_warning_html(early_warnings(a, m.futures, last_sig["squeeze_score"] if last_sig else None))

@@ -157,6 +157,11 @@ def build_state(m, analyses: dict, now_ms: int | None = None, profile: ReconProf
             state["categories"][tf] = brief
             state["timeframes_read"][tf] = tf
     state["war_room"] = profile.label
+    if profile.bias_tf:
+        # the timeframe cascade, the same object the desk shows: bias above, anchor, engine below
+        from core.indicators.cascade import classify
+        bias_tf, anchor_tf, engine_tfs = profile.cascade
+        state["cascade"] = classify(m.spot.frames, bias_tf, anchor_tf, engine_tfs).to_state()
     state["horizon"] = profile.horizon
 
     state["derivatives"], derivs_missing = derivatives_payload(m)

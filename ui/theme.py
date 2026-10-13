@@ -351,6 +351,8 @@ section[data-testid="stSidebar"] * {{ color: {p['text']}; }}
 /* dialogs: square, hairline, the design's condensed title */
 [data-testid="stDialog"] [role="dialog"] {{ border-radius: 0 !important; border: 1px solid {p['border']}; }}
 [data-testid="stDialog"] [role="dialog"] h2 {{ font-family: {_HEADING}; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; font-size: 1.25rem !important; }}
+.ti-cascade td.up {{ color: {p['up']}; font-weight: 600; }} .ti-cascade td.down {{ color: {p['down']}; font-weight: 600; }}
+.ti-cascade td.muted {{ color: {p['muted']}; }}
 /* war room */
 .ti-card-meta {{ position: absolute; top: 16px; right: 18px; font-size: 0.78rem; color: {p['muted']}; }}
 .ti-team-pts {{ font-family: {_HEADING}; font-weight: 600; font-size: 3rem; line-height: 1; margin: 6px 0; }}

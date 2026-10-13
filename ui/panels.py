@@ -1630,3 +1630,51 @@ def chart_head_html(a, signal: bool = False) -> str:
 
 CHART_CAPTION = ("Dotted bars after now are the volatility envelope drawn as bars: body ±0.5σ, wick ±1σ, widening "
                  "with the square root of bars ahead. They are not predicted candles.")
+
+
+# ---------- the timeframe cascade (bias / anchor / engine) ----------
+CASCADE_TONE = {"A": "up", "B": "warn", "C": "down", "N": "neutral", "?": "neutral"}
+ROLE_WORDS = {"bias": "Bias · sets the vector", "anchor": "Anchor · the candle being called",
+              "engine": "Engine · where change shows first"}
+
+
+def cascade_html(c, invalidation: float | None = None, price: float | None = None) -> str:
+    """The desk's cascade: which state it is in, what that means, and each timeframe's read.
+
+    The state is computed in code from the candles; this card only reports it. A control shift that has
+    also closed beyond the desk's own anchored invalidation says so, because that is the stronger case."""
+    arrows = {"bullish": "▲ bullish", "bearish": "▼ bearish", "neutral": "◆ neutral"}
+    tone = CASCADE_TONE.get(c.state, "neutral")
+    if c.state == "A" and c.bias is not None:
+        tone = "up" if c.bias.direction == "bullish" else "down"
+    body = (f"<div class='ti-split'><div class='ti-dir {tone}'>State {html.escape(c.state)} · "
+            f"{html.escape(c.title)}</div></div><p>{html.escape(c.playbook)}</p>")
+    if c.state == "C" and invalidation is not None and price is not None and c.bias is not None:
+        broke = price < invalidation if c.bias.direction == "bullish" else price > invalidation
+        if broke:
+            body += (f"<p><span class='ti-chip down'>beyond invalidation</span> Price {fmt_num(price, 0, '$')} "
+                     f"is also past the anchored invalidation at {fmt_num(invalidation, 0, '$')}.</p>")
+    rows = ""
+    for r in (c.bias, c.anchor, *c.engine):
+        if r is None:
+            continue
+        d = arrows.get(r.direction, r.direction) if r.available else "not enough candles"
+        cls = {"bullish": "up", "bearish": "down"}.get(r.direction, "muted") if r.available else "muted"
+        rows += (f"<tr><td><strong>{html.escape(r.timeframe)}</strong></td><td class='muted'>{ROLE_WORDS[r.role]}</td>"
+                 f"<td class='{cls}'>{html.escape(d)}</td>"
+                 f"<td class='muted'>EMA {html.escape(r.ema)} · structure {html.escape(r.structure)}</td></tr>")
+    body += f"<table class='ti-cascade'><tbody>{rows}</tbody></table>"
+    if c.vwap is not None:
+        body += (f"<p class='muted'>VWAP from the open of the current {html.escape(c.bias.timeframe if c.bias else '')} "
+                 f"candle: <strong>{fmt_num(c.vwap, 0, '$')}</strong>"
+                 + (f" · {c.closes_beyond_vwap} completed {html.escape(c.engine[-1].timeframe)} closes against the bias"
+                    if c.closes_beyond_vwap and c.engine else "") + "</p>")
+    if c.pullback:
+        pb = c.pullback
+        body += ("<span class='ti-label'>Pullback bands · how deep is still normal on the "
+                 f"{html.escape(pb['timeframe'])}</span><div class='ti-grid3'>"
+                 + _kv("50th", fmt_num(pb["p50"], 0, "$")) + _kv("80th", fmt_num(pb["p80"], 0, "$"))
+                 + _kv("95th", fmt_num(pb["p95"], 0, "$"), "down") + "</div>")
+    body += ("<p class='muted ti-note'>Read from the candles in code, not by a model. The engine timeframes warn "
+             "early; only the bias and the anchor set the call.</p>")
+    return card_html("Timeframe cascade", body, tone)

@@ -46,7 +46,7 @@ def test_two_weeks_pair_the_same_weeks_whatever_the_first_candle():
 def test_derived_frames_are_added_and_never_replace_a_fetched_one():
     daily, weekly = _candles(_ms(2026, 1, 1), DAY, 40), _candles(EPOCH_MONDAY_MS, 7 * DAY, 6)
     out = with_derived_frames({"1d": daily, "1w": weekly})
-    assert set(out) == {"1d", "1w", "2w", "1M"}
+    assert set(out) == {"1d", "1w", "2w", "1M", "3M"}
     own = _candles(0, DAY, 3)
     assert with_derived_frames({"1d": daily, "1M": own})["1M"] is own
     assert "1M" not in with_derived_frames({"1w": weekly}), "no daily candles, no months"
@@ -61,3 +61,11 @@ def test_a_two_week_checkpoint_lands_on_a_two_week_candle_close():
     now = _ms(2026, 10, 14, 9)
     close = next_close(now, "2w")
     assert close > now and (close - EPOCH_MONDAY_MS) % (14 * DAY) == 0 and close - now <= 14 * DAY
+
+
+def test_a_quarter_is_its_three_calendar_months():
+    from core.data.spot import calendar_quarter
+    daily = _candles(_ms(2026, 3, 30), DAY, 4)        # Mar 30, Mar 31, Apr 1, Apr 2
+    q = calendar_quarter(daily)
+    assert list(q["timestamp"]) == [_ms(2026, 1, 1), _ms(2026, 4, 1)]
+    assert q.iloc[0].close == 102 and q.iloc[1].open == 102

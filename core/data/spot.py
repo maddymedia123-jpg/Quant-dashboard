@@ -51,6 +51,16 @@ def calendar_month(daily: pd.DataFrame) -> pd.DataFrame:
     return _aggregate(daily, pd.Series(starts, index=daily.index, dtype="int64"))
 
 
+def calendar_quarter(daily: pd.DataFrame) -> pd.DataFrame:
+    """3M candles: daily candles grouped by UTC calendar quarter (Jan, Apr, Jul, Oct)."""
+    def quarter_start(ms: int) -> int:
+        d = datetime.fromtimestamp(ms / 1000, timezone.utc)
+        return int(datetime(d.year, (d.month - 1) // 3 * 3 + 1, 1, tzinfo=timezone.utc).timestamp() * 1000)
+
+    starts = [quarter_start(int(t)) for t in daily["timestamp"]]
+    return _aggregate(daily, pd.Series(starts, index=daily.index, dtype="int64"))
+
+
 def with_derived_frames(frames: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
     """Add the 2W and 1M candles the Weekly and Monthly desks read. A frame that cannot be built is
     simply absent, which every consumer already treats as "not enough history"."""
@@ -60,6 +70,8 @@ def with_derived_frames(frames: dict[str, pd.DataFrame]) -> dict[str, pd.DataFra
         out["2w"] = two_week(weekly)
     if daily is not None and len(daily) and "1M" not in out:
         out["1M"] = calendar_month(daily)
+    if daily is not None and len(daily) and "3M" not in out:
+        out["3M"] = calendar_quarter(daily)
     return out
 
 
