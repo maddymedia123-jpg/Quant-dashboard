@@ -67,20 +67,29 @@ def _local(ms: int) -> datetime:
     return _utc(ms + LOCAL_OFFSET_MS)
 
 
-def fmt_when(ms: int | None, both: bool = True) -> str:
-    """A time a trader can set an alarm by.
+def fmt_when(ms: int | None, seconds: bool = False) -> str:
+    """A time a trader can set an alarm by: UTC first, PKT after it in brackets, with the date.
 
-    Shown in PKT first, with the UTC time after it: the candle closes this schedule is built from are
-    UTC-aligned, so dropping UTC entirely would hide which candle a checkpoint actually refers to, and
-    dropping PKT leaves the trader adding five hours in their head at the moment they least want to."""
+        14:00 UTC (19:00 PKT - Thu 15 Oct)
+        23:00 UTC Wed 14 Oct (04:00 PKT - Thu 15 Oct)     when the two fall on different dates
+
+    UTC leads because every candle, close and checkpoint in this system is a UTC boundary - it is the
+    time the engine works in. PKT follows in brackets so the trader never adds five hours in their head.
+    The UTC date is written only when it differs from the PKT date."""
     if ms is None:
         return "no date"
     local, utc = _local(ms), _utc(ms)
-    if not both:
-        return f"{local:%H:%M} {LOCAL_LABEL} {local:%a %d %b}"
-    same_day = local.strftime("%d %b") == utc.strftime("%d %b")
-    tail = f"{utc:%H:%M} UTC" if same_day else f"{utc:%H:%M} UTC {utc:%a %d %b}"
-    return f"{local:%H:%M} {LOCAL_LABEL} {local:%a %d %b} / {tail}"
+    clock = "%H:%M:%S" if seconds else "%H:%M"
+    utc_date = "" if local.strftime("%d %b") == utc.strftime("%d %b") else f" {utc:%a %d %b}"
+    return f"{utc:{clock}} UTC{utc_date} ({local:{clock}} {LOCAL_LABEL} - {local:%a %d %b})"
+
+
+def fmt_date(ms: int | None) -> str:
+    """A calendar date, for values that are a date and not a moment (a daily close, a weekly report).
+    It is the UTC date: these are UTC calendar days, and a clock time beside them would be invented."""
+    if ms is None:
+        return "no date"
+    return f"{_utc(ms):%a %d %b}"
 
 
 # ---------- the stop ----------

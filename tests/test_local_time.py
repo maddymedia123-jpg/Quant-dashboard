@@ -29,21 +29,20 @@ def test_the_offset_is_the_same_in_january_and_july():
     installed, and that is not a declared dependency."""
     winter = trades.fmt_when(at(2026, 1, 15, 0))
     summer = trades.fmt_when(at(2026, 7, 15, 0))
-    assert winter.startswith("05:00 PKT") and summer.startswith("05:00 PKT")
+    assert "(05:00 PKT" in winter and "(05:00 PKT" in summer
 
 
 # ---------- what a trader reads ----------
-def test_an_actionable_time_shows_pakistan_first_and_utc_after():
-    """PKT first because it is the zone the trader lives in; UTC kept because the candle closes this
-    schedule is built from are UTC-aligned, and dropping it would hide which candle a checkpoint is."""
-    assert trades.fmt_when(at(2026, 10, 2, 0)) == "05:00 PKT Fri 02 Oct / 00:00 UTC"
-    assert trades.fmt_when(at(2026, 10, 1, 12)) == "17:00 PKT Thu 01 Oct / 12:00 UTC"
+def test_an_actionable_time_shows_utc_first_and_pakistan_after_in_brackets():
+    """The master prompt's exact format: UTC is the engine's time, PKT follows in brackets with the date."""
+    assert trades.fmt_when(at(2026, 10, 15, 14)) == "14:00 UTC (19:00 PKT - Thu 15 Oct)", "the spec's own example"
+    assert trades.fmt_when(at(2026, 10, 2, 0)) == "00:00 UTC (05:00 PKT - Fri 02 Oct)"
 
 
 def test_a_time_that_rolls_the_date_shows_both_dates():
     """22:00 UTC Thursday is 03:00 PKT Friday. Showing one date would make the other zone wrong."""
     out = trades.fmt_when(at(2026, 10, 1, 22))
-    assert out == "03:00 PKT Fri 02 Oct / 22:00 UTC Thu 01 Oct"
+    assert out == "22:00 UTC Thu 01 Oct (03:00 PKT - Fri 02 Oct)"
 
 
 def test_the_utc_date_is_left_off_when_it_is_the_same_day():
@@ -51,8 +50,13 @@ def test_the_utc_date_is_left_off_when_it_is_the_same_day():
     assert out.count("Thu 01 Oct") == 1, "no need to repeat the date for both zones"
 
 
-def test_a_pakistan_only_form_exists_for_tight_spaces():
-    assert trades.fmt_when(at(2026, 10, 1, 22), both=False) == "03:00 PKT Fri 02 Oct"
+def test_a_date_is_a_utc_calendar_date_with_no_clock_time():
+    assert trades.fmt_date(at(2026, 10, 1, 22)) == "Thu 01 Oct", "22:00 UTC is still Thursday's UTC date"
+    assert trades.fmt_date(None) == "no date"
+
+
+def test_seconds_appear_only_when_asked_for():
+    assert trades.fmt_when(at(2026, 10, 15, 14, 5) + 9_000, seconds=True) == "14:05:09 UTC (19:05:09 PKT - Thu 15 Oct)"
 
 
 def test_no_date_is_still_no_date():
@@ -75,7 +79,7 @@ def test_a_utc_boundary_is_simply_read_in_pakistan_time():
     """The same instant, both ways round - 00:00 UTC is 05:00 PKT, and that is the daily close."""
     close = trades.next_close(at(2026, 10, 1, 13), "1d")
     shown = trades.fmt_when(close)
-    assert shown.startswith("05:00 PKT") and "00:00 UTC" in shown
+    assert shown.startswith("00:00 UTC") and "(05:00 PKT" in shown
 
 
 def test_the_monitoring_schedule_reads_in_both_zones():
@@ -99,7 +103,9 @@ def test_the_clock_shows_both_zones():
     html = panels.clock_html(dark=False)
     assert "getElementById('ti-pkt').textContent =" in html, "the PKT line is written"
     assert "getElementById('ti-utc').textContent =" in html, "and so is the UTC line"
-    assert "' UTC  (PKT is UTC+5)'" in html, "the relationship is stated in the rendered text"
+    assert "+' UTC';" in html, "the UTC line is the big one, first"
+    assert "')  PKT is UTC+5';" in html, "PKT follows in brackets, with the relationship stated"
+    assert html.index('id="ti-utc"') < html.index('id="ti-pkt"'), "UTC above PKT"
 
 
 def test_the_clock_ticks_rather_than_being_rendered_once():

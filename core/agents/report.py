@@ -6,6 +6,11 @@ from core.agents.schemas import DeskReport, TrapReport
 MISSING = "_not produced this run_"
 
 
+def _dual(dt) -> str:
+    from core.trades import fmt_when
+    return fmt_when(int(dt.timestamp() * 1000), seconds=True)
+
+
 def _ul(items: list[str]) -> str:
     return "\n".join(f"- {x}" for x in items) if items else MISSING
 
@@ -32,7 +37,7 @@ def to_markdown(r: TrapReport) -> str:
     parts = [
         "# TRAP INTELLIGENCE REPORT",
         f"## Report ID: {r.report_id}",
-        f"## Timestamp: {r.generated_at:%Y-%m-%d %H:%M:%S} UTC",
+        f"## Timestamp: {r.generated_at:%Y-%m-%d} {_dual(r.generated_at)}",
         f"## Asset: {r.asset}",
         f"## Analysis Window: {r.window}",
         "",

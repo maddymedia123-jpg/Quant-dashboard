@@ -61,6 +61,7 @@ from core.indicators.early_warning import early_warnings
 from core.store import Store
 from core.indicators.trade_map import map_trade
 from ui import panels
+from core.trades import fmt_when
 from ui.charts import render_chart
 from ui.nav import pick_from_strip
 from ui.theme import inject_css, kpi_strip, md_safe
@@ -180,7 +181,7 @@ st.sidebar.markdown(panels.data_status_html(m), unsafe_allow_html=True)
 with st.sidebar:
     # a ticking component, not a rendered string: the page only redraws on a rerun
     components.html(panels.clock_html(dark), height=48)
-st.sidebar.caption(f"Updated {m.generated_at.astimezone(timezone.utc):%H:%M:%S} UTC · spot {TTL['spot']}s · context {TTL['context']}s")
+st.sidebar.caption(f"Updated {fmt_when(int(m.generated_at.timestamp() * 1000), seconds=True)} · spot {TTL['spot']}s · context {TTL['context']}s")
 
 # ---------- analyses ----------
 analyses = {}
@@ -368,7 +369,7 @@ _live_a = analyses.get("live")
 price_slot.markdown(panels.top_bar_html(
     m.spot.last if m.spot.last is not None else (_live_a.price if _live_a else None),
     _live_a.price_change_24h_pct if _live_a else None,
-    f"Updated {m.generated_at.astimezone(timezone.utc):%H:%M:%S} UTC"), unsafe_allow_html=True)
+    f"Updated {fmt_when(int(m.generated_at.timestamp() * 1000), seconds=True)}"), unsafe_allow_html=True)
 if not m.spot.available:
     st.error(f"Spot data unavailable from {m.spot.source}: {m.spot.error}. Nothing to analyse.")
 
@@ -515,7 +516,7 @@ def render_war_room(profile) -> None:
     recon = pair[0] if pair and pair[1].window_open_ms == w_open else None
     anchored_now = bool(recon is not None and pair[1].anchored)
     closes = datetime.fromtimestamp(w_close / 1000, timezone.utc)
-    closes_txt = f"{closes:%H:%M} UTC" if profile.window == "4h" else f"{closes:%a %d %b %H:%M} UTC"
+    closes_txt = fmt_when(w_close)
     if row is None:
         panels.render(panels.card_html(
             f"{profile.window_title} anchored summary",
@@ -546,7 +547,7 @@ def render_war_room(profile) -> None:
         if accuracy:
             panels.render(accuracy)
     if recon is not None:
-        st.caption(f"{'Pinned' if anchored_now else 'Interim'} run {recon.generated_at:%H:%M:%S} UTC · "
+        st.caption(f"{'Pinned' if anchored_now else 'Interim'} run {fmt_when(int(recon.generated_at.timestamp() * 1000), seconds=True)} · "
                    f"{recon.bull.provider or 'n/a'} · {recon.prompt_tokens + recon.completion_tokens:,} tokens")
 
 
@@ -979,7 +980,7 @@ if screen == "director":
                 f"<div class='ti-hero'><div class='ti-hero-main'><span class='ti-kicker'>07 · Report "
                 f"{html.escape(report.report_id)}</span><h1>Director report</h1><div class='ti-hero-meta'><span>"
                 f"Ten specialists, a volatility agent, two desks, an accuracy agent and the Director. Generated "
-                f"{report.generated_at:%a %d %b %H:%M} UTC, {age} ago.</span></div></div></div>")
+                f"{fmt_when(int(report.generated_at.timestamp() * 1000))}, {age} ago.</span></div></div></div>")
         with act:
             md = to_markdown(report)
             st.download_button("Download .md", md, file_name=f"{report.report_id}.md", mime="text/markdown",

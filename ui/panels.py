@@ -214,7 +214,8 @@ def accuracy_html(s: dict) -> str:
 
 def _utc(ms: int | None) -> str:
     from datetime import datetime, timezone
-    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).strftime("%a %d %b %H:%M UTC") if ms else "—"
+    from core.trades import fmt_when
+    return fmt_when(int(ms)) if ms else "—"
 
 
 def _bars(n: int | None) -> str:
@@ -330,7 +331,7 @@ def agent_summary_html(a: CategoryAnalysis, report) -> str:
             return (f"<div class='ti-head-summary'><span class='ti-kicker'>Head-agent summary</span>"
                     f"<p>{html.escape(text)}</p><span class='muted'>Director verdict: "
                     f"{report.director.trap_classification.replace('_', ' ').lower()} · report "
-                    f"{html.escape(report.report_id)} · {report.generated_at:%H:%M} UTC</span></div>")
+                    f"{html.escape(report.report_id)} · {_utc(int(report.generated_at.timestamp() * 1000))}</span></div>")
     return agent_placeholder_html(a)
 def report_stats_html(report) -> str:
     ok = sum(1 for r in report.runs if r.ok)
@@ -338,7 +339,7 @@ def report_stats_html(report) -> str:
     cost = f"${report.total_cost_usd:.4f}" if report.total_cost_usd is not None else "not reported (free tier)"
     bits = [f"provider {report.provider}", f"models {', '.join(models)}", f"agents {ok}/{len(report.runs)} ok",
             f"tokens {report.total_tokens:,}", f"cost {cost}", f"wall {report.wall_time_s:.0f}s",
-            f"generated {report.generated_at:%Y-%m-%d %H:%M} UTC"]
+            f"generated {_utc(int(report.generated_at.timestamp() * 1000))}"]
     if report.failed_agents:
         bits.append("failed: " + ", ".join(report.failed_agents))
     return "<div class='ti-tags'>" + "".join(chip(b, "down" if b.startswith("failed") else "neutral-fill")
@@ -1406,8 +1407,8 @@ def predictions_html(preds, now_ms: int, asset: str | None = None, limit: int = 
 CLOCK_HTML = """<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;600&family=Barlow+Condensed:wght@600&display=swap" rel="stylesheet">
 <div id="ti-clock" style="font:12px Barlow,system-ui,sans-serif;color:__TEXT__;line-height:1.35">
 <div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;font-weight:600;opacity:.7">Clock</div>
-<span id="ti-pkt" style="font:600 24px 'Barlow Condensed',Barlow,system-ui,sans-serif"></span><br>
-<span id="ti-utc" style="opacity:.7"></span></div>
+<span id="ti-utc" style="font:600 24px 'Barlow Condensed',Barlow,system-ui,sans-serif"></span><br>
+<span id="ti-pkt" style="opacity:.7"></span></div>
 <script>
 function pad(n){return String(n).padStart(2,'0')}
 function tick(){
@@ -1416,19 +1417,19 @@ function tick(){
   var pkt = new Date(now.getTime() + 5*3600*1000);
   var days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
   var mons = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  document.getElementById('ti-pkt').textContent =
-    pad(pkt.getUTCHours())+':'+pad(pkt.getUTCMinutes())+':'+pad(pkt.getUTCSeconds())+' PKT  '
-    + days[pkt.getUTCDay()]+' '+pad(pkt.getUTCDate())+' '+mons[pkt.getUTCMonth()];
   document.getElementById('ti-utc').textContent =
-    pad(now.getUTCHours())+':'+pad(now.getUTCMinutes())+':'+pad(now.getUTCSeconds())+' UTC  (PKT is UTC+5)';
+    pad(now.getUTCHours())+':'+pad(now.getUTCMinutes())+':'+pad(now.getUTCSeconds())+' UTC';
+  document.getElementById('ti-pkt').textContent =
+    '('+pad(pkt.getUTCHours())+':'+pad(pkt.getUTCMinutes())+':'+pad(pkt.getUTCSeconds())+' PKT - '
+    + days[pkt.getUTCDay()]+' '+pad(pkt.getUTCDate())+' '+mons[pkt.getUTCMonth()]+')  PKT is UTC+5';
 }
 tick(); setInterval(tick, 1000);
 </script>"""
 
 
 def clock_html(dark: bool) -> str:
-    """Both zones, ticking. PKT first because it is the one the trader lives in; UTC second because
-    every candle boundary in this system is a UTC boundary."""
+    """Both zones, ticking: UTC first and large, because every candle boundary in this system is a UTC
+    boundary; PKT after it in brackets, the zone the trader lives in."""
     return CLOCK_HTML.replace("__TEXT__", palette(dark)["text"])
 
 
@@ -1441,7 +1442,7 @@ def rates_html(macro, now_ms: int) -> str:
         return card_html("US macro",
                          f"<p class='muted'>No macro feed: "
                          f"{html.escape(str(getattr(macro, 'error', '') or 'unavailable'))}.</p>", "neutral")
-    from core.trades import fmt_when
+    from core.trades import fmt_date
 
     rows = ""
     for s in (getattr(macro, "series", {}) or {}).values():
@@ -1462,7 +1463,7 @@ def rates_html(macro, now_ms: int) -> str:
             text = f"{size:+.0f} bp" if is_yield else f"{size:+.2f}"
             loud = abs(change) >= (0.15 if is_yield else 1.5)
             moved = f"<span class='ti-chip {'warn' if loud else 'neutral'}'>{html.escape(text)}</span>"
-        when = html.escape(fmt_when(s.get("as_of_ms"), both=False).split(" ", 2)[-1])
+        when = html.escape(fmt_date(s.get("as_of_ms")))
         stale = (" <span class='ti-chip down'>stale</span>" if s.get("stale") else "")
         rows += (f"<tr><td>{label}</td><td><strong>{value}</strong></td><td>{moved}</td>"
                  f"<td class='muted'>as of {when}{stale}</td></tr>")
@@ -1494,9 +1495,9 @@ def cot_html(cot, now_ms: int) -> str:
                          f"<p class='muted'>No positioning report: "
                          f"{html.escape(str(getattr(cot, 'error', '') or 'unavailable'))}.</p>", "neutral")
     from core.data.cot import CROWDED_LONG, CROWDED_SHORT
-    from core.trades import fmt_when
+    from core.trades import fmt_date
 
-    when = html.escape(fmt_when(cot.as_of_ms, both=False).split(" ", 2)[-1]) if cot.as_of_ms else "unknown"
+    when = html.escape(fmt_date(cot.as_of_ms)) if cot.as_of_ms else "unknown"
     age = cot.age_days
     # the weekday comes from the date itself: holiday weeks move the as-of day off its usual Tuesday
     body = (f"<p><strong>Positions as of {when}</strong> <span class='muted'>· released the following Friday"
