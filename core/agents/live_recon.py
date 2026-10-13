@@ -181,7 +181,10 @@ def build_state(m, analyses: dict, now_ms: int | None = None, profile: ReconProf
             state["volatility"][tf] = {"available": False, "note": f"no {tf} candles"}
             continue
         state["smc"][tf] = smc.summarise(df)
-        state["liquidity"][tf] = lq.summarise(df, oi_history, now, windows=profile.timeframes)
+        state["liquidity"][tf] = lq.summarise(df, oi_history, now, windows=profile.timeframes,
+                                              flow=(getattr(m, "taker_flow", None).frames.get(tf)
+                                                    if getattr(getattr(m, "taker_flow", None), "available", False)
+                                                    else None))
         state["volatility"][tf] = vol.matrix_summary(df, tf, m.options)
     return state
 

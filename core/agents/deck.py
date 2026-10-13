@@ -75,9 +75,12 @@ def sub_agent_deck(state: dict, profile: ReconProfile | None = None) -> list[Dec
         agent("delta", mtf, [
             ("Delta read", _get(liq, "cumulative_delta", "state", default="—"), "text"),
             ("Delta, last 20 bars", _get(liq, "cumulative_delta", "change_over_20_bars"), "num"),
+            ("CVD velocity, per bar", _get(liq, "cumulative_delta", "velocity_per_bar"), "num"),
             ("Price, last 20 bars", _get(liq, "cumulative_delta", "price_change_over_20_bars"), "usd"),
             ("Taker buy/sell", _get(fut, "taker_buy_sell_ratio"), "num"),
-        ], note="delta is a candle close-position proxy, not tick tape"),
+        ], note=("delta is real taker volume (BTC) from the Gate.io perpetual"
+                 if _get(liq, "cumulative_delta", "units", default="") == "BTC"
+                 else "delta is a candle close-position proxy, not tick tape")),
         agent("ict", htf, [
             ("Structure", _get(smc, "structure", "bias", default="unclear"), "text"),
             ("Last break", f"{_get(last, 'type', default='—')} {_get(last, 'direction', default='')}".strip(), "text"),

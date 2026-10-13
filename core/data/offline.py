@@ -13,6 +13,7 @@ from core.data.binance_futures import parse_binance
 from core.data.calendar import parse_calendar
 from core.data.coinlobster import parse_liquidations, parse_whales
 from core.data.cot import parse_cot
+from core.data.taker_flow import build as build_taker_flow
 from core.data.deribit_options import parse_book_summary
 from core.data.hyperliquid import parse_meta
 from core.data.kraken_spot import parse_ohlc, parse_ticker
@@ -51,6 +52,12 @@ def fixture_spot() -> SpotSnapshot:
     return SpotSnapshot(source="fixture", last=parse_ticker(_load("kraken_ticker.json")), frames=frames)
 
 
+def _fixture_taker_flow():
+    raw = _load("gate_contract_stats_btc.json")
+    return build_taker_flow({tf: raw[tf] for tf in ("15m", "1h", "4h", "1d")},
+                            float(raw["contract"]["quanto_multiplier"]))
+
+
 def fixture_context() -> dict:
     liqs = _mark(parse_liquidations(_load("coinlobster_liquidations.json")))
     whales = _mark(parse_whales(_load("coinlobster_whales.json"), _load("coinlobster_radar.json")))
@@ -70,6 +77,7 @@ def fixture_context() -> dict:
         "macro": _mark(_fixture_macro()),
         "cot": _mark(parse_cot(_load("cftc_cot_btc_cme.json"),
                                int(datetime(2026, 10, 10, tzinfo=timezone.utc).timestamp() * 1000))),
+        "taker_flow": _mark(_fixture_taker_flow()),
     }
 
 

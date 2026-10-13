@@ -120,7 +120,8 @@ DOMAINS: tuple[Domain, ...] = (
             "Compare cumulative delta with price over the recent window.",
             "Decide whether either side is absorbing rather than driving.",
             "Read taker flow for who is paying the spread.",
-            "Note that delta here is a candle close-position proxy, not tick tape.",
+            "Check the method stated with each delta: real taker volume from the perpetual where it is "
+            "available, otherwise a candle close-position proxy, which is a lean and not a measurement.",
         ),
         items=(
             RubricItem("delta_confirm", 8,

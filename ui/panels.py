@@ -44,6 +44,17 @@ def _liq_kpi(l) -> dict:
     return {"label": "Liq 24h", "value": fmt_num(l.total_usd / 1e6, 0, "$", "M"), "delta": f"{share:.0f}% longs", "tone": tone}
 
 
+def _taker_kpi(flow) -> dict:
+    """Net taker delta over the last 24 completed hours: who has been paying the spread."""
+    df = (flow.frames.get("1h") if getattr(flow, "available", False) else None)
+    if df is None or len(df) < 25:
+        return {"label": "Taker delta 24h", "value": "—", "delta": "no taker feed", "tone": None}
+    net = float(df["delta"].iloc[-25:-1].sum())           # the newest hour is still forming
+    side = "buyers paying" if net > 0 else "sellers paying" if net < 0 else "balanced"
+    return {"label": "Taker delta 24h", "value": f"{net:+,.0f} BTC", "delta": side,
+            "tone": "up" if net > 0 else "down" if net < 0 else None}
+
+
 def kpis_for(a: CategoryAnalysis, m: MarketSnapshot) -> list[dict]:
     f, s, o = m.futures, m.sentiment, m.options
     rsi_last = float(a.rsi.dropna().iloc[-1]) if a.rsi.notna().any() else None
@@ -60,6 +71,7 @@ def kpis_for(a: CategoryAnalysis, m: MarketSnapshot) -> list[dict]:
          "tone": "up" if (f.oi_change_24h_pct or 0) >= 0 else "down"},
         {"label": "Long/Short", "value": fmt_num(f.long_short_ratio, 2), "delta": (f"taker {fmt_num(f.taker_buy_sell_ratio, 2)}" if f.taker_buy_sell_ratio else None), "tone": None},
         _liq_kpi(m.liquidations),
+        _taker_kpi(getattr(m, "taker_flow", None)),
         {"label": "Max pain", "value": fmt_num(o.max_pain, 0, "$"), "delta": o.max_pain_expiry, "tone": None},
         {"label": "Fear & Greed", "value": fmt_num(s.fear_greed, 0), "delta": s.classification, "tone": None},
     ]
@@ -692,14 +704,26 @@ def liquidity_html(by_tf: dict) -> str:
         oi_windows = list(oi) or oi_windows
         oi_cell = " / ".join("—" if oi.get(k) is None else f"{oi[k]:+.1f}%" for k in oi_windows)
         rows += (f"<tr><td>{html.escape(tf)}</td><td>{pool_cell('buyside')}</td><td>{pool_cell('sellside')}</td>"
-                 f"<td>{html.escape(str(cvd.get('state', '—')))}</td>"
+                 f"<td>{html.escape(str(cvd.get('state', '—')))}"
+                 + (f"<br><span class='muted'>{cvd['velocity_per_bar']:+,.1f} BTC/bar"
+                    + (f", {'accelerating' if (cvd.get('acceleration') or 0) * cvd['velocity_per_bar'] > 0 else 'slowing'}"
+                       if cvd.get("acceleration") is not None and cvd['velocity_per_bar'] else "")
+                    + "</span>" if cvd.get("velocity_per_bar") is not None else "")
+                 + ("" if cvd.get("units") == "BTC" else " <span class='muted'>(proxy)</span>") + "</td>"
                  f"<td>{'—' if not vp.get('available') else _dash(vp.get('point_of_control'), 0, '$')}</td>"
                  f"<td>{oi_cell}</td></tr>")
     body = ("<table><thead><tr><th>TF</th><th>Buyside pool</th><th>Sellside pool</th><th>Delta</th>"
             f"<th>POC</th><th>OI {'/'.join(oi_windows)}</th></tr></thead><tbody>{rows}</tbody></table>")
-    body += ("<p class='muted'>Delta is a candle close-position proxy, not tick tape; treat it as a lean, "
-             "not a measurement. A pool is swept when price wicks through and closes back inside, and "
-             "broken when it closes beyond.</p>")
+    methods = {str(((d or {}).get("cumulative_delta") or {}).get("units", "")) for d in by_tf.values()}
+    real = "BTC" in methods
+    body += ("<p class='muted'>"
+             + ("Delta is real taker volume - market buys minus market sells - on the Gate.io BTC_USDT perpetual, "
+                "with its velocity: the average per bar over the last five, and whether that is speeding up. "
+                if real else "")
+             + ("Rows marked proxy have no taker data for that timeframe and use the candle close-position "
+                "proxy, a lean rather than a measurement. " if methods - {"BTC"} else "")
+             + "A pool is swept when price wicks through and closes back inside, and broken when it closes "
+               "beyond.</p>")
     return card_html("Liquidity & order flow", body)
 
 

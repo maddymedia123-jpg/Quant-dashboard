@@ -162,8 +162,14 @@ delta; volume profile point of control and value area; open interest change per 
 
 Two honesty rules worth knowing:
 
-- **Delta is a candle close-position proxy, not tick tape.** Without trade-level data there is no true
-  CVD, and it is labelled as a proxy everywhere it appears, in the agent state and on screen.
+- **Delta is real taker volume.** Gate.io's BTC_USDT perpetual publishes, per period, the volume of market
+  buys and market sells (`/futures/usdt/contract_stats`, keyless, from US servers - Binance has the same
+  split but refuses US addresses). Their difference is the taker delta and its running sum the CVD, read
+  against price with its velocity (average per bar over the last five) and acceleration. Contract sizes
+  are converted with the contract's own `quanto_multiplier`; 1W and 1M are summed from the days. Where
+  there is not enough taker history for a timeframe (today, 1M), the reading falls back to the candle
+  close-position proxy and says so in the agent state and on screen. A "Taker delta 24h" KPI sits on
+  every desk.
 - **An open-interest window reports nothing unless a stored sample brackets it.** A reading from the wrong
   window is not an approximation of the right one.
 

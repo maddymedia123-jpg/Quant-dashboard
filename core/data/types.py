@@ -206,10 +206,18 @@ class COTSnapshot(Availability):
     weeks_in_index: int = 0
 
 
+class TakerFlowSnapshot(Availability):
+    """Real taker buy and sell volume per period, in BTC, from a perpetual-futures venue's own stats.
+    frames: timeframe -> columns timestamp, buy, sell, delta, long_liq_usd, short_liq_usd."""
+    contract: str = ""
+    btc_per_contract: Optional[float] = None
+    frames: dict[str, pd.DataFrame] = Field(default_factory=dict)
+
+
 class MarketSnapshot(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    SOURCES: ClassVar[tuple[str, ...]] = ("spot", "futures", "options", "sentiment", "hyperliquid", "liquidations", "whales", "stablecoins", "calendar", "news", "metals", "predictions", "macro", "cot")
+    SOURCES: ClassVar[tuple[str, ...]] = ("spot", "futures", "options", "sentiment", "hyperliquid", "liquidations", "whales", "stablecoins", "calendar", "news", "metals", "predictions", "macro", "cot", "taker_flow")
 
     spot: SpotSnapshot
     futures: FuturesSnapshot
@@ -225,6 +233,7 @@ class MarketSnapshot(BaseModel):
     predictions: PredictionSnapshot = Field(default_factory=lambda: PredictionSnapshot.unavailable("voxodds", "not fetched"))
     macro: MacroSnapshot = Field(default_factory=lambda: MacroSnapshot.unavailable("fred", "not fetched"))
     cot: COTSnapshot = Field(default_factory=lambda: COTSnapshot.unavailable("cftc", "not fetched"))
+    taker_flow: TakerFlowSnapshot = Field(default_factory=lambda: TakerFlowSnapshot.unavailable("gate.io", "not fetched"))
     generated_at: datetime = Field(default_factory=_now)
 
     def unavailable(self) -> list[str]:

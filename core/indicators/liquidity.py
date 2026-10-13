@@ -46,6 +46,11 @@ class Pool:
         return None if self.sweep_index is None else self.bars - 1 - self.sweep_index
 
 
+PROXY_METHOD = "candle close-position proxy (no tick data)"
+TAKER_METHOD = "taker volume, Gate.io BTC_USDT perpetual"
+VELOCITY_BARS = 5
+
+
 @dataclass
 class DeltaRead:
     available: bool = False
@@ -53,8 +58,13 @@ class DeltaRead:
     delta_change: float = 0.0
     price_change: float = 0.0
     state: str = "unavailable"    # confirming up/down, bearish/bullish absorption, flat
-    method: str = "candle close-position proxy (no tick data)"
+    method: str = PROXY_METHOD
     series: list[float] = field(default_factory=list)
+    # real taker flow only: the average delta per bar over the last few bars (the CVD's velocity), and how
+    # that average changed against the few bars before (its acceleration). Units are BTC per bar.
+    velocity: float | None = None
+    acceleration: float | None = None
+    units: str = "proxy units"
 
 
 @dataclass
@@ -139,16 +149,45 @@ def cumulative_delta(df: pd.DataFrame, lookback: int = 20) -> DeltaRead:
     d_change = float(cvd[-1] - cvd[-1 - look])
     p_change = float(close[-1] - close[-1 - look])
     scale = float(np.mean(np.abs(delta[-look:]))) or 1.0
-    if abs(d_change) < scale * 0.5 or p_change == 0:
-        state = "flat"
-    elif (p_change > 0) == (d_change > 0):
-        # name the direction: a bare "confirming" reads as agreement to whichever side is asking, and
-        # delta confirming a fall is evidence against the bullish case, not for it
-        state = "confirming up" if p_change > 0 else "confirming down"
-    else:
-        state = "bearish absorption" if p_change > 0 else "bullish absorption"
+    state = _delta_state(d_change, p_change, scale)
     return DeltaRead(available=True, last=float(cvd[-1]), delta_change=d_change, price_change=p_change,
                      state=state, series=[float(x) for x in cvd])
+
+
+def _delta_state(d_change: float, p_change: float, scale: float) -> str:
+    if abs(d_change) < scale * 0.5 or p_change == 0:
+        return "flat"
+    if (p_change > 0) == (d_change > 0):
+        # name the direction: a bare "confirming" reads as agreement to whichever side is asking, and
+        # delta confirming a fall is evidence against the bullish case, not for it
+        return "confirming up" if p_change > 0 else "confirming down"
+    return "bearish absorption" if p_change > 0 else "bullish absorption"
+
+
+def taker_delta(price: pd.DataFrame, flow: pd.DataFrame | None, lookback: int = 20) -> DeltaRead | None:
+    """Cumulative delta from REAL taker volume, read against price over the same periods.
+
+    Only periods present in both series are used, matched on their opening time, so a gap in either
+    cannot shift the comparison by a bar. None when there is not enough overlap - the caller then falls
+    back to the proxy and says so."""
+    if flow is None or flow.empty or price is None or price.empty:
+        return None
+    joined = price[["timestamp", "close"]].merge(flow[["timestamp", "delta"]], on="timestamp", how="inner")
+    if len(joined) < lookback + 1:
+        return None
+    delta = joined["delta"].to_numpy(dtype=float)
+    close = joined["close"].to_numpy(dtype=float)
+    cvd = np.cumsum(delta)
+    d_change = float(cvd[-1] - cvd[-1 - lookback])
+    p_change = float(close[-1] - close[-1 - lookback])
+    scale = float(np.mean(np.abs(delta[-lookback:]))) or 1.0
+    k = VELOCITY_BARS
+    velocity = float(np.mean(delta[-k:])) if len(delta) >= k else None
+    prior = float(np.mean(delta[-2 * k:-k])) if len(delta) >= 2 * k else None
+    return DeltaRead(available=True, last=float(cvd[-1]), delta_change=d_change, price_change=p_change,
+                     state=_delta_state(d_change, p_change, scale), method=TAKER_METHOD,
+                     series=[float(x) for x in cvd], velocity=velocity,
+                     acceleration=None if velocity is None or prior is None else velocity - prior, units="BTC")
 
 
 def volume_profile(df: pd.DataFrame, bins: int = 48, lookback: int = 200) -> VolumeProfile:
@@ -268,11 +307,13 @@ def oi_changes(history: list[tuple[int, float]], now_ms: int,
 
 
 def summarise(df: pd.DataFrame, oi_history: list[tuple[int, float]], now_ms: int,
-              tolerance_pct: float = DEFAULT_TOLERANCE_PCT, windows: tuple[str, ...] = DEFAULT_WINDOWS) -> dict:
-    """The compact, JSON-safe reading handed to the rubric judges."""
+              tolerance_pct: float = DEFAULT_TOLERANCE_PCT, windows: tuple[str, ...] = DEFAULT_WINDOWS,
+              flow: pd.DataFrame | None = None) -> dict:
+    """The compact, JSON-safe reading handed to the rubric judges. `flow` is real taker volume for the same
+    timeframe; when it covers the window it replaces the close-position proxy, and `method` says which."""
     price = float(df["close"].iloc[-1]) if len(df) else 0.0
     pools = liquidity_pools(df, tolerance_pct)
-    cvd = cumulative_delta(df)
+    cvd = taker_delta(df, flow) or cumulative_delta(df)
     vp = volume_profile(df)
 
     def pool_out(side: str) -> dict | None:
@@ -292,8 +333,11 @@ def summarise(df: pd.DataFrame, oi_history: list[tuple[int, float]], now_ms: int
                                         for p in sorted(pools, key=lambda p: -(p.sweep_index or -1))
                                         if p.swept), None)},
         "cumulative_delta": {"available": cvd.available, "state": cvd.state, "method": cvd.method,
+                             "units": cvd.units,
                              "change_over_20_bars": round(cvd.delta_change, 2),
-                             "price_change_over_20_bars": round(cvd.price_change, 2)},
+                             "price_change_over_20_bars": round(cvd.price_change, 2),
+                             "velocity_per_bar": None if cvd.velocity is None else round(cvd.velocity, 3),
+                             "acceleration": None if cvd.acceleration is None else round(cvd.acceleration, 3)},
         "volume_profile": ({"available": False} if not vp.available else
                            {"available": True, "point_of_control": round(vp.poc, 2),
                             "value_area_high": round(vp.value_area_high, 2),
