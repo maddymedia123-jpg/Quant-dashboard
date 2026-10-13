@@ -35,8 +35,10 @@ def test_state_carries_the_three_live_recon_timeframes_and_is_json_safe(market_a
     m, analyses = market_and_analyses
     state = lr.build_state(m, analyses)
     json.dumps(state)
-    assert set(state["categories"]) == {"live", "intraday", "weekly"}
-    assert state["timeframes_read"] == {"live": "15m", "intraday": "1h", "weekly": "4h"}
+    # 1h and 4h are the Live and Intraday charts; no desk charts 15m, so its brief is built for the war room
+    assert set(state["categories"]) == {"15m", "live", "intraday"}
+    assert state["timeframes_read"] == {"15m": "15m", "live": "1h", "intraday": "4h"}
+    assert state["categories"]["15m"]["chart_tf"] == "15m" and state["categories"]["15m"]["direction"]
     assert state["spot"]["price"] and "macro_calendar" in state
 
 
@@ -193,8 +195,8 @@ def test_weekly_state_reads_the_weekly_timeframes(market_and_analyses):
     json.dumps(st)
     assert set(st["smc"]) == set(st["liquidity"]) == {"4h", "1d", "1w"}
     assert set(st["liquidity"]["4h"]["open_interest"]) == {"4h", "1d", "1w"}
-    assert set(st["categories"]) == {"weekly", "monthly"}, "the analyses drawn on 4h and 1d"
-    assert st["timeframes_read"] == {"weekly": "4h", "monthly": "1d"}
+    assert set(st["categories"]) == {"intraday", "weekly", "monthly"}, "the analyses drawn on 4h, 1d and 1w"
+    assert st["timeframes_read"] == {"intraday": "4h", "weekly": "1d", "monthly": "1w"}
     assert st["horizon"] == "seven days"
 
 
@@ -317,3 +319,14 @@ def test_unavailable_lists_every_feed_that_failed_not_just_derivatives(market_an
     blind = m.model_copy(update={"sentiment": SentimentSnapshot.unavailable("alternative.me", "timeout")})
     state = lr.build_state(blind, analyses)
     assert "sentiment" in state["unavailable"], "a judge must not read an empty list as all feeds present"
+
+
+def test_monthly_state_reads_monthly_candles_with_its_own_liquidity_windows(market_and_analyses):
+    from core.agents.recon_profiles import PROFILES
+
+    m, analyses = market_and_analyses
+    st = lr.build_state(m, analyses, profile=PROFILES["monthly"])
+    json.dumps(st)
+    assert set(st["smc"]) == set(st["liquidity"]) == {"1d", "1w", "1M"}
+    assert set(st["liquidity"]["1d"]["open_interest"]) == {"1d", "1w", "1M"}
+    assert "1M" in st["categories"] and st["timeframes_read"]["1M"] == "1M"

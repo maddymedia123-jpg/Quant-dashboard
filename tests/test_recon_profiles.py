@@ -13,7 +13,7 @@ def ms(*args) -> int:
 
 def test_every_category_has_a_profile_with_three_ascending_timeframes():
     assert set(rp.PROFILES) == {"live", "intraday", "weekly", "monthly"}
-    order = ["15m", "1h", "4h", "1d", "1w"]
+    order = ["15m", "1h", "4h", "1d", "1w", "2w", "1M"]
     for p in rp.PROFILES.values():
         assert len(p.timeframes) == 3
         idx = [order.index(tf) for tf in p.timeframes]
@@ -90,3 +90,24 @@ def test_no_template_placeholder_survives_formatting():
                 assert "{" not in i.question(side, p), f"{p.category}/{i.id} left a placeholder"
         for d in DOMAINS:
             assert all("{" not in s for s in d.steps(p))
+
+
+def test_each_desk_charts_its_middle_timeframe_and_is_pinned_to_its_top_one():
+    """The master framework: chart one candle size below the anchored candle, forecast across it."""
+    from core.config import CATEGORIES, TF_MINUTES
+    expected = {"live": ("1h", "4h"), "intraday": ("4h", "1d"), "weekly": ("1d", "1w"), "monthly": ("1w", "1M")}
+    for key, (chart, anchor) in expected.items():
+        p, c = rp.PROFILES[key], CATEGORIES[key]
+        assert c.chart_tf == chart == p.timeframes[1], key
+        assert p.timeframes[2] == anchor == p.window, key
+        # the forecast spans the anchored candle: 4 x 1h, 6 x 4h, 7 x 1d, 4 x 1w (a month, nominally)
+        span = c.horizon_bars * TF_MINUTES[chart]
+        if key == "monthly":   # four weeks against a calendar month of 28-31 days
+            assert 28 * 1440 <= span <= TF_MINUTES[anchor], (key, span)
+        else:
+            assert span == TF_MINUTES[anchor], (key, span, TF_MINUTES[anchor])
+
+
+def test_monthly_reads_monthly_candles_not_the_weekly_desks_charts():
+    assert rp.PROFILES["monthly"].timeframes == ("1d", "1w", "1M")
+    assert rp.PROFILES["monthly"].timeframes != rp.PROFILES["weekly"].timeframes

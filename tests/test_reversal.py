@@ -63,7 +63,7 @@ def test_oversold_at_support_is_active_bullish(a):
 def test_analyze_category_attaches_reversal_patterns_and_retracements():
     frames = {"15m": parse_ohlc(json.loads((FX / "kraken_ohlc_15m.json").read_text())),
               "1h": parse_ohlc(json.loads((FX / "kraken_ohlc_1h.json").read_text()))}
-    x = analyze_category(CATEGORIES["intraday"], frames, FuturesSnapshot(source="x"))
+    x = analyze_category(CATEGORIES["live"], frames, FuturesSnapshot(source="x"))
     assert x.reversal is not None and x.reversal.status in {"ACTIVE", "TIME_ONLY", "UPCOMING", "NONE"}
     assert x.fib_retr is not None and set(x.fib_retr.levels) >= {0.382, 0.5, 0.618}
     assert isinstance(x.patterns, list) and x.fib.anchor_price > 0 and x.fib.anchor2_price > 0

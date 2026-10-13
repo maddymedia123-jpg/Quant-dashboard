@@ -203,12 +203,12 @@ def _macro_event_now(m, now_ms: int, profile=LIVE) -> str | None:
 def sweep_plan() -> list[tuple[str, str]]:
     """Which desk judges which timeframe, so a trap is scanned once rather than once per desk.
 
-    The feed stops at the weekly candle, so four desks cannot have four distinct three-timeframe windows:
-    Weekly and Monthly read exactly the same candles. Scanning per desk therefore found the same shape
-    twice, paid for two judgements of it, and anchored two rows for one raid. A timeframe belongs to the
-    first desk that reads it - the shortest horizon that can see the level, and so the desk that will act
-    on it soonest - which gives 15m/1h/4h to Live, 1d to Intraday and 1w to Weekly. Monthly owns nothing
-    of its own; it still shows every trap on the timeframes it reads."""
+    The desks' timeframes overlap (Live reads 15m/1h/4h, Intraday 1h/4h/1d, Weekly 4h/1d/1w, Monthly
+    1d/1w/1M), and scanning per desk found the same shape twice, paid for two judgements of it, and
+    anchored two rows for one raid. A timeframe belongs to the first desk that reads it - the shortest
+    horizon that can see the level, and so the desk that will act on it soonest - which gives 15m/1h/4h
+    to Live, 1d to Intraday, 1w to Weekly and the monthly candle to Monthly. Every desk still shows every
+    trap on the timeframes it reads."""
     plan, claimed = [], set()
     for cat, profile in PROFILES.items():
         for tf in profile.timeframes:
@@ -413,7 +413,7 @@ def _data_stamp() -> str:
     still read the old one. Keying on the data means the cache follows the snapshot, not the minute."""
     last = getattr(m.spot, "last", None)
     stamps = [str(last)]
-    for tf in ("15m", "1h", "4h", "1d", "1w"):
+    for tf in ("15m", "1h", "4h", "1d", "1w", "2w", "1M"):
         df = m.spot.frames.get(tf)
         stamps.append(str(int(df["timestamp"].iloc[-1])) if df is not None and not df.empty else "-")
     return "|".join(stamps)

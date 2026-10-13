@@ -318,9 +318,18 @@ def _ordinal(n: int) -> str:
     return {1: "next", 2: "second", 3: "third", 4: "fourth", 5: "fifth"}.get(n, f"{n}th")
 
 
+def _month_start(ms: int, months_ahead: int = 0) -> int:
+    from datetime import datetime, timezone
+    d = datetime.fromtimestamp(ms / 1000, timezone.utc)
+    m = d.month - 1 + months_ahead
+    return int(datetime(d.year + m // 12, m % 12 + 1, 1, tzinfo=timezone.utc).timestamp() * 1000)
+
+
 def nth_close(now_ms: int, timeframe: str, n: int) -> int:
     """The n-th close of that candle from now, n=1 being the next one."""
-    step = WEEK_MS if timeframe == "1w" else TF_MS.get(timeframe)
+    if timeframe == "1M":
+        return _month_start(now_ms, max(1, n))
+    step = {"1w": WEEK_MS, "2w": 2 * WEEK_MS}.get(timeframe) or TF_MS.get(timeframe)
     if step is None:
         raise ValueError(f"unknown timeframe {timeframe!r}")
     return next_close(now_ms, timeframe) + (max(1, n) - 1) * step
@@ -330,6 +339,13 @@ def next_close(now_ms: int, timeframe: str) -> int:
     """The next close of that candle, UTC-aligned the same way the war rooms anchor their windows."""
     if timeframe == "1w":
         return now_ms - (now_ms - MONDAY_OFFSET_MS) % WEEK_MS + WEEK_MS
+    if timeframe == "2w":
+        # the same pairing core.data.spot uses to build the candles, so a checkpoint lands on a close
+        # the chart actually draws
+        from core.data.spot import EPOCH_MONDAY_MS
+        return now_ms - (now_ms - EPOCH_MONDAY_MS) % (2 * WEEK_MS) + 2 * WEEK_MS
+    if timeframe == "1M":
+        return _month_start(now_ms, 1)
     step = TF_MS.get(timeframe)
     if step is None:
         raise ValueError(f"unknown timeframe {timeframe!r}")

@@ -670,6 +670,7 @@ def smc_html(by_tf: dict) -> str:
 def liquidity_html(by_tf: dict) -> str:
     """Pools, delta, volume profile and open interest per timeframe."""
     rows = ""
+    oi_windows = list(by_tf)
     for tf, d in by_tf.items():
         pools = (d or {}).get("pools") or {}
         cvd = (d or {}).get("cumulative_delta") or {}
@@ -687,13 +688,15 @@ def liquidity_html(by_tf: dict) -> str:
                     f"{state}</span>")
 
         oi = (d or {}).get("open_interest") or {}
-        oi_cell = " / ".join("—" if oi.get(k) is None else f"{oi[k]:+.1f}%" for k in ("15m", "1h", "4h"))
+        # each desk measures open interest over its own timeframes, so the column follows them
+        oi_windows = list(oi) or oi_windows
+        oi_cell = " / ".join("—" if oi.get(k) is None else f"{oi[k]:+.1f}%" for k in oi_windows)
         rows += (f"<tr><td>{html.escape(tf)}</td><td>{pool_cell('buyside')}</td><td>{pool_cell('sellside')}</td>"
                  f"<td>{html.escape(str(cvd.get('state', '—')))}</td>"
                  f"<td>{'—' if not vp.get('available') else _dash(vp.get('point_of_control'), 0, '$')}</td>"
                  f"<td>{oi_cell}</td></tr>")
     body = ("<table><thead><tr><th>TF</th><th>Buyside pool</th><th>Sellside pool</th><th>Delta</th>"
-            f"<th>POC</th><th>OI 15m/1h/4h</th></tr></thead><tbody>{rows}</tbody></table>")
+            f"<th>POC</th><th>OI {'/'.join(oi_windows)}</th></tr></thead><tbody>{rows}</tbody></table>")
     body += ("<p class='muted'>Delta is a candle close-position proxy, not tick tape; treat it as a lean, "
              "not a measurement. A pool is swept when price wicks through and closes back inside, and "
              "broken when it closes beyond.</p>")

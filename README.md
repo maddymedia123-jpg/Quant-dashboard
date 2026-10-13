@@ -2,7 +2,7 @@
 
 Streamlit dashboard with TradingView-style charts. Three layers:
 
-1. **Deterministic analysis** per timeframe (Live 15m, Intraday 1h, Weekly 4h, Monthly 1d): EMA
+1. **Deterministic analysis** per desk chart (Live 1h, Intraday 4h, Weekly 1D, Monthly 1W): EMA
    21/50/100/200, RSI with divergence detection (confirmed and forming), swing support/resistance,
    trendlines, Fibonacci time zones and retracements, chart patterns, volatility regime and expected
    range, squeeze risk, an anchored direction call with invalidation, plus Smart Money Concepts and
@@ -75,15 +75,19 @@ The head's policy, also in code (`core/agents/live_recon.py`):
 
 Each category reads its own timeframes, judges over its own horizon and pins to its own candle:
 
-| Tab | Timeframes | Horizon | Anchored to |
+| Desk | Reads | Chart and forecast | Anchored to |
 | --- | --- | --- | --- |
-| Live Recon | 15m / 1h / 4h | next four hours | UTC 4h candle |
-| Intraday | 1h / 4h / 1d | next 24 hours | UTC day |
-| Weekly | 4h / 1d / 1w | next seven days | week opening Monday 00:00 UTC |
-| Monthly | 4h / 1d / 1w | next 30 days | calendar month |
+| Live Recon | 15m / 1h / 4h | 1h, 4 candles = the next 4h | UTC 4h candle |
+| Intraday | 1h / 4h / 1D | 4h, 6 candles = the next 24h | UTC day |
+| Weekly | 4h / 1D / 1W | 1D, 7 candles = the next 7 days | week opening Monday 00:00 UTC |
+| Monthly | 1D / 1W / 1M | 1W, 4 candles = the next month | calendar month |
 
-Nothing above the weekly candle is fetched, so Weekly and Monthly read the same charts and differ in
-horizon and anchor. Profiles and the window maths live in `core/agents/recon_profiles.py`; the Unix epoch
+Each desk charts its middle timeframe and is pinned to its top one, the master framework's layout: the
+forecast spans exactly the candle the summary is anchored to. A timeframe a war room reads that no desk
+charts (Live's 15m, Monthly's 1M) gets its own brief, so every timeframe the judges are asked about has
+evidence behind it. No free spot venue serves monthly candles, so 1M is built from daily candles by
+calendar month (and 2W from Monday-aligned weekly pairs) in `core/data/spot.py`; with Kraken's 720 daily
+candles that is about two years of months. Monthly no longer reads the same charts as Weekly. Profiles and the window maths live in `core/agents/recon_profiles.py`; the Unix epoch
 fell on a Thursday, so weeks are offset to Monday and months are calendar months of any length.
 
 ### Judgments: TypeSafe (Jev), with Gemini as fallback
@@ -203,9 +207,8 @@ A trap is declared when the sub-agents score 60 or more, the Head calls it engin
 not read an authentic break.
 
 **A trap is a market event, not a desk's opinion of one.** Each timeframe is scanned once, by the first
-desk that reads it — 15m/1h/4h by Live Recon, 1d by Intraday, 1w by Weekly — and a trap then appears on
-every desk that reads its timeframe. Monthly owns no timeframe of its own, because the feed stops at the
-weekly candle and so Weekly and Monthly read identical candles; scanning per desk instead judged the same
+desk that reads it — 15m/1h/4h by Live Recon, 1d by Intraday, 1w by Weekly, 1M by Monthly — and a trap then
+appears on every desk that reads its timeframe. Scanning per desk instead judged the same
 shape twice and anchored two rows for one raid. Identity is side, timeframe and level, matched within a
 quarter ATR rather than to the cent, because a recomputed value-area edge drifts by dollars between
 refreshes.

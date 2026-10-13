@@ -138,7 +138,7 @@ def test_fib_and_pattern_cards_render_and_escape():
     from core.indicators.patterns import Pattern
     from core.indicators.reversal import ReversalWindow
     m = _market()
-    a = analyze_category(CATEGORIES["intraday"], m.spot.frames, m.futures)
+    a = analyze_category(CATEGORIES["live"], m.spot.frames, m.futures)
     h = panels.fib_html(a)
     assert "Fibonacci time" in h and "Anchors:" in h and "Retracement of the" in h
     a.reversal = ReversalWindow("ACTIVE", "bearish", 5, a.fib.upcoming[0].timestamp_ms, 0, 2, ["at resistance 78,600 (4 touches)"])
@@ -443,3 +443,11 @@ def test_the_rail_reads_take_the_signal_colours_when_they_are_on():
     assert f"> :nth-child(1) [data-testid=\"stCaptionContainer\"] p {{ color: {p['up']}" in mono
     assert f"> :nth-child(3) [data-testid=\"stCaptionContainer\"] p {{ color: {p['muted']}" in sig, "no call, no colour"
     assert 'content: "1h"' in sig, "the timeframe sits beside the desk's name"
+
+
+def test_the_open_interest_column_follows_the_desks_own_timeframes():
+    row = {"available": True, "pools": {}, "cumulative_delta": {"available": True, "state": "rising"},
+           "volume_profile": {"available": False},
+           "open_interest": {"1d": 1.5, "1w": -2.0, "1M": None}}
+    h = panels.liquidity_html({"1d": row})
+    assert "<th>OI 1d/1w/1M</th>" in h and "+1.5% / -2.0% / —" in h, "not dashes for 15m/1h/4h"

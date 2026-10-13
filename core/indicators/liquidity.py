@@ -16,6 +16,7 @@ from typing import Literal
 import numpy as np
 import pandas as pd
 
+from core.config import TF_MINUTES
 from core.indicators.pivots import find_pivots
 from core.indicators.volatility import atr
 
@@ -23,7 +24,8 @@ MIN_TOUCHES = 2            # a pool needs at least two attempts at the same leve
 CONFIRM_BARS = 2           # and price must have left it: the last bars are where price is, not a pool
 DEFAULT_TOLERANCE_PCT = 0.1
 VALUE_AREA_SHARE = 0.70
-TF_MS = {"15m": 900_000, "1h": 3_600_000, "4h": 14_400_000, "1d": 86_400_000, "1w": 604_800_000}
+# every timeframe a desk can read, from the one table, so a new timeframe cannot be missing here
+TF_MS = {tf: minutes * 60_000 for tf, minutes in TF_MINUTES.items()}
 DEFAULT_WINDOWS = ("15m", "1h", "4h")
 
 

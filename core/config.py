@@ -14,19 +14,29 @@ class Category:
     horizon_label: str  # human label for that horizon
 
 
+# The master framework's desks. Each charts one candle size below the candle it is anchored to, and
+# forecasts that many chart candles ahead, so the forecast always spans exactly the anchored window:
+#   Live Recon  - 1h chart, 4 x 1h  = the 4-hour candle it is pinned to
+#   Intraday    - 4h chart, 6 x 4h  = the daily candle
+#   Weekly      - 1D chart, 7 x 1D  = the weekly candle (Mon 00:00 UTC to Sunday close)
+#   Monthly     - 1W chart, 4 x 1W  = the monthly candle
 CATEGORIES: dict[str, Category] = {
-    # 16 bars of 15m is four hours, which is the window the Live war room judges and its summary
-    # anchors to. At 4 bars the chart forecast and expected range covered one hour while the
-    # verdict beside them covered four.
-    "live": Category("live", "Live Recon", "15m", "1h", 16, "next 4h"),
-    "intraday": Category("intraday", "Intraday", "1h", "4h", 24, "next 24h"),
-    "weekly": Category("weekly", "Weekly", "4h", "1d", 42, "next 7 days"),
-    "monthly": Category("monthly", "Monthly", "1d", "1w", 30, "next 30 days"),
+    "live": Category("live", "Live Recon", "1h", "4h", 4, "next 4h"),
+    "intraday": Category("intraday", "Intraday", "4h", "1d", 6, "next 24h"),
+    "weekly": Category("weekly", "Weekly", "1d", "1w", 7, "next 7 days"),
+    "monthly": Category("monthly", "Monthly", "1w", "1M", 4, "next month"),
 }
 
+# Fetched from the exchange. 15m is still fetched: the 24h change, the trade desk's first checkpoint
+# and the TRAP sweep's finest look all read it.
 TIMEFRAMES: tuple[str, ...] = ("15m", "1h", "4h", "1d", "1w")
+# Built from those: no free spot venue serves two-week or calendar-month candles, so 2W is two
+# Monday-aligned weeks and 1M is a calendar month of daily candles (see core.data.spot).
+DERIVED_TIMEFRAMES: tuple[str, ...] = ("2w", "1M")
 
-TF_MINUTES: dict[str, int] = {"15m": 15, "1h": 60, "4h": 240, "1d": 1440, "1w": 10080}
+# 1M is a nominal 30 days, used only where a duration is needed (annualising volatility, horizons);
+# month boundaries themselves are always taken from the calendar.
+TF_MINUTES: dict[str, int] = {"15m": 15, "1h": 60, "4h": 240, "1d": 1440, "1w": 10080, "2w": 20160, "1M": 43200}
 
 # Cache TTLs (seconds)
 TTL = {"spot": 25, "context": 120, "futures": 60, "options": 120, "sentiment": 1800}

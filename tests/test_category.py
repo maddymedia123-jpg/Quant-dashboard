@@ -10,14 +10,17 @@ FX = pathlib.Path(__file__).parent / "fixtures"
 
 
 def _frames():
-    return {"15m": parse_ohlc(json.loads((FX / "kraken_ohlc_15m.json").read_text())),
-            "1h": parse_ohlc(json.loads((FX / "kraken_ohlc_1h.json").read_text()))}
+    from core.data.gemini_spot import resample
+    h1 = parse_ohlc(json.loads((FX / "kraken_ohlc_1h.json").read_text()))
+    # Live charts 1h against 4h context, so the context is real 4h candles built from the recorded hours
+    return {"15m": parse_ohlc(json.loads((FX / "kraken_ohlc_15m.json").read_text())), "1h": h1,
+            "4h": resample(h1, 240)}
 
 
 def test_live_category_on_fixtures():
     fut = FuturesSnapshot(source="binance", funding_rate=0.0001, funding_7d_mean=0.0001, oi_change_24h_pct=1.0, long_short_ratio=1.1)
     a = analyze_category(CATEGORIES["live"], _frames(), fut)
-    assert a is not None and a.chart_tf == "15m" and a.context_tf == "1h"
+    assert a is not None and a.chart_tf == "1h" and a.context_tf == "4h"
     assert len(a.chart_df) <= 300 and len(a.rsi) == len(a.chart_df)
     assert a.direction.direction in {"BULLISH", "BEARISH", "NEUTRAL"}
     assert a.vol.regime in {"LOW", "NORMAL", "HIGH", "UNKNOWN"}

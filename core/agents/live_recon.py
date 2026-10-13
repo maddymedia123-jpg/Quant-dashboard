@@ -15,7 +15,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from core.agents.context import common_payload, derivatives_payload
+from core.agents.context import category_brief, common_payload, derivatives_payload
 from core.agents.recon_profiles import LIVE, ReconProfile
 from core.indicators import liquidity as lq
 from core.indicators import volatility as vol
@@ -120,10 +120,20 @@ class LiveReconResult:
 LIVE_TIMEFRAMES = LIVE.timeframes
 
 
+def timeframe_brief(m, tf: str, context_tf: str) -> dict | None:
+    """The same brief a desk's analysis gives, for a timeframe no desk charts."""
+    from core.config import Category
+    from core.indicators.category import analyze_category
+
+    a = analyze_category(Category(tf, f"{tf} read", tf, context_tf, 4, f"next 4 x {tf}"),
+                         m.spot.frames, m.futures)
+    return category_brief(a) if a is not None else None
+
+
 def build_state(m, analyses: dict, now_ms: int | None = None, profile: ReconProfile | None = None) -> dict:
     """The shared state both teams and the trap agent judge.
 
-    Live Recon reads 15m, 1h and 4h, which are the live, intraday and weekly analyses. The rest of the
+    Live Recon reads 15m, 1h and 4h: the live and intraday analyses, and a 15m brief built here. The rest of the
     snapshot (spot, derivatives, calendar) comes along in the common payload, availability flags and
     all, so an agent can see that a field is missing instead of guessing at it.
 
@@ -135,6 +145,17 @@ def build_state(m, analyses: dict, now_ms: int | None = None, profile: ReconProf
     wanted = profile.analysis_keys
     state["categories"] = {k: v for k, v in state.get("categories", {}).items() if k in wanted}
     state["timeframes_read"] = dict(wanted)
+    # A timeframe the war room reads that no desk charts (Live's 15m, Monthly's 1M) still needs its own
+    # brief - trend, EMA stack, RSI, patterns - or "all three timeframes point up" has one timeframe
+    # with nothing behind it. It is built here, keyed by the timeframe itself.
+    covered = set(wanted.values())
+    for i, tf in enumerate(profile.timeframes):
+        if tf in covered:
+            continue
+        brief = timeframe_brief(m, tf, profile.timeframes[i + 1] if i + 1 < len(profile.timeframes) else tf)
+        if brief is not None:
+            state["categories"][tf] = brief
+            state["timeframes_read"][tf] = tf
     state["war_room"] = profile.label
     state["horizon"] = profile.horizon
 
