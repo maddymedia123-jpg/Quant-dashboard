@@ -15,6 +15,12 @@ is handled below:
 * `cosd=` (a start date) is honoured, which takes a response from 104 KB of history since 2006 to a few
   hundred bytes. Only the recent window is ever needed.
 
+FRED refuses some cloud hosts (the deployed dashboard showed "fred · unavailable" while the same
+request worked from a desk machine). The two yields therefore fall back to the US Treasury's own daily
+par yield curve CSV, also keyless - FRED's DGS2/DGS10 ARE that curve, republished. Found by calling it:
+one file per calendar year, newest row first, US dates (`10/16/2026`), columns `"2 Yr"` and `"10 Yr"`,
+and it is often a day fresher than FRED. The dollar index has no Treasury twin and stays a named gap.
+
 Daily series publish with a business-day lag or two, so a value a couple of days old is normal. A week
 old is not, and is flagged rather than shown as current."""
 from __future__ import annotations
@@ -32,6 +38,9 @@ from core.data.types import MacroSnapshot
 log = logging.getLogger(__name__)
 
 URL = "https://fred.stlouisfed.org/graph/fredgraph.csv"
+TREASURY_URL = ("https://home.treasury.gov/resource-center/data-chart-center/interest-rates/"
+                "daily-treasury-rates.csv/{year}/all")
+TREASURY_COLUMNS = {"DGS10": "10 Yr", "DGS2": "2 Yr"}
 HEADERS = {"User-Agent": "trap-intel-dashboard/1.0"}
 WINDOW_DAYS = 45               # enough for a week-ago comparison across holidays, nothing more
 # Staleness is per series, because the publication cadences differ. The Treasury yields are daily and
@@ -134,7 +143,46 @@ async def _fetch_csv(client: httpx.AsyncClient, series_id: str, since: str) -> s
     return r.text
 
 
-def build(texts: dict[str, str | BaseException], now_ms: int) -> MacroSnapshot:
+def treasury_as_fred(csv_text: str, series_id: str) -> str:
+    """One column of the Treasury's yield-curve CSV, rewritten as FRED's two-column CSV, oldest first."""
+    reader = csv.reader(io.StringIO(csv_text))
+    header = [h.strip() for h in next(reader, [])]
+    column = TREASURY_COLUMNS[series_id]
+    if not header or header[0] != "Date" or column not in header:
+        raise ValueError(f"treasury: no {column!r} column in {header[:4]}")
+    at = header.index(column)
+    rows = []
+    for row in reader:
+        if len(row) <= at:
+            continue
+        try:
+            when = datetime.strptime(row[0].strip(), "%m/%d/%Y").strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+        rows.append(f"{when},{row[at].strip()}")
+    if not rows:
+        raise ValueError(f"treasury: no {column} rows")
+    return "\n".join([f"observation_date,{series_id}"] + sorted(rows)) + "\n"
+
+
+async def _fetch_treasury(client: httpx.AsyncClient, now_ms: int) -> str:
+    """This year's curve, with last year's in front early in January so a week-ago value exists."""
+    today = datetime.fromtimestamp(now_ms / 1000, timezone.utc)
+    years = [today.year] if today.timetuple().tm_yday > WINDOW_DAYS else [today.year - 1, today.year]
+    parts = []
+    for year in years:
+        r = await client.get(TREASURY_URL.format(year=year), headers=HEADERS, follow_redirects=True,
+                             params={"type": "daily_treasury_yield_curve", "field_tdr_date_value": year,
+                                     "page": "", "_format": "csv"})
+        r.raise_for_status()
+        if len(r.content) > MAX_BYTES:
+            raise ValueError(f"treasury {year}: {len(r.content) / 1024:.0f} KB for one year")
+        lines = r.text.strip().splitlines()
+        parts.append(lines if not parts else lines[1:])
+    return "\n".join(line for part in parts for line in part)
+
+
+def build(texts: dict[str, str | BaseException], now_ms: int, source: str = "fred") -> MacroSnapshot:
     """Assemble the snapshot from whatever arrived. One series failing is a degraded feed, named."""
     series: dict[str, dict] = {}
     parsed: dict[str, list[tuple[int, float]]] = {}
@@ -158,12 +206,12 @@ def build(texts: dict[str, str | BaseException], now_ms: int) -> MacroSnapshot:
         series[series_id] = summarise(series_id, label, unit, low, high, rows, now_ms, stale_after)
 
     if not any(s.get("available") for s in series.values()):
-        return MacroSnapshot.unavailable("fred", "; ".join(problems) or "no series available")
+        return MacroSnapshot.unavailable(source, "; ".join(problems) or "no series available")
 
     spread, spread_ms = None, None
     if series.get("DGS10", {}).get("available") and series.get("DGS2", {}).get("available"):
         spread, spread_ms = curve_spread(parsed["DGS10"], parsed["DGS2"])
-    return MacroSnapshot(source="fred", series=series, spread_2s10s=spread, spread_as_of_ms=spread_ms,
+    return MacroSnapshot(source=source, series=series, spread_2s10s=spread, spread_as_of_ms=spread_ms,
                          error="; ".join(problems) or None)
 
 
@@ -175,4 +223,19 @@ async def fetch_macro(client: httpx.AsyncClient, now_ms: int | None = None) -> M
     for series_id, result in zip(ids, results):
         if isinstance(result, BaseException):
             log.warning("FRED %s unavailable: %s", series_id, result)
-    return build(dict(zip(ids, results)), now)
+    texts = dict(zip(ids, results))
+    source = "fred"
+    if any(isinstance(texts[sid], BaseException) for sid in TREASURY_COLUMNS):
+        try:
+            curve = await _fetch_treasury(client, now)
+            for sid in TREASURY_COLUMNS:
+                if isinstance(texts[sid], BaseException):
+                    texts[sid] = treasury_as_fred(curve, sid)
+            fred_answered = any(not isinstance(r, BaseException) for r in results)
+            source = "fred+treasury.gov" if fred_answered else "treasury.gov"
+        except Exception as e:  # noqa: BLE001 - the fallback failing leaves FRED's own errors standing
+            log.warning("treasury yields unavailable: %s", e)
+            for sid in TREASURY_COLUMNS:
+                if isinstance(texts[sid], BaseException):
+                    texts[sid] = RuntimeError(f"{texts[sid]!r}; treasury fallback: {e}")
+    return build(texts, now, source)

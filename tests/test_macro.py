@@ -282,3 +282,60 @@ def test_the_curated_calendar_fallback_was_not_shadowed():
 
     assert "Macro calendar" in panels.macro_html(MACRO_EVENTS)
     assert panels.rates_html is not panels.macro_html
+
+
+# ---------- FRED refused: the Treasury's own curve ----------
+TREASURY_CSV = ('Date,"1 Mo","2 Yr","3 Yr","10 Yr","30 Yr"\n'
+                "10/09/2026,4.10,4.80,4.85,5.20,5.50\n"
+                "10/08/2026,4.11,4.78,4.84,5.18,5.49\n"
+                "10/02/2026,4.12,4.70,4.80,5.10,5.40\n")
+
+
+def _fred_down(treasury=TREASURY_CSV, dollar_ok=False):
+    seen = []
+
+    def handler(request: httpx.Request):
+        seen.append(request.url.host)
+        if "treasury" in request.url.host:
+            return httpx.Response(200, text=treasury) if treasury else httpx.Response(503)
+        if dollar_ok and request.url.params["id"] == "DTWEXBGS":
+            return httpx.Response(200, text=load("fred_DTWEXBGS.csv"))
+        return httpx.Response(403)
+    return _run(macro.fetch_macro(httpx.AsyncClient(transport=httpx.MockTransport(handler)), RECORDED)), seen
+
+
+def test_the_treasury_column_becomes_a_fred_series_oldest_first():
+    text = macro.treasury_as_fred(TREASURY_CSV, "DGS10")
+    assert macro.parse_series(text, "DGS10")[-1][1] == 5.20
+    assert [v for _, v in macro.parse_series(macro.treasury_as_fred(TREASURY_CSV, "DGS2"), "DGS2")] == [4.70, 4.78, 4.80]
+
+
+def test_a_refused_fred_falls_back_to_the_treasury_yields():
+    snap, seen = _fred_down()
+    assert snap.available and snap.source == "treasury.gov"
+    assert snap.series["DGS10"]["available"] and snap.series["DGS2"]["available"]
+    assert not snap.series["DTWEXBGS"]["available"], "the dollar has no Treasury twin and stays a named gap"
+    assert snap.spread_2s10s == pytest.approx(0.40)
+    assert "fred.stlouisfed.org" in seen and "home.treasury.gov" in seen
+
+
+def test_fred_answering_partly_is_named_as_both():
+    snap, _ = _fred_down(dollar_ok=True)
+    assert snap.source == "fred+treasury.gov" and snap.series["DTWEXBGS"]["available"]
+
+
+def test_fred_up_never_calls_the_treasury():
+    def handler(request: httpx.Request):
+        assert "treasury" not in request.url.host
+        return httpx.Response(200, text=load(f"fred_{request.url.params['id']}.csv"))
+    assert _run(macro.fetch_macro(httpx.AsyncClient(transport=httpx.MockTransport(handler)), RECORDED)).source == "fred"
+
+
+def test_both_down_names_both():
+    snap, _ = _fred_down(treasury=None)
+    assert not snap.available and "treasury fallback" in snap.error and "403" in snap.error
+
+
+def test_a_treasury_file_without_the_column_is_refused():
+    with pytest.raises(ValueError, match="10 Yr"):
+        macro.treasury_as_fred('Date,"1 Mo"\n10/09/2026,4.1\n', "DGS10")

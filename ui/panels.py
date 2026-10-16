@@ -1571,7 +1571,9 @@ def rates_html(macro, now_ms: int) -> str:
                  f"<span class='muted'>({html.escape(state)}; both yields from the same day)</span></p>")
     if getattr(macro, "error", None):
         body += (f"<p class='muted'>Partial: {html.escape(str(macro.error))[:200]}</p>")
-    body += ("<p class='muted'>Daily series from FRED, published with a business-day lag or two - a "
+    origin = {"fred": "FRED", "treasury.gov": "the US Treasury yield curve (FRED unreachable)",
+              "fred+treasury.gov": "FRED, yields from the US Treasury yield curve"}.get(macro.source, macro.source)
+    body += (f"<p class='muted'>Daily series from {html.escape(origin)}, published with a business-day lag or two - a "
              "reading a couple of days old is normal. A move of 15 bp in a yield or 1.5 points in the "
              "dollar over a week is highlighted.</p>")
     return card_html("US macro", body, "neutral")
