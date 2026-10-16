@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 import html
 import time
 from datetime import datetime, timezone
@@ -50,6 +51,7 @@ from core.indicators.fib_time import fib_time_zones
 from core import trades
 from core.traps import find_candidates
 from core.agents.live_recon import build_state, run_live_recon
+from core.agents import handshake
 from core.agents.recon_profiles import LIVE, PROFILES
 from core.anchors import anchor_step
 from core import live_accuracy, live_anchor
@@ -282,8 +284,19 @@ def run_war_room(profile) -> None:
             judge = Judge(settings, typesafe_key=settings.typesafe_key, llm=LLMClient(settings))
             recon = asyncio.run(run_live_recon(judge, m, analyses, profile=profile))
             run_ms = int(time.time() * 1000)
+            # the cross-desk handshake: ask the other three heads before conviction is final
+            try:
+                recon = handshake.apply(recon, handshake.consult(store, profile.category, recon.bias, run_ms))
+            except Exception as e:  # noqa: BLE001 - an unreadable ledger leaves the war room's own conviction
+                recon = replace(recon, notes=tuple(recon.notes) + (f"Cross-desk handshake unavailable: {e}",))
             published = live_anchor.publish(store, recon, run_ms, price=m.spot.last,
                                             macro_event=_macro_event_now(m, run_ms, profile), profile=profile)
+            if published.anchored:
+                # and the other direction: desks this verdict now opposes get a side note
+                try:
+                    handshake.notify(store, profile.category, recon.bias, run_ms, price=m.spot.last)
+                except Exception as e:  # noqa: BLE001
+                    st.warning(f"Could not notify the other desks: {e}")
             st.session_state["recon"][profile.category] = (recon, published)
             label = (f"Anchored the {profile.window_label} summary" if published.anchored else
                      f"Summary held; {len(published.appended)} side note(s) appended")

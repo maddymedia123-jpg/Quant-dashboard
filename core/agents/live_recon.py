@@ -104,6 +104,9 @@ class LiveReconResult:
     completion_tokens: int = 0
     unavailable: tuple[str, ...] = field(default_factory=tuple)
     category: str = "live"
+    # set by the cross-desk handshake (core.agents.handshake) before the verdict is published
+    handshake: dict | None = None
+    confidence_before_handshake: float | None = None
 
     @property
     def leader(self) -> TeamScore | None:

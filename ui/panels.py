@@ -602,9 +602,13 @@ def anchored_summary_html(anchor: dict, window_close_ms: int, now_ms: int, ancho
     from core.agents.recon_profiles import LIVE
     p = profile or LIVE
     mins = max(0, (window_close_ms - now_ms) // 60000)
+    from core.agents.handshake import lean
     bias = str(anchor.get("bias", "—"))
-    tone = tone_for_direction(bias.split()[0])
-    glyph = DIR_GLYPH.get(bias.split()[0], "◆")
+    # war-room biases are BULL / BEAR / BULL TRAP RISK, not BULLISH / BEARISH: looked up directly they all
+    # came out neutral. A trap-risk call points against its own word, as everywhere else it is read.
+    word = {"up": "BULLISH", "down": "BEARISH"}.get(lean(bias) or "", "")
+    tone = tone_for_direction(word)
+    glyph = DIR_GLYPH.get(word, "◆")
     bull, bear = float(anchor.get("bull_points") or 0), float(anchor.get("bear_points") or 0)
     trap = TRAP_LABELS.get(anchor.get("trap") or "", anchor.get("trap") or "—")
     published = (html.escape(str(anchor.get("published_at_utc", ""))) +
@@ -627,7 +631,37 @@ def anchored_summary_html(anchor: dict, window_close_ms: int, now_ms: int, ancho
                 "side notes; they never rewrite this summary.") + "</p>")
     if anchor.get("degraded"):
         body += "<p><span class='ti-chip warn'>degraded</span> part of the checklist did not score.</p>"
+    body += handshake_html(anchor)
     return card_html(f"{p.window_title} anchored summary", body, tone)
+
+
+HANDSHAKE_TONE = {"agrees": "accent", "opposes": "warn", "neutral": "outline", "silent": "outline"}
+
+
+def handshake_html(anchor: dict) -> str:
+    """What the other three desks said when this one asked, and what it did to the conviction."""
+    hs = anchor.get("handshake")
+    if not hs:
+        return ""
+    rows = ""
+    for a in hs.get("answers") or []:
+        conf = a.get("confidence")
+        rows += (f"<tr><td><strong>{html.escape(str(a.get('label', '')))}</strong></td>"
+                 f"<td class='muted'>{html.escape(str(a.get('relation', '')))} desk</td>"
+                 f"<td>{chip(str(a.get('answer', '')), HANDSHAKE_TONE.get(a.get('answer'), 'outline'))}</td>"
+                 f"<td class='muted'>{html.escape(str(a.get('bias') or '—'))}"
+                 + (f" · {float(conf):.0%}" if conf is not None else "")
+                 + (f" · {html.escape(str(a['note']))}" if a.get("note") else "") + "</td></tr>")
+    before, after = anchor.get("confidence_before_handshake"), anchor.get("confidence")
+    line = ""
+    if before is not None and after is not None:
+        line = (f"<p>Conviction {float(before):.0%} from the war room, {float(after):.0%} after the handshake "
+                f"(x{float(hs.get('factor', 1.0)):.2f}).</p>")
+    return ("<span class='ti-label'>Cross-desk handshake</span>" + line
+            + f"<table class='ti-cascade'><tbody>{rows}</tbody></table>"
+            "<p class='muted ti-note'>Each desk answers with the verdict it has anchored for its current candle. "
+            "A higher desk agreeing adds 10% to conviction and opposing takes 20% off; a lower desk opposing "
+            "takes 5%. The direction itself is the war room's.</p>")
 def side_notes_html(rows: list[dict]) -> str:
     """Interim invalidations, appended alongside the anchor and never replacing it."""
     if not rows:

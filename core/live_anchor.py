@@ -58,6 +58,9 @@ def anchor_payload(res: LiveReconResult, price: float | None = None) -> dict:
         "direction": direction(res.bias),
         "margin": round(res.margin, 2),
         "confidence": round(res.confidence, 3),
+        "confidence_before_handshake": (None if res.confidence_before_handshake is None
+                                        else round(res.confidence_before_handshake, 3)),
+        "handshake": res.handshake,
         "bull_points": round(res.bull.points, 2),
         "bear_points": round(res.bear.points, 2),
         "bull_verdict": res.bull.verdict,
