@@ -11,6 +11,7 @@ import httpx
 from core.data.binance_futures import compose_futures, fetch_futures
 from core.data.calendar import fetch_calendar
 from core.data.cot import fetch_cot
+from core.data.exchange_flows import fetch_exchange_flows
 from core.data.taker_flow import fetch_taker_flow
 from core.data.coinlobster import fetch_coinlobster
 from core.data.deribit_options import fetch_options
@@ -24,6 +25,7 @@ from core.data.sentiment import fetch_sentiment
 from core.data.spot import fetch_spot_chain as fetch_spot
 from core.data.stablecoins import fetch_stablecoins
 from core.data.types import (
+    ExchangeFlowSnapshot,
     CalendarSnapshot, COTSnapshot, FuturesSnapshot, TakerFlowSnapshot, HyperliquidSnapshot, LiquidationsSnapshot, MacroSnapshot, MarketSnapshot,
     MetalsSnapshot,
     NewsSnapshot, OptionsSnapshot, PredictionSnapshot, SentimentSnapshot, SpotSnapshot, StablecoinSnapshot,
@@ -66,7 +68,7 @@ async def fetch_spot_only(client: httpx.AsyncClient | None = None) -> SpotSnapsh
 async def fetch_context(client: httpx.AsyncClient | None = None) -> dict:
     if client is None:
         return await _with_client(fetch_context)
-    fut, opt, sent, hl, cl, stables, cal, news, metals, preds, macro, cot, flow = await asyncio.gather(
+    fut, opt, sent, hl, cl, stables, cal, news, metals, preds, macro, cot, flow, exflows = await asyncio.gather(
         _guard(fetch_futures(client), FuturesSnapshot, "binance,bybit"),
         _guard(fetch_options(client), OptionsSnapshot, "deribit"),
         _guard(fetch_sentiment(client), SentimentSnapshot, "alternative.me"),
@@ -80,6 +82,7 @@ async def fetch_context(client: httpx.AsyncClient | None = None) -> dict:
         _guard(fetch_macro(client), MacroSnapshot, "fred"),
         _guard(fetch_cot(client), COTSnapshot, "cftc"),
         _guard(fetch_taker_flow(client), TakerFlowSnapshot, "gate.io"),
+        _guard(fetch_exchange_flows(client), ExchangeFlowSnapshot, "coinmetrics"),
     )
     liqs, whales = cl
     if not fut.available:
@@ -94,7 +97,8 @@ async def fetch_context(client: httpx.AsyncClient | None = None) -> dict:
                 fut = kf
     return {"futures": fut, "options": opt, "sentiment": sent, "hyperliquid": hl,
             "liquidations": liqs, "whales": whales, "stablecoins": stables, "calendar": cal,
-            "news": news, "metals": metals, "predictions": preds, "macro": macro, "cot": cot, "taker_flow": flow}
+            "news": news, "metals": metals, "predictions": preds, "macro": macro, "cot": cot, "taker_flow": flow,
+            "exchange_flows": exflows}
 
 
 async def fetch_all(client: httpx.AsyncClient | None = None) -> MarketSnapshot:

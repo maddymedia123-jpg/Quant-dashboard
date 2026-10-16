@@ -184,6 +184,15 @@ class MacroSnapshot(Availability):
     spread_as_of_ms: Optional[int] = None
 
 
+class ExchangeFlowSnapshot(Availability):
+    """Daily BTC exchange flows (Coin Metrics community): each day {time_ms, inflow, outflow, net, reserve}
+    in BTC, oldest first. `preliminary` is True while the newest days are still Coin Metrics' "flash"
+    figures, which they revise."""
+    days: list[dict[str, Any]] = Field(default_factory=list)
+    as_of_ms: Optional[int] = None
+    preliminary: bool = False
+
+
 class COTSnapshot(Availability):
     """CFTC Commitments of Traders for CME Bitcoin futures. Weekly: positions as of Tuesday, released
     Friday. Positions are in CONTRACTS; `contract_btc` is bitcoin per contract, parsed from the report's
@@ -218,7 +227,7 @@ class TakerFlowSnapshot(Availability):
 class MarketSnapshot(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    SOURCES: ClassVar[tuple[str, ...]] = ("spot", "futures", "options", "sentiment", "hyperliquid", "liquidations", "whales", "stablecoins", "calendar", "news", "metals", "predictions", "macro", "cot", "taker_flow")
+    SOURCES: ClassVar[tuple[str, ...]] = ("spot", "futures", "options", "sentiment", "hyperliquid", "liquidations", "whales", "stablecoins", "calendar", "news", "metals", "predictions", "macro", "cot", "taker_flow", "exchange_flows")
 
     spot: SpotSnapshot
     futures: FuturesSnapshot
@@ -235,6 +244,8 @@ class MarketSnapshot(BaseModel):
     macro: MacroSnapshot = Field(default_factory=lambda: MacroSnapshot.unavailable("fred", "not fetched"))
     cot: COTSnapshot = Field(default_factory=lambda: COTSnapshot.unavailable("cftc", "not fetched"))
     taker_flow: TakerFlowSnapshot = Field(default_factory=lambda: TakerFlowSnapshot.unavailable("gate.io", "not fetched"))
+    exchange_flows: ExchangeFlowSnapshot = Field(
+        default_factory=lambda: ExchangeFlowSnapshot.unavailable("coinmetrics", "not fetched"))
     generated_at: datetime = Field(default_factory=_now)
 
     def unavailable(self) -> list[str]:

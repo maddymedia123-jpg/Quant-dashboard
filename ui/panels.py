@@ -1574,6 +1574,36 @@ def rates_html(macro, now_ms: int) -> str:
     return card_html("US macro", body, "neutral")
 
 
+def exchange_flows_html(f: dict) -> str:
+    """Coins arriving on exchanges or leaving them, measured against the past year, with its track record."""
+    from core.trades import fmt_date
+    if not f.get("available"):
+        return card_html("Exchange flows", f"<p class='muted'>Unavailable: {html.escape(str(f.get('note', '')))}.</p>",
+                         "neutral")
+    tone = {"distribution": "down", "accumulation": "up"}.get(f["state"], "neutral")
+    z = f.get("net_7d_z")
+    head = {"distribution": "coins arriving on exchanges", "accumulation": "coins leaving exchanges",
+            "neutral": "exchange flows within their normal range"}[f["state"]]
+    body = (f"<div class='ti-dir {tone}'>{html.escape(f['state'].title())}</div>"
+            f"<p>{html.escape(head[0].upper() + head[1:])}: 7-day netflow <strong>{f['net_7d_btc']:+,.0f} BTC</strong>"
+            + (f" ({z:+.1f}σ against the past year)" if z is not None else "") + "</p><div class='ti-grid3'>"
+            + _kv("Net, last day", f"{f['net_1d_btc']:+,.0f} BTC")
+            + _kv("Net, 30 days", f"{f['net_30d_btc']:+,.0f} BTC")
+            + _kv("Reserve, 30d", "—" if f.get("reserve_30d_change_btc") is None else
+                  f"{f['reserve_30d_change_btc']:+,.0f} BTC ({f['reserve_30d_change_pct']:+.2f}%)")
+            + "</div>")
+    if f.get("divergence"):
+        body += f"<p><span class='ti-chip warn'>price divergence</span> {html.escape(f['divergence'])}.</p>"
+    if f.get("inflow_spike"):
+        body += (f"<p><span class='ti-chip warn'>inflow spike</span> {f['inflow_1d_btc']:,.0f} BTC sent to exchanges "
+                 f"on the last day, {f['inflow_spike_z']:+.1f}σ against the past 90 days.</p>")
+    flags = (" · preliminary (Coin Metrics flash figures)" if f.get("preliminary") else "") + \
+            (f" · {f['age_days']:.0f} days old" if f.get("stale") else "")
+    body += (f"<p class='muted ti-note'>As of {html.escape(fmt_date(f['as_of_ms']))}{html.escape(flags)}. "
+             f"{html.escape(f['scope'][0].upper() + f['scope'][1:])}. {html.escape(f['track_record'])}</p>")
+    return card_html("Exchange flows · on-chain", body, tone)
+
+
 def cot_html(cot, now_ms: int) -> str:
     """Who is positioned which way in CME Bitcoin futures, from the CFTC's weekly report.
 

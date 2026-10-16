@@ -13,6 +13,7 @@ from core.data.binance_futures import parse_binance
 from core.data.calendar import parse_calendar
 from core.data.coinlobster import parse_liquidations, parse_whales
 from core.data.cot import parse_cot
+from core.data.exchange_flows import parse_flows
 from core.data.taker_flow import build as build_taker_flow
 from core.data.deribit_options import parse_book_summary
 from core.data.hyperliquid import parse_meta
@@ -79,6 +80,7 @@ def fixture_context() -> dict:
         "cot": _mark(parse_cot(_load("cftc_cot_btc_cme.json"),
                                int(datetime(2026, 10, 10, tzinfo=timezone.utc).timestamp() * 1000))),
         "taker_flow": _mark(_fixture_taker_flow()),
+        "exchange_flows": _mark(parse_flows(_load("coinmetrics_exchange_flows.json"))),
     }
 
 

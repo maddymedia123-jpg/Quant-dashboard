@@ -46,6 +46,7 @@ def sub_agent_deck(state: dict, profile: ReconProfile | None = None) -> list[Dec
     fut = _get(state, "derivatives", "futures", default={})
     opts = _get(state, "derivatives", "options", default={})
     liqs = _get(state, "derivatives", "liquidations", default={})
+    exf = _get(state, "derivatives", "exchange_flows", default={})
     missing = list(_get(state, "derivatives", "unavailable", default=[]) or [])
 
     def agent(key: str, timeframe: str, rows: list[Row], note: str = "") -> DeckAgent:
@@ -100,6 +101,7 @@ def sub_agent_deck(state: dict, profile: ReconProfile | None = None) -> list[Dec
             ("Shorts liquidated 24h", _get(liqs, "short_usd"), "usd"),
             ("Options max pain", _get(opts, "max_pain"), "usd"),
             ("IV skew", _get(opts, "iv_skew"), "pct"),
+            ("Exchange netflow 7d, BTC", _get(exf, "net_7d_btc"), "num"),
         ], note=("no data from " + ", ".join(missing)) if missing else ""),
     ]
     return deck

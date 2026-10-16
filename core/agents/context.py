@@ -187,6 +187,18 @@ def derivatives_payload(m: MarketSnapshot) -> tuple[dict, list[str]]:
     # _dump rounds to four places, which turns a funding rate of 4.9e-05 into 0.0 and makes the
     # "overheated funding" item unjudgeable. Rates keep the precision the exchange reported: rounding
     # anything at 1e-5 to a fixed number of decimals throws away significant figures.
+    # exchange flows go in as their read, not their 420 raw days
+    try:
+        from core.indicators.exchange_flows import read as read_flows
+        d1 = m.spot.frames.get("1d")
+        closes = (list(zip(d1["timestamp"].astype("int64"), d1["close"].astype(float))) if d1 is not None else None)
+        flows = read_flows(m.exchange_flows, int(m.generated_at.timestamp() * 1000), closes)
+    except Exception as e:  # noqa: BLE001 - one feed's read must not take the payload down
+        flows = {"available": False, "note": f"{type(e).__name__}: {e}"}
+    if flows.get("available"):
+        data["exchange_flows"] = flows
+    else:
+        unavailable.append("exchange_flows")
     if "futures" in data:
         for rate in ("funding_rate", "funding_7d_mean", "predicted_funding_rate"):
             value = getattr(m.futures, rate, None)

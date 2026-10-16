@@ -648,6 +648,15 @@ def category_tab(key):
                 panels.render(panels.cot_html(m.cot, now_ms))
             except Exception as e:  # noqa: BLE001
                 st.warning(f"Positioning report unavailable: {e}")
+            # daily on-chain flows: like COT, too slow for the four-hour and 24-hour desks
+            try:
+                from core.indicators.exchange_flows import read as read_flows
+                _d1 = m.spot.frames.get("1d")
+                panels.render(panels.exchange_flows_html(read_flows(
+                    m.exchange_flows, now_ms,
+                    list(zip(_d1["timestamp"].astype("int64"), _d1["close"].astype(float))) if _d1 is not None else None)))
+            except Exception as e:  # noqa: BLE001
+                st.warning(f"Exchange flows unavailable: {e}")
 
 
 if screen in CATEGORIES:

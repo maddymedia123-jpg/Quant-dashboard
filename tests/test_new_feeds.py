@@ -24,7 +24,7 @@ def test_market_defaults_new_feeds_to_unavailable():
     m = MarketSnapshot(spot=SpotSnapshot(source="kraken"), futures=FuturesSnapshot(source="binance"),
                        options=OptionsSnapshot(source="deribit"), sentiment=SentimentSnapshot(source="alternative.me"))
     assert m.unavailable() == ["hyperliquid", "liquidations", "whales", "stablecoins", "calendar",
-                               "news", "metals", "predictions", "macro", "cot", "taker_flow"]
+                               "news", "metals", "predictions", "macro", "cot", "taker_flow", "exchange_flows"]
     assert m.liquidations.error == "not fetched"
 
 
@@ -101,7 +101,8 @@ def test_fetch_context_isolates_and_assemble(monkeypatch):
     m = market.assemble(SpotSnapshot(source="kraken"), ctx)
     assert m.liquidations.available and m.whales.available
     assert set(m.unavailable()) == {"futures", "options", "sentiment", "hyperliquid", "stablecoins",
-                                    "calendar", "news", "metals", "predictions", "macro", "cot", "taker_flow"}
+                                    "calendar", "news", "metals", "predictions", "macro", "cot", "taker_flow",
+                                    "exchange_flows"}
 
 
 def test_offline_fixture_market_has_all_sources():
