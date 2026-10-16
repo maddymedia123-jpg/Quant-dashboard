@@ -1917,8 +1917,6 @@ def chart_head_html(a, signal: bool = False, symbol: str | None = None) -> str:
             "</div>")
 
 
-CHART_CAPTION = ("Dotted bars after now are the volatility envelope drawn as bars: body ±0.5σ, wick ±1σ, widening "
-                 "with the square root of bars ahead. They are not predicted candles.")
 
 
 # ---------- the timeframe cascade (bias / anchor / engine) ----------
@@ -2038,3 +2036,57 @@ def cascade_html(c, invalidation: float | None = None, price: float | None = Non
     body += ("<p class='muted ti-note'>Read from the candles in code, not by a model. The engine timeframes warn "
              "early; only the bias and the anchor set the call.</p>")
     return card_html("Timeframe cascade", body, tone)
+
+
+# ---------- the forecast pane (his Section 8) ----------
+FORECAST_HORIZON = {"next 4h": "next 4 hours", "next 24h": "next 24 hours"}
+
+
+def forecast_html(f, tr, horizon_label: str) -> str:
+    """The odds beside the forecast chart: where the median path ends, the 68% range, the chance of
+    finishing higher, the chance of trading at each level, the path candle by candle in UTC and PKT, and
+    how the same model has done on this desk's own history."""
+    from core.trades import fmt_when
+    from core.indicators.volatility import memory_label
+
+    horizon = FORECAST_HORIZON.get(horizon_label, horizon_label)
+    if not getattr(f, "available", False):
+        return card_html(f"Forecast · {horizon}", f"<p class='muted'>No forecast: {html.escape(f.reason)}.</p>")
+    money = lambda x: fmt_num(x, 0, "$")  # noqa: E731
+    end_ms = f.steps[-1].time_ms + f.bar_ms if f.steps else None
+    body = (f"<p>Most likely path ends near <strong>{money(f.end_median)}</strong> by "
+            f"{html.escape(fmt_when(end_ms))}.</p>"
+            f"<p>68% range <strong>{money(f.end_low)} to {money(f.end_high)}</strong> · "
+            f"chance it ends higher <strong>{f.p_up:.0%}</strong></p>")
+    reachable = [lv for lv in f.levels if lv.p_touch >= 0.01]   # a wall 10% away at 0% is not a level today
+    if reachable:
+        rows = "".join(f"<tr><td>{html.escape(lv.label)}</td><td>{money(lv.price)}</td>"
+                       f"<td><strong>{lv.p_touch:.0%}</strong></td></tr>" for lv in reachable)
+        body += ("<p class='muted'>Chance price trades at each level before the horizon ends:</p>"
+                 "<table><thead><tr><th>Level</th><th>Price</th><th>Odds</th></tr></thead>"
+                 f"<tbody>{rows}</tbody></table>")
+    rows = "".join(f"<tr><td>{html.escape(fmt_when(s.time_ms + f.bar_ms))}</td><td>{money(s.close)}</td>"
+                   f"<td class='muted'>{money(s.band_low)} to {money(s.band_high)}</td>"
+                   f"<td>{s.p_above_now:.0%}</td></tr>" for s in f.steps)
+    body += ("<table><thead><tr><th>Candle closes</th><th>Path</th><th>68% range</th><th>Above now</th></tr></thead>"
+             f"<tbody>{rows}</tbody></table>")
+
+    if tr is not None and tr.origins and tr.band_hit is not None:
+        lean = ""
+        if tr.direction_hit is not None and tr.base_up is not None:
+            edge = tr.direction_hit - max(tr.base_up, 1 - tr.base_up)
+            verdict = ("the lean beat simply betting on the usual direction"
+                       if edge > 0.02 else "the lean has no proven edge here. Read the range, not the lean")
+            lean = (f" The path's lean was right {tr.direction_hit:.0%} of the time, while price rose "
+                    f"{tr.base_up:.0%} of the time anyway: {verdict}.")
+        body += (f"<p class='muted'>Track record, replayed on this desk's last {tr.origins:,} candles: the 68% "
+                 f"range held {tr.band_hit:.0%} of the time (aim: 68%).{html.escape(lean)}</p>")
+    memory = memory_label(f.hurst)
+    parts = [f"Hurst {f.hurst:.2f} ({memory})" if f.hurst is not None else "no Hurst reading (short history)",
+             "volatility of the last 50 candles"]
+    if f.gamma_regime:
+        parts.append(f"{f.gamma_regime} dealer gamma ({'narrows' if f.gamma_scale < 1 else 'widens'} the range "
+                     f"{abs(1 - f.gamma_scale):.0%}; not testable on history)")
+    body += (f"<p class='muted ti-note'>The path is the median of 4,000 simulated paths, not a promise: built from "
+             f"{html.escape(', '.join(parts))}. Hollow candles are the path; the dashed lines are the 68% range.</p>")
+    return card_html(f"Forecast · {horizon}", body, "neutral")

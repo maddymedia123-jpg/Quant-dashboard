@@ -7,7 +7,6 @@ import math
 import streamlit.components.v1 as components
 
 from core.config import CATEGORIES, LIGHTWEIGHT_CHARTS_URL, TF_MINUTES
-from core.indicators import volatility as vol
 from core.indicators.category import CategoryAnalysis
 from ui.theme import palette
 
@@ -87,26 +86,8 @@ def chart_payload(a: CategoryAnalysis, dark: bool, signal: bool = False) -> dict
         if lines:
             patterns.append({"name": f"{pat.name} ({pat.status})", "color": pattern_color.get(pat.bias, p["accent"]), "lines": lines})
 
-    price = a.price
-    proj_end = last_t + min(future_n, max(horizon, 1)) * interval
-    hi = _f(a.vol.exp_high) or price
-    lo = _f(a.vol.exp_low) or price
-    sign = {"BULLISH": 1.0, "BEARISH": -1.0}.get(a.direction.direction, 0.0)
-    mid_end = price + sign * a.direction.confidence * ((hi - price) if sign >= 0 else (price - lo))
-    projection = {
-        "color": p["accent"],
-        "upper": [{"time": last_t, "value": price}, {"time": proj_end, "value": hi}],
-        "lower": [{"time": last_t, "value": price}, {"time": proj_end, "value": lo}],
-        "mid": [{"time": last_t, "value": price}, {"time": proj_end, "value": mid_end}],
-    }
-
-    # The spec gives each desk a forecast timeframe and horizon ("Forecast: 1h candles / 4h horizon").
-    # These are the volatility envelope drawn as candles, not predicted OHLC - see volatility.forecast_candles.
-    drift = sign * float(a.direction.confidence or 0.0)
-    bars = vol.forecast_candles(price, _f(a.vol.sigma_pct), horizon, drift,
-                                max_bars=min(future_n, 24))
-    forecast = [{"time": last_t + b["step"] * interval, "open": b["open"], "high": b["high"],
-                 "low": b["low"], "close": b["close"]} for b in bars]
+    # The forecast lives in its own pane now (forecast_payload below): one median path with its odds,
+    # instead of a cone and an envelope here that answered a different question from it.
 
     rvals = a.rsi.tolist()
     rsi_data = [{"time": t[i], "value": _f(rvals[i])} for i in range(n) if _f(rvals[i]) is not None]
@@ -122,8 +103,7 @@ def chart_payload(a: CategoryAnalysis, dark: bool, signal: bool = False) -> dict
         "theme": {k: p[k] for k in ("panel", "border", "grid", "text", "muted", "accent", "up", "down", "fib", "fibFuture", "now")},
         "title": f"{a.label} · {a.chart_tf}",
         "candles": candles, "whitespace": whitespace, "emas": emas, "levels": levels,
-        "trendlines": trendlines, "fibs": fibs, "now": last_t, "projection": projection,
-        "forecast": forecast, "forecastLabel": f"{a.chart_tf} forecast envelope / {a.vol.horizon_label}",
+        "trendlines": trendlines, "fibs": fibs, "now": last_t,
         "retracements": retracements, "patterns": patterns,
         "rsi": {"data": rsi_data, "markers": markers},
         "visibleBars": 140,
@@ -174,30 +154,6 @@ P.levels.forEach(l => candles.createPriceLine({ price: l.price, color: l.color, 
 P.trendlines.forEach(t => {
   const s = chart.addSeries(LW.LineSeries, { color: t.color, lineWidth: 1, lineStyle: LW.LineStyle.Dotted, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
   s.setData(t.data);
-});
-// The spec's forecast candles. Hollow and translucent on purpose: these are the volatility envelope
-// drawn as bars, not a prediction of any bar's shape, and they must not read as real candles.
-if ((P.forecast || []).length) {
-  const fc = chart.addSeries(LW.CandlestickSeries, {
-    upColor: 'rgba(0,0,0,0)', downColor: 'rgba(0,0,0,0)',
-    borderUpColor: T.accent, borderDownColor: T.muted,
-    wickUpColor: T.accent, wickDownColor: T.muted,
-    borderVisible: true, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
-  });
-  fc.setData(P.forecast);
-  const tag = document.createElement('span');
-  tag.style.setProperty('--c', T.accent);
-  tag.textContent = NARROW ? 'forecast' : (P.forecastLabel || 'forecast envelope');
-  tag.title = "The volatility envelope over the horizon of this desk, drawn per bar: the body "
-            + "spans half a sigma either side of the drift path and the wicks a full sigma, "
-            + "widening as the square root of the bars ahead. Not a prediction of the shape of "
-            + "any candle.";
-  legend.appendChild(tag);
-}
-['upper', 'lower', 'mid'].forEach(k => {
-  const s = chart.addSeries(LW.LineSeries, { color: P.projection.color, lineWidth: k === 'mid' ? 2 : 1, lineStyle: LW.LineStyle.Dashed,
-    priceLineVisible: false, lastValueVisible: k !== 'mid', crosshairMarkerVisible: false, title: k === 'mid' ? 'projection' : '' });
-  s.setData(P.projection[k]);
 });
 const rsi = chart.addSeries(LW.LineSeries, { color: T.accent, lineWidth: 1, priceLineVisible: false, lastValueVisible: true, title: 'RSI 14' }, 1);
 rsi.setData(P.rsi.data);
@@ -254,3 +210,88 @@ def build_chart_html(a: CategoryAnalysis, dark: bool, height: int = 560, signal:
 
 def render_chart(a: CategoryAnalysis, dark: bool, height: int = 560, signal: bool = False) -> None:
     components.html(build_chart_html(a, dark, height, signal), height=height + 6, scrolling=False)
+
+
+# ---------- the forecast pane (his Section 8) ----------
+FORECAST_CONTEXT_BARS = 40   # real candles shown before the path: enough to read it against, no more
+CHART_MIN_TOUCH = 0.05       # a level price has under a 5% chance of reaching only squashes the price scale
+
+
+def forecast_payload(a: CategoryAnalysis, f, dark: bool, signal: bool = False) -> dict:
+    """The clean forecast chart: the last few real candles, the median path as hollow candles, the 68%
+    range around it, and the levels with the odds of trading there. No indicators, by design."""
+    p = palette(dark, signal)
+    df = a.chart_df.tail(FORECAST_CONTEXT_BARS)
+    candles = [{"time": int(df["timestamp"].iloc[i]) // 1000, "open": _f(df["open"].iloc[i]),
+                "high": _f(df["high"].iloc[i]), "low": _f(df["low"].iloc[i]), "close": _f(df["close"].iloc[i])}
+               for i in range(len(df))]
+    now = candles[-1]["time"] if candles else 0
+    path = [{"time": s.time_ms // 1000, "open": round(s.open, 2), "high": round(s.high, 2),
+             "low": round(s.low, 2), "close": round(s.close, 2)} for s in f.steps]
+    start = [{"time": now, "value": round(f.price, 2)}]
+    band_hi = start + [{"time": s.time_ms // 1000, "value": round(s.band_high, 2)} for s in f.steps]
+    band_lo = start + [{"time": s.time_ms // 1000, "value": round(s.band_low, 2)} for s in f.steps]
+    levels = [{"price": round(lv.price, 2), "title": f"{lv.label} {lv.p_touch:.0%}",
+               "color": p["down"] if lv.side == "above" else p["up"]} for lv in f.levels
+              if lv.p_touch >= CHART_MIN_TOUCH]
+    return {"theme": {k: p[k] for k in ("panel", "border", "grid", "text", "muted", "accent", "up", "down", "now")},
+            "candles": candles, "path": path, "bandHigh": band_hi, "bandLow": band_lo, "levels": levels,
+            "now": now, "intraday": TF_MINUTES[a.chart_tf] < 1440}
+
+
+_FORECAST_TEMPLATE = """<!doctype html><html><head><meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
+<style>html,body{margin:0;padding:0;background:__PANEL__;font-family:Barlow,system-ui,sans-serif}#wrap{position:relative}#chart{width:100%;height:__HEIGHT__px}
+#axis{position:absolute;left:10px;top:8px;z-index:5;font-size:11px;color:__TEXT__}</style>
+<script src="__LIB__"></script></head><body><div id="wrap"><div id="axis"></div><div id="chart"></div></div>
+<script>
+const P = __PAYLOAD__;
+(function(){
+const T = P.theme, LW = LightweightCharts, el = document.getElementById('chart');
+// every time on this chart reads UTC first, PKT (UTC+5, no daylight saving) after it
+const pad = n => String(n).padStart(2, '0');
+const DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'], MONS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const hm = d => pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes());
+const full = t => { const u = new Date(t * 1000), k = new Date(t * 1000 + 5 * 3600 * 1000);
+  return hm(u) + ' UTC (' + hm(k) + ' PKT - ' + DAYS[k.getUTCDay()] + ' ' + pad(k.getUTCDate()) + ' ' + MONS[k.getUTCMonth()] + ')'; };
+const tick = t => { const u = new Date(t * 1000), k = new Date(t * 1000 + 5 * 3600 * 1000);
+  return P.intraday ? hm(u) + ' · ' + hm(k) : pad(u.getUTCDate()) + ' ' + MONS[u.getUTCMonth()]; };
+// the axis ticks are short, so the legend names the two clocks; hover gives the full time and date
+document.getElementById('axis').textContent = P.intraday ? 'Time axis: UTC · PKT · hollow candles = median path, dashed = 68% range'
+                                                          : 'Dates in UTC (hover for PKT) · hollow candles = median path, dashed = 68% range';
+const chart = LW.createChart(el, {
+  width: el.clientWidth, height: __HEIGHT__,
+  layout: { background: { type: 'solid', color: T.panel }, textColor: T.text, fontFamily: 'Barlow, system-ui, sans-serif' },
+  grid: { vertLines: { visible: false }, horzLines: { color: T.grid } },
+  rightPriceScale: { borderColor: T.border },
+  timeScale: { borderColor: T.border, timeVisible: true, secondsVisible: false, rightOffset: 1, tickMarkFormatter: tick },
+  localization: { timeFormatter: full },
+  crosshair: { mode: 0 }, handleScroll: false, handleScale: false,
+});
+const real = chart.addSeries(LW.CandlestickSeries, { upColor: T.panel, downColor: T.down, borderVisible: true, borderUpColor: T.up, borderDownColor: T.down, wickUpColor: T.up, wickDownColor: T.down, priceLineVisible: false });
+real.setData(P.candles);
+// the path: hollow outlines in the accent, so it can never be mistaken for candles that printed
+const path = chart.addSeries(LW.CandlestickSeries, { upColor: 'rgba(0,0,0,0)', downColor: 'rgba(0,0,0,0)', borderVisible: true,
+  borderUpColor: T.accent, borderDownColor: T.accent, wickUpColor: T.accent, wickDownColor: T.accent,
+  priceLineVisible: false, lastValueVisible: true, title: 'median path' });
+path.setData(P.path);
+[['bandHigh', '84%'], ['bandLow', '16%']].forEach(([k, label]) => {
+  const s = chart.addSeries(LW.LineSeries, { color: T.muted, lineWidth: 1, lineStyle: LW.LineStyle.Dashed, priceLineVisible: false, lastValueVisible: true, crosshairMarkerVisible: false, title: label });
+  s.setData(P[k]);
+});
+P.levels.forEach(l => real.createPriceLine({ price: l.price, color: l.color, lineWidth: 1, lineStyle: LW.LineStyle.Dotted, axisLabelVisible: true, title: el.clientWidth < 640 ? '' : l.title }));
+chart.timeScale().fitContent();
+new ResizeObserver(() => { chart.applyOptions({ width: el.clientWidth }); chart.timeScale().fitContent(); }).observe(el);
+})();
+</script></body></html>"""
+
+
+def build_forecast_html(a: CategoryAnalysis, f, dark: bool, height: int = 360, signal: bool = False) -> str:
+    p = palette(dark, signal)
+    payload = json.dumps(forecast_payload(a, f, dark, signal), separators=(",", ":"))
+    return (_FORECAST_TEMPLATE.replace("__LIB__", LIGHTWEIGHT_CHARTS_URL).replace("__HEIGHT__", str(height))
+            .replace("__PANEL__", p["panel"]).replace("__TEXT__", p["muted"]).replace("__PAYLOAD__", payload))
+
+
+def render_forecast_chart(a: CategoryAnalysis, f, dark: bool, height: int = 360, signal: bool = False) -> None:
+    components.html(build_forecast_html(a, f, dark, height, signal), height=height + 6, scrolling=False)

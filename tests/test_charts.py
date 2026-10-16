@@ -28,7 +28,6 @@ def test_payload_is_json_clean_and_consistent():
     assert all(0 <= r["value"] <= 100 for r in p["rsi"]["data"])
     assert p["now"] == times[-1]
     assert all(len(t["data"]) == 2 for t in p["trendlines"])
-    assert all(len(p["projection"][k]) == 2 for k in ("upper", "lower", "mid"))
     assert all(f["time"] % 1 == 0 for f in p["fibs"])
 
 

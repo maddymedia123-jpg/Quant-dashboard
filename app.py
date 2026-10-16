@@ -60,11 +60,12 @@ from core.data.market import assemble, load_context, load_spot
 from core.derived import enrich_futures, record_sample
 from core.indicators.category import analyze_category
 from core.indicators.early_warning import early_warnings
+from core.indicators.forecast import desk_forecast
 from core.store import Store
 from core.indicators.trade_map import map_trade
 from ui import panels
 from core.trades import fmt_when
-from ui.charts import render_chart
+from ui.charts import render_chart, render_forecast_chart
 from ui.nav import pick_from_strip
 from ui.theme import inject_css, kpi_strip, md_safe
 
@@ -630,10 +631,14 @@ def category_tab(key):
             with st.container(key="ti_chart"):
                 panels.render(panels.chart_head_html(a, signal, m.spot.symbol))
                 render_chart(a, dark, height=480, signal=signal)
-                panels.render(f"<p class='ti-chart-cap'>{panels.CHART_CAPTION}</p>")
         with c_dir:
             v = verdicts.get(key)
             panels.render(panels.anchored_direction_html(a, v, now_ms) if v else panels.direction_html(a))
+        # his Section 8: one clean forecast pane per desk - the median path, its range and its odds
+        fcast, record = desk_forecast(a, m.options.gamma if m.options.available else None,
+                                      m.spot.frames.get(a.chart_tf))
+        render_forecast_chart(a, fcast, dark, height=340, signal=signal)
+        panels.render(panels.forecast_html(fcast, record, a.vol.horizon_label))
         panels.render(panels.layman_html(a))
         c1, c2 = st.columns(2, gap="large")
         with c1:
