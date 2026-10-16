@@ -189,6 +189,15 @@ section[data-testid="stSidebar"] * {{ color: {p['text']}; }}
 .ti-top-price {{ font-family: {_HEADING}; font-weight: 600; font-size: 1.875rem; line-height: 1; }}
 .ti-top-chg {{ font-size: 0.9rem; }} .ti-top-chg.up {{ color: {p['up']}; }} .ti-top-chg.down {{ color: {p['down']}; }}
 .ti-top-upd {{ font-size: 0.78rem; color: {p['muted']}; }}
+.ti-gamma {{ display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; padding: 8px 12px; margin: -8px 0 18px 0; border: 1px solid {p['border']}; border-left-width: 4px; font-size: 0.85rem; }}
+.ti-gamma.up {{ border-left-color: {p['up']}; }} .ti-gamma.down {{ border-left-color: {p['down']}; }} .ti-gamma.neutral {{ border-left-color: {p['muted']}; }}
+.ti-gamma-mark {{ display: inline-block; width: 10px; height: 10px; align-self: center; background: {p['muted']}; }}
+.ti-gamma.up .ti-gamma-mark {{ background: {p['up']}; }} .ti-gamma.down .ti-gamma-mark {{ background: {p['down']}; }}
+.ti-gamma-reg {{ font-family: {_HEADING}; font-weight: 600; font-size: 1rem; letter-spacing: 0.05em; }}
+.ti-gamma.up .ti-gamma-reg {{ color: {p['up']}; }} .ti-gamma.down .ti-gamma-reg {{ color: {p['down']}; }}
+.ti-gamma-net {{ color: {p['muted']}; }}
+.ti-gamma-lv {{ display: flex; flex-wrap: wrap; gap: 4px 14px; }} .ti-gamma-lv b {{ font-weight: 600; color: {p['muted']}; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.05em; }}
+.ti-gamma-play {{ flex-basis: 100%; color: {p['muted']}; font-size: 0.8rem; }}
 /* hero: the desk title and its candle countdown */
 .ti-hero {{ display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-end; justify-content: space-between; margin: 6px 0 26px 0; }}
 .ti-hero-main {{ display: flex; flex-direction: column; gap: 10px; flex: 1 1 380px; min-width: 0; }}

@@ -31,7 +31,7 @@ SHARED_RULES = """HONESTY RULES (non-negotiable):
 _DOMAINS = {
     "options": {
         "title": "OPTIONS & GAMMA SPECIALIST",
-        "data_sources": "Deribit options book: max pain by expiry, put/call OI and volume ratios, ATM implied volatility, IV skew (OTM puts minus OTM calls), total call and put open interest.",
+        "data_sources": "Deribit options book: max pain by expiry, put/call OI and volume ratios, ATM implied volatility, IV skew (OTM puts minus OTM calls), total call and put open interest; the dealer gamma regime (options.gamma): net GEX at spot in USD per 1% move, the zero gamma level, call wall, put wall and max gamma strike, built on the naive dealer sign (calls positive, puts negative). Positive gamma means dealers hedge against moves (range, fade the edges); negative gamma means they hedge with them (trend, expansion).",
         "bullish": "Argue that Max Pain pinning is TEMPORARY and that gamma squeezes will resolve UPWARD. Identify call-heavy positioning, declining put volumes, and dealer hedging flows that support price appreciation.",
         "bearish": "Argue that Max Pain below current price acts as GRAVITATIONAL PULL toward downside. Identify put-heavy flow, rising IV skew toward puts, dealer negative-gamma zones where moves accelerate downward, and quarterly Max Pain cliffs.",
         "output": "Options Intelligence Brief",

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections import defaultdict
 from datetime import datetime
 
@@ -79,6 +80,7 @@ def parse_book_summary(payload: dict) -> OptionsSnapshot:
                 iv_skew = sum(otm_puts) / len(otm_puts) - sum(otm_calls) / len(otm_calls)
 
     return OptionsSnapshot(
+        gamma=gamma_regime(payload),
         source="deribit",
         underlying_price=underlying,
         max_pain=primary["max_pain"] if primary else None,
@@ -91,6 +93,21 @@ def parse_book_summary(payload: dict) -> OptionsSnapshot:
         total_put_oi=put_oi,
         expiries=expiries,
     )
+
+
+def gamma_regime(payload: dict) -> dict:
+    """The dealer gamma regime, timed from the moment Deribit quoted the chain (its own usOut, in
+    microseconds) and priced at the index the options settle against. A failure here is reported in the
+    result and never takes max pain or the ratios down with it."""
+    from core.indicators.gamma import profile
+    try:
+        items = payload["result"]
+        spot = next((float(it["estimated_delivery_price"]) for it in items if it.get("estimated_delivery_price")), None)
+        now_ms = int(payload["usOut"]) // 1000 if payload.get("usOut") else int(time.time() * 1000)
+        return profile(items, spot, now_ms).to_state()
+    except Exception as e:  # noqa: BLE001 - the regime is an addition, the rest of the book must survive it
+        log.error("gamma profile failed: %s", e)
+        return {"available": False, "regime": "unknown", "note": f"gamma profile failed: {e}"}
 
 
 async def fetch_options(client: httpx.AsyncClient) -> OptionsSnapshot:

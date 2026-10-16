@@ -130,6 +130,8 @@ top = st.container()
 with top:
     _price_col, _auto_col, _refresh_col, _run_col = st.columns([4.2, 3, 1.5, 1.7], vertical_alignment="bottom")
 price_slot = _price_col.empty()
+# the dealer gamma regime: the market condition every desk below trades inside
+gamma_slot = st.empty()
 # phones get the screens as a strip under the header (the rail is hidden in the collapsed sidebar there)
 nav_slot = top.container(key="ti_mobile_nav")
 
@@ -370,6 +372,8 @@ price_slot.markdown(panels.top_bar_html(
     m.spot.last if m.spot.last is not None else (_live_a.price if _live_a else None),
     _live_a.price_change_24h_pct if _live_a else None,
     f"Updated {fmt_when(int(m.generated_at.timestamp() * 1000), seconds=True)}"), unsafe_allow_html=True)
+gamma_slot.markdown(panels.gamma_bar_html(m.options.gamma if m.options.available else None, m.spot.last),
+                    unsafe_allow_html=True)
 if not m.spot.available:
     st.error(f"Spot data unavailable from {m.spot.source}: {m.spot.error}. Nothing to analyse.")
 

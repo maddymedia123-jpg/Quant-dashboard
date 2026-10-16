@@ -56,6 +56,7 @@ class OptionsSnapshot(Availability):
     total_call_oi: Optional[float] = None
     total_put_oi: Optional[float] = None
     expiries: list[dict[str, Any]] = Field(default_factory=list)
+    gamma: Optional[dict[str, Any]] = None        # dealer gamma regime (core.indicators.gamma), None if not computed
 
 
 class SentimentSnapshot(Availability):
