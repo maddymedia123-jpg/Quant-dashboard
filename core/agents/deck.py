@@ -71,6 +71,7 @@ def sub_agent_deck(state: dict, profile: ReconProfile | None = None) -> list[Dec
             ("Value area high", _get(liq, "volume_profile", "value_area_high"), "usd"),
             ("Value area low", _get(liq, "volume_profile", "value_area_low"), "usd"),
             ("Price vs value", _get(liq, "volume_profile", "price_position", default="—"), "text"),
+            ("Value break", _get(liq, "qualified_break", "read", default="not read below 1H"), "text"),
         ]),
         agent("delta", mtf, [
             ("Delta read", _get(liq, "cumulative_delta", "state", default="—"), "text"),

@@ -89,7 +89,9 @@ DOMAINS: tuple[Domain, ...] = (
         key="auction", agent_no=2, title="Auction Market & Volume Profile",
         checklist=(
             "Locate the point of control and the value area high and low.",
-            "Decide whether price is accepting or rejecting value at its current position.",
+            "Decide whether price is accepting or rejecting value at its current position; where qualified_break "
+            "is given (1H, 4H, 1D) a close outside value counts only with volume expansion and VWAP acceptance, an "
+            "unqualified or failed break is a trap, and the first pullback holding the broken edge is the entry.",
             "Identify which way the auction is rotating inside the range.",
             "Look for excess or rejection at the far edge of value.",
         ),

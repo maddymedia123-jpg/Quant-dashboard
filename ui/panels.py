@@ -1699,6 +1699,46 @@ ROLE_WORDS = {"bias": "Bias · sets the vector", "anchor": "Anchor · the candle
               "engine": "Engine · where change shows first"}
 
 
+CHECK_WORDS = {"close_outside_value": "close outside value", "volume_expansion": "volume expansion",
+               "vwap_acceptance": "VWAP acceptance"}
+
+
+def value_breaks_html(reads: dict) -> str:
+    """The desk's value-area breaks on 1H/4H/1D: the latest one on each, which of the three conditions it
+    met, and what came after it. Computed from completed candles in code."""
+    rows = ""
+    tone = "neutral"
+    for tf, r in reads.items():
+        if not r.available:
+            rows += f"<tr><td><strong>{html.escape(tf)}</strong></td><td class='muted' colspan='2'>{html.escape(r.note or r.headline)}</td></tr>"
+            continue
+        # a held break reads in its own direction; a failed one in the opposite one (a failed break down is
+        # a bear trap, which is bullish); an unqualified poke has no direction yet
+        cls = "muted"
+        if r.state in ("qualified", "pullback"):
+            cls = "up" if r.direction == "up" else "down"
+        elif r.state == "failed":
+            cls = "down" if r.direction == "up" else "up"
+        if cls != "muted":
+            tone = cls
+        detail = ""
+        if r.state != "none":
+            ticks = " · ".join(f"<span style='white-space:nowrap'>{'■' if ok else '□'} {CHECK_WORDS[k]}</span>"
+                               for k, ok in r.checks)
+            when = "the last completed candle" if r.bars_ago == 0 else f"{r.bars_ago} candles ago"
+            detail = (f"edge {fmt_num(r.edge, 0, '$')} · VWAP {fmt_num(r.vwap, 0, '$')} · volume "
+                      f"{'—' if r.volume_ratio is None else f'{r.volume_ratio:.1f}x'} median · broke {when}<br>{ticks}")
+            if r.pullback_bars_ago is not None:
+                detail += f"<br>first pullback {'on the last completed candle' if r.pullback_bars_ago == 0 else f'{r.pullback_bars_ago} candles ago'}"
+        rows += (f"<tr><td><strong>{html.escape(tf)}</strong></td><td class='{cls}'>{html.escape(r.headline)}</td>"
+                 f"<td class='muted'>{detail}</td></tr>")
+    body = (f"<table class='ti-cascade'><tbody>{rows}</tbody></table>"
+            "<p class='muted ti-note'>A break counts only when a completed candle closes outside the value area "
+            "with volume at least 1.5x its 20-candle median and on the far side of VWAP anchored at the open of "
+            "the next timeframe up. Read on 1H, 4H and 1D only.</p>")
+    return card_html("Value-area breaks", body, tone)
+
+
 def cascade_html(c, invalidation: float | None = None, price: float | None = None) -> str:
     """The desk's cascade: which state it is in, what that means, and each timeframe's read.
 

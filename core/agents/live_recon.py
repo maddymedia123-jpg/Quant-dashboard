@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from core.agents.context import category_brief, common_payload, derivatives_payload
 from core.agents.recon_profiles import LIVE, ReconProfile
 from core.indicators import liquidity as lq
+from core.indicators import vwap_break as vb
 from core.indicators import volatility as vol
 from core.indicators import smc
 from core.agents.judge import ChoiceResult, Judge, JudgeResult
@@ -186,6 +187,9 @@ def build_state(m, analyses: dict, now_ms: int | None = None, profile: ReconProf
                                                     if getattr(getattr(m, "taker_flow", None), "available", False)
                                                     else None))
         state["volatility"][tf] = vol.matrix_summary(df, tf, m.options)
+        if tf in vb.TIMEFRAMES:
+            # his qualified-break rule: close outside value + volume expansion + VWAP acceptance, 1H/4H/1D only
+            state["liquidity"][tf]["qualified_break"] = vb.read(df, tf).to_state()
     return state
 
 

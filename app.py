@@ -446,6 +446,13 @@ def _desk_cascade(category: str, data_stamp: str):
     return classify(m.spot.frames, *PROFILES[category].cascade)
 
 
+@st.cache_data(ttl=TTL["spot"], show_spinner=False)
+def _desk_breaks(category: str, data_stamp: str):
+    """Qualified value-area breaks on the desk's own 1H/4H/1D, the same reads the judges get."""
+    from core.indicators.vwap_break import read_all
+    return read_all(m.spot.frames, PROFILES[category].timeframes)
+
+
 def render_protocols(profile) -> None:
     """The deterministic reads - volatility, structure, liquidity - and each sub-agent's own deck, one at
     a time behind a switch, as the design lays them out."""
@@ -571,6 +578,12 @@ def category_tab(key):
                 invalidation=v_.anchored.invalidation if v_ is not None else None, price=a.price))
         except Exception as e:  # noqa: BLE001 - a cascade failure must not blank the desk
             st.warning(f"Timeframe cascade unavailable this refresh: {e}")
+        try:
+            _breaks = _desk_breaks(key, _data_stamp())
+            if _breaks:
+                panels.render(panels.value_breaks_html(_breaks))
+        except Exception as e:  # noqa: BLE001 - nor may a break read
+            st.warning(f"Value-area breaks unavailable this refresh: {e}")
         if key in ("weekly", "monthly"):
             last_sig = store.last_signal(key, before_ms=now_ms)
             banner = panels.early_warning_html(early_warnings(a, m.futures, last_sig["squeeze_score"] if last_sig else None))
