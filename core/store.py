@@ -87,6 +87,11 @@ CREATE TABLE IF NOT EXISTS signals (
 CREATE TABLE IF NOT EXISTS futures_samples (
     id INTEGER PRIMARY KEY AUTOINCREMENT, ts_ms INTEGER NOT NULL, funding_rate REAL, open_interest_usd REAL);
 CREATE INDEX IF NOT EXISTS idx_futures_samples_ts ON futures_samples (ts_ms);
+CREATE TABLE IF NOT EXISTS market_alerts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, ts_ms INTEGER NOT NULL, kind TEXT NOT NULL,
+    dedup_key TEXT NOT NULL UNIQUE, headline TEXT NOT NULL, price REAL, notified INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS cascade_states (
+    category TEXT PRIMARY KEY, state TEXT NOT NULL, ts_ms INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_calls_open ON calls (scored_ms, ts_ms);
 CREATE INDEX IF NOT EXISTS idx_signals_cat ON signals (category, ts_ms);
 """
@@ -555,6 +560,44 @@ class Store:
         args.append(limit)
         with self._lock:
             return _rows(self._conn.execute(sql, tuple(args)))
+
+    # ---- market alerts (cascade changes, TRAP calls) ----
+    def swap_cascade_state(self, category: str, state: str, ts_ms: int) -> str | None:
+        """Record a desk's cascade state and return the one it replaces (None the first time)."""
+        with self._lock:
+            row = self._conn.execute("SELECT state FROM cascade_states WHERE category=?", (category,)).fetchone()
+            self._conn.execute(
+                "INSERT INTO cascade_states (category, state, ts_ms) VALUES (?,?,?) "
+                "ON CONFLICT(category) DO UPDATE SET state=excluded.state, ts_ms=excluded.ts_ms",
+                (category, state, ts_ms))
+            self._conn.commit()
+        return row["state"] if row else None
+
+    def add_market_alert(self, ts_ms: int, kind: str, dedup_key: str, headline: str,
+                         price: float | None = None) -> int | None:
+        """Log a market alert once; the unique key makes a refresh a no-op. Returns the id or None."""
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT OR IGNORE INTO market_alerts (ts_ms, kind, dedup_key, headline, price) VALUES (?,?,?,?,?)",
+                (ts_ms, kind, dedup_key, headline, price))
+            self._conn.commit()
+            return int(cur.lastrowid) if cur.rowcount else None
+
+    def market_alerts(self, unnotified_only: bool = False, limit: int = 100) -> list[dict]:
+        """Oldest first, so a backlog goes out in the order it happened."""
+        sql = "SELECT * FROM market_alerts" + (" WHERE notified=0" if unnotified_only else "") + \
+              " ORDER BY ts_ms, id LIMIT ?"
+        with self._lock:
+            return _rows(self._conn.execute(sql, (limit,)))
+
+    def mark_market_notified(self, ids: list[int]) -> int:
+        if not ids:
+            return 0
+        with self._lock:
+            cur = self._conn.execute("UPDATE market_alerts SET notified=1 WHERE notified=0 AND id IN (%s)"
+                                     % ",".join("?" * len(ids)), tuple(ids))
+            self._conn.commit()
+        return cur.rowcount
 
     def mark_notified(self, event_ids: list[int]) -> int:
         """Whatever the dispatcher actually delivered. Nothing is marked until a channel confirms it."""

@@ -38,7 +38,7 @@ class Event:
 
     @property
     def urgent(self) -> bool:
-        return self.kind in ("stop", "trap")
+        return self.kind in ("stop", "trap", "shift")
 
 
 def detect_events(trade: dict, price: float | None, progress=None, traps=(), checkpoints=(),
@@ -134,6 +134,12 @@ class Dispatcher:
                     client.close()
                 except Exception:  # noqa: BLE001
                     pass
+
+    def send_test(self) -> tuple[bool, list[str]]:
+        """One message, on request, so the trader can see the channel works before anything happens."""
+        delivered, problems = self.send([Event("test", "test", "Trap Intelligence alerts are connected. "
+                                               "Cascade changes and TRAP calls will arrive here.")])
+        return bool(delivered), problems
 
     def send(self, events: list[Event]) -> tuple[list[Event], list[str]]:
         """Returns the events at least one channel accepted, and a note per channel that did not.

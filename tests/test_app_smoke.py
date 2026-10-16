@@ -75,6 +75,9 @@ def app(tmp_path, monkeypatch):
     monkeypatch.setenv("TI_OFFLINE_FIXTURES", "1")
     monkeypatch.setenv("TI_DATA_DIR", str(tmp_path))
     at = pytest.importorskip("streamlit.testing.v1").AppTest.from_file(APP, default_timeout=180)
+    # explicit secrets, so the page never reads the developer's .streamlit/secrets.toml (which may hold a
+    # live webhook and would make "no channel configured" depend on whose machine runs the suite)
+    at.secrets["TI_TEST"] = "1"
     return at.run()
 
 

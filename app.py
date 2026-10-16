@@ -46,7 +46,7 @@ from core.agents.judge import Judge
 from core.agents.deck import sub_agent_deck
 from core.agents.trap_desk import judge_candidate, record, settle
 from core.agents.trade_desk import judge_trade
-from core.alerts import Dispatcher, Event, detect_events
+from core.alerts import MAX_PER_PASS, Dispatcher, Event, detect_events
 from core.indicators.fib_time import fib_time_zones
 from core import trades
 from core.traps import find_candidates
@@ -833,6 +833,52 @@ def build_trade_plan(asset: str, side: str, entry: float, given_stop: float | No
     return plan, stop, targets
 
 
+def _alerts_may_send() -> bool:
+    """Fixture data is not the market: a page running on the offline fixtures detects and logs alerts but
+    never sends them, so a local check (or a test) cannot push an invented move to a real channel."""
+    from core.data.market import _offline
+    return not _offline()
+
+
+def market_alert_pass() -> None:
+    """Cascade state changes on every desk and TRAP calls: detect, log once, push what a channel accepts.
+
+    Runs on every page load whatever screen is open, because a change on the Monthly desk matters while
+    the trader is looking at Live Recon. Nothing is sent while no page is open."""
+    from core import market_alerts as ma
+    events = []
+    for key in CATEGORIES:
+        prof = PROFILES[key]
+        c = _desk_cascade(key, _data_stamp())
+        engine_df = m.spot.frames.get(prof.cascade[2][-1])
+        candle_ms = int(engine_df["timestamp"].iloc[-1]) if engine_df is not None and len(engine_df) else now_ms
+        previous = store.swap_cascade_state(key, c.state, now_ms)
+        e = ma.cascade_event(key, prof.label, previous, c, candle_ms, m.spot.last)
+        if e is not None:
+            events.append(e)
+    events += ma.trap_events(store.traps(limit=200), now_ms)
+    for e in events:
+        store.add_market_alert(now_ms, e.kind, e.dedup_key, e.headline, e.price)
+    pending = store.market_alerts(unnotified_only=True, limit=MAX_PER_PASS)
+    if not pending or not _alerts_may_send():
+        return
+    delivered, problems = Dispatcher(_secrets()).send(
+        [Event(p["kind"], p["dedup_key"], p["headline"], p.get("price")) for p in pending])
+    keys = {e.dedup_key for e in delivered}
+    store.mark_market_notified([p["id"] for p in pending if p["dedup_key"] in keys])
+    if problems:
+        st.session_state["market_alert_problem"] = problems[0]
+
+
+if m.spot.available:
+    try:
+        market_alert_pass()
+    except Exception as e:  # noqa: BLE001 - alerting must never blank the page
+        st.sidebar.caption(f"Market alerts unavailable this refresh: {e}")
+    if st.session_state.get("market_alert_problem"):
+        st.sidebar.caption(f"Alerts: {st.session_state.pop('market_alert_problem')}")
+
+
 def trade_alert_pass(row: dict, prog) -> None:
     """Detect what has happened to a pinned trade, log it once, and push whatever a channel accepts."""
     plan = row.get("plan") or {}
@@ -849,6 +895,8 @@ def trade_alert_pass(row: dict, prog) -> None:
     # backlog passed it, and the oldest is the one most likely to be a stop
     pending = store.trade_events(row["id"], unnotified_only=True, limit=500)
     if not pending:
+        return
+    if not _alerts_may_send():
         return
     dispatcher = Dispatcher(_secrets())
     to_send = [Event(p["kind"], p["dedup_key"], p["headline"], p.get("price")) for p in pending]
@@ -1031,6 +1079,12 @@ if screen == "trade":
     missing = [f"{c.name} ({c.reason})" for c in channels if not c.configured]
     panels.render(panels.section_head_html("Alert channels"))
     panels.render(panels.channels_html(channels))
+    st.caption("Cascade changes (A, B, C) on every desk and TRAP calls go to the same channels, while a page "
+               "is open.")
+    if ready and st.button("Send a test alert", key="alert_test"):
+        ok, problems = Dispatcher(_secrets()).send_test()
+        (st.success if ok else st.error)("Test alert delivered." if ok else
+                                         f"Test alert not delivered: {'; '.join(problems) or 'no channel accepted it'}")
     st.caption(("Alerts go to: " + ", ".join(ready) + ". " if ready else "No alert channel is configured. ")
                + "Not set up: " + "; ".join(missing)
                + ". Alerts are detected and sent while this page is open - continuous background alerting "
