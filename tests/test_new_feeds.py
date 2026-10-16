@@ -50,6 +50,10 @@ def test_spot_chain_falls_back_to_gemini(monkeypatch):
     async def g(client):
         return SpotSnapshot(source="gemini", last=1.0, frames={"1h": pd.DataFrame()})
 
+    async def gate(client):
+        return SpotSnapshot.unavailable("gate.io BTC_USDT perp", "down")
+
+    monkeypatch.setattr(spot, "fetch_gate_candles", gate)
     monkeypatch.setattr(spot, "fetch_kraken", k)
     monkeypatch.setattr(spot, "fetch_gemini_spot", g)
     s = asyncio.run(spot.fetch_spot_chain(None))

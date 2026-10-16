@@ -384,11 +384,12 @@ _live_a = analyses.get("live")
 price_slot.markdown(panels.top_bar_html(
     m.spot.last if m.spot.last is not None else (_live_a.price if _live_a else None),
     _live_a.price_change_24h_pct if _live_a else None,
-    f"Updated {fmt_when(int(m.generated_at.timestamp() * 1000), seconds=True)}"), unsafe_allow_html=True)
+    f"Updated {fmt_when(int(m.generated_at.timestamp() * 1000), seconds=True)}", m.spot.symbol),
+    unsafe_allow_html=True)
 gamma_slot.markdown(panels.gamma_bar_html(m.options.gamma if m.options.available else None, m.spot.last),
                     unsafe_allow_html=True)
 if not m.spot.available:
-    st.error(f"Spot data unavailable from {m.spot.source}: {m.spot.error}. Nothing to analyse.")
+    st.error(f"Price data unavailable from {m.spot.source}: {m.spot.error}. Nothing to analyse.")
 
 # ---------- the rail: four desks, then four engines; only the open screen renders ----------
 ENGINES = {"trap": "TRAP Intelligence", "trade": "Active Trade", "director": "Director report", "macro": "Macro & News"}
@@ -627,7 +628,7 @@ def category_tab(key):
         c_chart, c_dir = st.columns([2, 1], gap="large")
         with c_chart:
             with st.container(key="ti_chart"):
-                panels.render(panels.chart_head_html(a, signal))
+                panels.render(panels.chart_head_html(a, signal, m.spot.symbol))
                 render_chart(a, dark, height=480, signal=signal)
                 panels.render(f"<p class='ti-chart-cap'>{panels.CHART_CAPTION}</p>")
         with c_dir:

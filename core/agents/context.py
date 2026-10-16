@@ -110,7 +110,7 @@ def macro_read(m: MarketSnapshot, now_ms: int | None = None) -> dict:
 def common_payload(m: MarketSnapshot, analyses: dict[str, CategoryAnalysis]) -> dict:
     live = analyses.get("live") or next(iter(analyses.values()), None)
     return {
-        "asset": "BTC/USD",
+        "asset": "BTC perpetual (BTC_USDT)" if "perp" in (m.spot.symbol or "") else "BTC/USD spot",
         "spot": _round({"price": m.spot.last, "source": m.spot.source, "price_change_24h_pct": live.price_change_24h_pct if live else None}),
         "categories": {k: category_brief(a) for k, a in analyses.items()},
         "macro_calendar": _calendar_events(m),

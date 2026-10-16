@@ -491,6 +491,9 @@ def calendar_html(m: MarketSnapshot, now_ms: int, limit: int = 8) -> str:
     body += (f"<p class='muted ti-note'>Source: Forex Factory weekly calendar via {html.escape(c.source)}. A release "
              "inside 24 hours fires the macro trigger.</p>")
     return card_html("Macro calendar · high-impact USD", body, "warn" if soon else "neutral")
+FEED_NAMES = {"spot": "price"}   # the snapshot keeps its old name in code; it is the perp first now
+
+
 def data_status_html(m: MarketSnapshot) -> str:
     """One row per feed: a square status mark, the feed, and where it came from - filled when the feed
     answered, hollow when it did not, so a dead feed is visible without relying on colour."""
@@ -499,7 +502,7 @@ def data_status_html(m: MarketSnapshot) -> str:
         s = getattr(m, name)
         src = html.escape(str(s.source)) + ("" if s.available else " · unavailable")
         rows.append(f"<div class='ti-feed{'' if s.available else ' off'}'><span class='dot'></span>"
-                    f"<span>{html.escape(name)}</span><span class='src' title='{src}'>{src}</span></div>")
+                    f"<span>{html.escape(FEED_NAMES.get(name, name))}</span><span class='src' title='{src}'>{src}</span></div>")
     return "<span class='ti-label'>Feeds</span><div class='ti-feeds'>" + "".join(rows) + "</div>"
 
 
@@ -507,7 +510,7 @@ def raw_metrics_rows(m: MarketSnapshot) -> list[tuple[str, str, str]]:
     f, o, s = m.futures, m.options, m.sentiment
     h, l, w, sc = m.hyperliquid, m.liquidations, m.whales, m.stablecoins
     return [
-        ("Spot", fmt_num(m.spot.last, 0, "$"), m.spot.source),
+        ("Price", fmt_num(m.spot.last, 0, "$"), m.spot.source),
         ("Funding (8h)", fmt_pct(f.funding_rate * 100, 4) if f.funding_rate is not None else "—", f.source),
         ("Funding 7d mean", fmt_pct(f.funding_7d_mean * 100, 4) if f.funding_7d_mean is not None else "—", f.source),
         ("Open interest", fmt_num(f.open_interest, 0, suffix=" BTC"), f.source),
@@ -1716,11 +1719,16 @@ def engine_hero_html(number: int, title: str, sub: str) -> str:
             f"<h1>{html.escape(title)}</h1><p class='ti-hero-p'>{html.escape(sub)}</p></div></div>")
 
 
-def top_bar_html(price, change_pct, updated: str) -> str:
+def market_label(symbol: str | None) -> str:
+    """The market the candles came from: the BTC perpetual, or spot when the perp feed is down."""
+    return "BTC perp" if symbol and "perp" in symbol else "BTC / USD spot"
+
+
+def top_bar_html(price, change_pct, updated: str, symbol: str | None = None) -> str:
     """BTC price, its 24h move and the snapshot time - the line every screen is read against."""
     tone = "" if change_pct is None else ("up" if change_pct >= 0 else "down")
     change = "" if change_pct is None else f"<span class='ti-top-chg {tone}'>{fmt_pct(change_pct)} 24h</span>"
-    return (f"<div class='ti-top'><span class='ti-label'>BTC / USD</span>"
+    return (f"<div class='ti-top'><span class='ti-label'>{html.escape(market_label(symbol))}</span>"
             f"<span class='ti-top-price'>{fmt_num(price, 0, '$')}</span>{change}"
             f"<span class='ti-top-upd'>{html.escape(updated)}</span></div>")
 
@@ -1797,7 +1805,7 @@ def rail_read(verdict, analysis) -> str:
     return f"{DIR_GLYPH.get(d, '◆')} {d} · {c:.0%}"
 
 
-def chart_head_html(a, signal: bool = False) -> str:
+def chart_head_html(a, signal: bool = False, symbol: str | None = None) -> str:
     """The chart's title and legend, as the design frames the figure."""
     legend = ("<span><i class='sw ema21'></i>EMA 21</span><span><i class='sw ema50'></i>EMA 50</span>"
               "<span><i class='sw up'></i>up</span><span><i class='sw down'></i>down</span>"
@@ -1806,7 +1814,7 @@ def chart_head_html(a, signal: bool = False) -> str:
     # the series legend is drawn inside the chart itself (it also covers EMA 100/200 and the forecast),
     # so the frame carries the title only rather than a second, shorter legend
     del legend
-    return (f"<div class='ti-chart-head'><span class='ti-chart-title'>BTC / USD · {html.escape(a.chart_tf)}</span>"
+    return (f"<div class='ti-chart-head'><span class='ti-chart-title'>{html.escape(market_label(symbol))} · {html.escape(a.chart_tf)}</span>"
             "</div>")
 
 

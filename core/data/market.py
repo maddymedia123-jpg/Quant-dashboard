@@ -1,6 +1,6 @@
 """Fetch providers concurrently; a failing provider never takes the page down.
 
-Spot is fast (25 s cache); context feeds are slow (120 s cache) because several are IP-rate-limited."""
+Price (the BTC perp, spot as fallback) is fast (25 s cache); context feeds are slow (120 s cache) because several are IP-rate-limited."""
 from __future__ import annotations
 
 import asyncio
@@ -62,7 +62,7 @@ async def _with_client(fn):
 async def fetch_spot_only(client: httpx.AsyncClient | None = None) -> SpotSnapshot:
     if client is None:
         return await _with_client(fetch_spot_only)
-    return await _guard(fetch_spot(client), SpotSnapshot, "kraken,gemini")
+    return await _guard(fetch_spot(client), SpotSnapshot, "gate,kraken,gemini")
 
 
 async def fetch_context(client: httpx.AsyncClient | None = None) -> dict:

@@ -1,4 +1,6 @@
-"""Spot OHLCV chain: Kraken first, Gemini exchange second."""
+"""Price OHLCV chain: the Gate.io BTC perpetual first (futures price action), then Kraken and Gemini spot.
+
+The snapshot is still called "spot" in code; its source says which market answered."""
 from __future__ import annotations
 
 import httpx
@@ -7,6 +9,7 @@ from datetime import datetime, timezone
 
 import pandas as pd
 
+from core.data.gate_candles import fetch_gate_candles
 from core.data.gemini_spot import fetch_gemini_spot
 from core.data.kraken_spot import fetch_spot as fetch_kraken
 from core.data.types import SpotSnapshot
@@ -77,9 +80,9 @@ def with_derived_frames(frames: dict[str, pd.DataFrame]) -> dict[str, pd.DataFra
 
 async def fetch_spot_chain(client: httpx.AsyncClient) -> SpotSnapshot:
     errors = []
-    for fn in (fetch_kraken, fetch_gemini_spot):
+    for fn in (fetch_gate_candles, fetch_kraken, fetch_gemini_spot):
         s = await fn(client)
         if s.available:
             return s.model_copy(update={"frames": with_derived_frames(s.frames)})
         errors.append(f"{s.source}: {s.error}")
-    return SpotSnapshot.unavailable("kraken,gemini", " | ".join(errors))
+    return SpotSnapshot.unavailable("gate,kraken,gemini", " | ".join(errors))
