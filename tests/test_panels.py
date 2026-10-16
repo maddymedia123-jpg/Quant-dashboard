@@ -43,7 +43,8 @@ def test_panels_render_strings_and_squeeze_banner():
     a = analyze_category(CATEGORIES["weekly"], {**m.spot.frames, "4h": m.spot.frames["1h"], "1d": m.spot.frames["1h"]}, m.futures)
     assert "ti-card" in panels.direction_html(a)
     lay = panels.layman_html(a)
-    assert "BTC trades at" in lay and "2σ band" in lay and "flips if" in lay
+    assert "What's happening:" in lay and "Levels that matter:" in lay and "What changes the view:" in lay
+    assert "2σ" not in lay and "EMA" not in lay and "%" not in lay, "the jargon stays in the detail cards"
     assert "2σ band, 20-bar" in panels.volatility_html(a)
     assert "RSI" in panels.divergence_html(a)
     assert a.vol.horizon_label in panels.volatility_html(a)
@@ -151,7 +152,8 @@ def test_fib_and_pattern_cards_render_and_escape():
     for label, value in (("Breakout", "$77,000"), ("Target", "$75,000"), ("Invalidation", "$79,000")):
         assert f"<span class='ti-label'>{label}</span><span class='ti-kv-v '>{value}</span>" in p, label
     lay = panels.layman_html(a)
-    assert "Pattern:" in lay and "reversal window is open" in lay
+    assert "Also worth noting:" in lay and "&lt;b&gt;double top&lt;/b&gt; is forming, bearish" in lay
+    assert "reversal window is open right now" in lay
     a.patterns = []
     assert "No clean pattern" in panels.patterns_html(a)
 

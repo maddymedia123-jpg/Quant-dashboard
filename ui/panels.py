@@ -89,53 +89,139 @@ def direction_html(a: CategoryAnalysis) -> str:
     return card_html("Market direction", body, tone_for_direction(d.direction))
 
 
-def _touches(n: int) -> str:
-    return "1 touch" if n == 1 else f"{n} touches"
+CANDLE_WORD = {"1h": "1h", "4h": "4h", "1d": "daily", "1w": "weekly"}
+HORIZON_WORD = {"next 4h": "next 4 hours", "next 24h": "next 24 hours"}
+
+
+def _times(n: int) -> str:
+    return "once" if n == 1 else "twice" if n == 2 else f"{n} times"
+
+
+def _conf_word(c: float) -> str:
+    # a directional call needs |score| > 0.15, so the bands start there
+    return "Very strong" if c >= 0.85 else "Strong" if c >= 0.60 else "Moderate" if c >= 0.35 else "Slight"
+
+
+def layman_lines(a: CategoryAnalysis) -> list[tuple[str, str]]:
+    """The read in everyday words: what is happening, the levels that matter, what changes the view, and
+    - only when one applies - what else is worth noting. Built only from the deterministic analysis; the
+    jargon and the exact numbers (EMA stack, confidence %, 2-sigma band, upcoming Fibonacci zones) stay in
+    the detail cards below."""
+    d, v, s = a.direction, a.vol, a.squeeze
+    money = lambda x: fmt_num(x, 0, "$")  # noqa: E731
+    sups = sorted((l for l in a.levels if l.kind == "support"), key=lambda l: -l.price)
+    res = sorted((l for l in a.levels if l.kind == "resistance"), key=lambda l: l.price)
+    sup, nxt, ceil = (sups[0] if sups else None), (sups[1] if len(sups) > 1 else None), (res[0] if res else None)
+    chart = {"1d": "daily chart", "1w": "weekly chart"}.get(a.chart_tf, f"{a.chart_tf} chart")
+    candle = CANDLE_WORD.get(a.chart_tf, a.chart_tf)
+    price = money(a.price)
+
+    if d.direction in ("BULLISH", "BEARISH"):
+        now = (f"{_conf_word(d.confidence)} lean {'higher' if d.direction == 'BULLISH' else 'lower'}. "
+               f"BTC is {price} on the {chart}.")
+    elif sup and ceil:
+        now = f"No clear side. BTC is {price} on the {chart}, stuck between its floor and ceiling."
+    else:
+        now = f"No clear side. BTC is {price} on the {chart}, with mixed signals."
+
+    if sup and ceil:
+        levels = (f"Floor {money(sup.price)} (held {_times(sup.touches)}), "
+                  f"ceiling {money(ceil.price)} (rejected {_times(ceil.touches)}).")
+    elif sup:
+        levels = f"Floor {money(sup.price)} (held {_times(sup.touches)}); no clear ceiling above."
+    elif ceil:
+        levels = f"No clear floor below; ceiling {money(ceil.price)} (rejected {_times(ceil.touches)})."
+    else:
+        levels = ""
+    if v.exp_low and v.exp_high:
+        horizon = HORIZON_WORD.get(v.horizon_label, v.horizon_label)
+        span = f"{money(v.exp_low)} to {money(v.exp_high)}"
+        levels += " " + {"HIGH": f"Range for the {horizon}, wider than usual: {span}.",
+                         "LOW": f"Range for the {horizon}, tighter than usual: {span}."}.get(
+            v.regime, f"Normal range for the {horizon}: {span}.")
+    elif not levels:
+        levels = "Not enough history yet for levels or a range."
+    if not (sup or ceil) and v.exp_low and v.exp_high:
+        levels = "No clear floor or ceiling nearby. " + levels.strip()
+    levels = levels.strip()
+
+    if d.direction == "BEARISH" and d.invalidation is not None:
+        change = f"A {candle} close above {money(d.invalidation)}, or the moving averages turning up, flips this higher."
+        if sup and nxt:
+            change += f" Losing {money(sup.price)} opens the way toward {money(nxt.price)}."
+        elif sup and v.exp_low:
+            change += f" Losing {money(sup.price)} opens the way toward the range low, {money(v.exp_low)}."
+        elif sup:
+            change += f" Losing {money(sup.price)} leaves no clear floor beneath."
+        else:
+            change += " There is no clear floor beneath to lean on."
+    elif d.direction == "BULLISH" and d.invalidation is not None:
+        # the bullish invalidation sits half an ATR under the floor - a few hundred dollars on the 1h chart,
+        # thousands on the weekly - so the floor is named rather than called "just under"
+        under = f" (under the {money(sup.price)} floor)" if sup and sup.price > d.invalidation else ""
+        change = (f"A {candle} close below {money(d.invalidation)}{under}, or the moving averages "
+                  "turning down, flips this lower.")
+    elif d.direction in ("BULLISH", "BEARISH"):
+        change = (f"The moving averages turning the other way flips this. No clear "
+                  f"{'floor' if d.direction == 'BULLISH' else 'ceiling'} nearby to anchor it.")
+    elif sup and ceil:
+        change = (f"A {candle} close below {money(sup.price)} tilts it lower, above {money(ceil.price)} higher, "
+                  "if the moving averages agree.")
+    elif sup:
+        change = f"A {candle} close below {money(sup.price)} tilts it lower, if the moving averages agree."
+    elif ceil:
+        change = f"A {candle} close above {money(ceil.price)} tilts it higher, if the moving averages agree."
+    else:
+        change = "A clean break either way, backed by the moving averages, picks a side."
+
+    notes: list[str] = []
+    rsi_last = float(a.rsi.dropna().iloc[-1]) if a.rsi.notna().any() else None
+    if rsi_last is not None and rsi_last >= 70:
+        notes.append(f"RSI {rsi_last:.0f}, overbought, the move is stretched")
+    elif rsi_last is not None and rsi_last <= 30:
+        notes.append(f"RSI {rsi_last:.0f}, oversold, the drop is stretched")
+    rw = a.reversal
+    if rw is not None and rw.status == "ACTIVE":
+        lean = "with mixed signals" if rw.bias == "mixed" else f"leaning {rw.bias}"
+        # the confluence list is engine shorthand ("at resistance 82,506 (6 touches)"); the card below has it
+        notes.append(f"a reversal window is open right now, {lean}")
+    if a.patterns:
+        p0 = a.patterns[0]
+        name = p0.name.lower()
+        if p0.status == "confirmed":
+            notes.append(f"a {name} just confirmed, {p0.bias}" + (f", pointing to {money(p0.target)}" if p0.target else ""))
+        elif p0.bias == "neutral":
+            notes.append(f"a {name} is forming, neutral until it breaks")
+        else:
+            notes.append(f"a {name} is forming, {p0.bias}"
+                         + (f", a break of {money(p0.breakout)} points to {money(p0.target)}"
+                            if p0.breakout and p0.target else ""))
+    if a.divergences:
+        dv = next((x for x in a.divergences if x.status == "confirmed"), a.divergences[0])
+        if dv.kind == "hidden":
+            notes.append(f"a hidden {dv.direction} divergence favours the current trend continuing ({dv.status})")
+        else:
+            swing = "higher high" if dv.direction == "bearish" else "lower low"
+            notes.append(f"price made a {swing} without momentum behind it ({dv.status} {dv.direction} divergence)")
+    if s.score is not None and s.score >= 40 and s.direction in ("LONG_SQUEEZE", "SHORT_SQUEEZE"):
+        crowd = "heavily crowded" if s.score >= 70 else "crowded"
+        notes.append(f"{crowd} longs ({s.score}/100) raise the odds of a sharp shakeout lower"
+                     if s.direction == "LONG_SQUEEZE" else
+                     f"{crowd} shorts ({s.score}/100) raise the odds of a sharp pop higher")
+
+    lines = [("What's happening", now), ("Levels that matter", levels), ("What changes the view", change)]
+    if notes:
+        text = "; ".join(notes)
+        lines.append(("Also worth noting", text[0].upper() + text[1:] + "."))
+    return lines
 
 
 def layman_html(a: CategoryAnalysis) -> str:
     """Plain-English summary built only from the deterministic analysis."""
-    d, v, s = a.direction, a.vol, a.squeeze
-    sup = [l for l in a.levels if l.kind == "support"]
-    res = [l for l in a.levels if l.kind == "resistance"]
-    nearest_sup = max(sup, key=lambda l: l.price) if sup else None
-    nearest_res = min(res, key=lambda l: l.price) if res else None
-    rsi_last = float(a.rsi.dropna().iloc[-1]) if a.rsi.notna().any() else None
-    lean = {"BULLISH": "leaning up", "BEARISH": "leaning down", "NEUTRAL": "without a clear lean"}[d.direction]
-    stack = {"BULL": "above all four EMAs, a bullish stack", "BEAR": "below all four EMAs, a bearish stack", "MIXED": "inside a mixed EMA stack"}[a.ema.state]
-    parts = [f"On the {a.chart_tf} chart BTC trades at {fmt_num(a.price, 0, '$')}, {lean} with {d.confidence:.0%} confidence, {stack}."]
-    if nearest_sup or nearest_res:
-        bits = []
-        if nearest_sup:
-            bits.append(f"support at {fmt_num(nearest_sup.price, 0, '$')} ({_touches(nearest_sup.touches)})")
-        if nearest_res:
-            bits.append(f"resistance at {fmt_num(nearest_res.price, 0, '$')} ({_touches(nearest_res.touches)})")
-        parts.append("Nearest " + " and ".join(bits) + ".")
-    if v.exp_low and v.exp_high:
-        parts.append(f"Volatility is {v.regime.lower()}; a one-sigma move over the {v.horizon_label} spans {fmt_num(v.exp_low, 0, '$')} to {fmt_num(v.exp_high, 0, '$')}, "
-                     f"and the 20-bar 2σ band sits at {fmt_num(v.sigma2_dn, 0, '$')} to {fmt_num(v.sigma2_up, 0, '$')}.")
-    if rsi_last is not None:
-        zone = "overbought" if rsi_last >= 70 else "oversold" if rsi_last <= 30 else "neutral territory"
-        parts.append(f"RSI is {rsi_last:.0f}, {zone}.")
-    if a.divergences:
-        parts.append("Divergence watch: " + "; ".join(x.label for x in a.divergences) + ".")
-    if a.patterns:
-        p0 = a.patterns[0]
-        extra = f", breaking {fmt_num(p0.breakout, 0, '$')} targets {fmt_num(p0.target, 0, '$')}" if (p0.breakout and p0.target) else ""
-        parts.append(f"Pattern: {p0.name.lower()} {p0.status} ({p0.bias}){extra}.")
-    rw = a.reversal
-    if rw is not None and rw.status == "ACTIVE":
-        parts.append(f"A Fibonacci reversal window is open now with a {rw.bias} lean: {'; '.join(rw.confluence[:3])}.")
-    elif rw is not None and rw.status == "UPCOMING" and rw.bars_away is not None:
-        parts.append(f"The next Fibonacci time zone arrives {_bars(rw.bars_away)} ({_utc(rw.zone_ms)}).")
-    if s.score is not None and s.score >= 40:
-        parts.append(f"Positioning shows {s.direction.replace('_', ' ').lower()} risk at {s.score}/100.")
-    if d.anchor is not None:
-        parts.append(f"The call stays anchored at {fmt_num(d.anchor, 0, '$')} and flips if: {d.flips_if.lower()}.")
-    else:
-        parts.append(f"It flips if: {d.flips_if.lower()}.")
-    return ("<div class='ti-read'><span class='ti-kicker'>Plain-English read</span>"
-            f"<p>{html.escape(' '.join(parts))}</p></div>")
+    # text nodes only, so quotes need no escaping ("What's happening" stays readable in the source)
+    rows = "".join(f"<p><strong>{html.escape(k, quote=False)}:</strong> {html.escape(t, quote=False)}</p>"
+                   for k, t in layman_lines(a))
+    return f"<div class='ti-read'><span class='ti-kicker'>Plain-English read</span>{rows}</div>"
 
 
 def _ago(delta_ms: int) -> str:
