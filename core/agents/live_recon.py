@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from core.agents.context import category_brief, common_payload, derivatives_payload
 from core.agents.recon_profiles import LIVE, ReconProfile
 from core.indicators import liquidity as lq
+from core.indicators import harmonics as hm
 from core.indicators import vwap_break as vb
 from core.indicators import volatility as vol
 from core.indicators import smc
@@ -193,6 +194,13 @@ def build_state(m, analyses: dict, now_ms: int | None = None, profile: ReconProf
         if tf in vb.TIMEFRAMES:
             # his qualified-break rule: close outside value + volume expansion + VWAP acceptance, 1H/4H/1D only
             state["liquidity"][tf]["qualified_break"] = vb.read(df, tf).to_state()
+        if tf in hm.TIMEFRAMES:
+            # harmonics, valid only beside a VWAP, value-area or gamma level
+            try:
+                found = hm.find(df, tf, getattr(m.options, "gamma", None) if m.options.available else None)
+                state["smc"][tf]["harmonics"] = [h.to_state() for h in found]
+            except Exception as e:  # noqa: BLE001 - a pattern scan must not take the state down
+                state["smc"][tf]["harmonics"] = {"available": False, "note": f"{type(e).__name__}: {e}"}
     return state
 
 

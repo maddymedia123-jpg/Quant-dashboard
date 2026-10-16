@@ -145,7 +145,9 @@ DOMAINS: tuple[Domain, ...] = (
             "Identify the {htf} structural state and the most recent break of structure or change of "
             "character.",
             "Locate buyside and sellside liquidity pools and whether either was swept and reclaimed.",
-            "Find the nearest unmitigated order block and any unfilled fair value gap.",
+            "Find the nearest unmitigated order block and any unfilled fair value gap, and any harmonic "
+            "pattern in smc.harmonics - counting only those marked valid (beside a VWAP, value-area or gamma "
+            "level).",
             "Place price in premium or discount of the dealing range.",
         ),
         items=(

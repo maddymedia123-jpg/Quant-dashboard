@@ -27,6 +27,16 @@ class DeckAgent:
     note: str = ""
 
 
+def _harmonic(smc: dict) -> str:
+    """The structure agent's harmonic row: the first valid pattern, else the first unconfirmed one."""
+    found = smc.get("harmonics") if isinstance(smc, dict) else None
+    if not isinstance(found, list) or not found:
+        return "none"
+    h = next((x for x in found if x.get("valid")), found[0])
+    return (f"{h['side']} {h['pattern']} {h['stage'].replace('_', ' ')}"
+            + ("" if h.get("valid") else " (unconfirmed)"))
+
+
 def _get(d: dict | None, *path, default=None):
     cur = d or {}
     for step in path:
@@ -91,6 +101,7 @@ def sub_agent_deck(state: dict, profile: ReconProfile | None = None) -> list[Dec
             ("Range position", _get(smc, "premium_discount", "zone", default="—"), "text"),
             ("Buyside pool", _get(pool_b, "price"), "usd"),
             ("Sellside pool", _get(pool_s, "price"), "usd"),
+            ("Harmonic", _harmonic(smc), "text"),
         ]),
         agent("derivs", mtf, [
             ("Funding", _get(fut, "funding_rate"), "rate"),

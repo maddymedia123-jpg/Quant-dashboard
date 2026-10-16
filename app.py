@@ -473,6 +473,14 @@ def _event_reads(data_stamp: str):
     return read_all(m.spot.frames.get("1h"), m.calendar.events if m.calendar.available else [], now_ms)
 
 
+@st.cache_data(ttl=TTL["spot"], show_spinner=False)
+def _desk_harmonics(category: str, data_stamp: str):
+    """Harmonics on the desk's own 1H/4H/1D, with the gamma levels they may sit on."""
+    from core.indicators.harmonics import find_all
+    return find_all(m.spot.frames, PROFILES[category].timeframes,
+                    getattr(m.options, "gamma", None) if m.options.available else None)
+
+
 def render_protocols(profile) -> None:
     """The deterministic reads - volatility, structure, liquidity - and each sub-agent's own deck, one at
     a time behind a switch, as the design lays them out."""
@@ -604,6 +612,12 @@ def category_tab(key):
                 panels.render(panels.value_breaks_html(_breaks))
         except Exception as e:  # noqa: BLE001 - nor may a break read
             st.warning(f"Value-area breaks unavailable this refresh: {e}")
+        try:
+            _harm = _desk_harmonics(key, _data_stamp())
+            if _harm:
+                panels.render(panels.harmonics_html(_harm))
+        except Exception as e:  # noqa: BLE001
+            st.warning(f"Harmonic scan unavailable this refresh: {e}")
         if key in ("weekly", "monthly"):
             last_sig = store.last_signal(key, before_ms=now_ms)
             banner = panels.early_warning_html(early_warnings(a, m.futures, last_sig["squeeze_score"] if last_sig else None))

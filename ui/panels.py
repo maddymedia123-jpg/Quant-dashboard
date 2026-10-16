@@ -1860,6 +1860,37 @@ def value_breaks_html(reads: dict) -> str:
     return card_html("Value-area breaks", body, tone)
 
 
+def harmonics_html(found: dict) -> str:
+    """Harmonic patterns on the desk's 1H/4H/1D, valid only beside a VWAP, value-area or gamma level."""
+    from core.indicators.harmonics import TRACK_RECORD
+    rows, tone = "", "neutral"
+    for tf, hs in found.items():
+        for h in hs:
+            cls = ("up" if h.side == "bullish" else "down") if h.valid else "muted"
+            if h.valid and tone == "neutral":
+                tone = cls
+            stage = h.stage.replace("_", " ")
+            extra = (f" · {h.distance_pct:+.2f}% from price" if h.distance_pct is not None else "")
+            rows += (f"<tr><td><strong>{html.escape(tf)}</strong></td>"
+                     f"<td class='{cls}'>{html.escape(h.side.title() + ' ' + h.name)}</td>"
+                     f"<td>{chip(stage, 'warn' if h.stage == 'in_zone' else 'outline')} "
+                     f"{chip('valid' if h.valid else 'unconfirmed', 'accent' if h.valid else 'outline')}</td>"
+                     f"<td class='muted'>zone {fmt_num(h.prz[0], 0, '$')}–{fmt_num(h.prz[1], 0, '$')}{extra}"
+                     f" · targets {fmt_num(h.targets[0], 0, '$')} / {fmt_num(h.targets[1], 0, '$')}"
+                     f" · invalid past {fmt_num(h.invalidation, 0, '$')}"
+                     + (f"<br>at the zone: {html.escape(', '.join(h.confluence))}" if h.confluence else "")
+                     + "</td></tr>")
+    if not rows:
+        body = ("<p class='muted'>No Gartley, Bat, Butterfly, Crab or Cypher forming, in its zone or just "
+                f"completed on {', '.join(found) or 'the 1H, 4H or 1D'}.</p>")
+    else:
+        body = f"<table class='ti-cascade'><tbody>{rows}</tbody></table>"
+    body += ("<p class='muted ti-note'>Swings from an ATR zigzag on completed candles; ratios to the standard "
+             "XABCD tables. A pattern is valid only when its reversal zone sits on a VWAP, value-area or gamma "
+             f"level. {html.escape(TRACK_RECORD)}</p>")
+    return card_html("Harmonic patterns", body, tone)
+
+
 def cascade_html(c, invalidation: float | None = None, price: float | None = None) -> str:
     """The desk's cascade: which state it is in, what that means, and each timeframe's read.
 
