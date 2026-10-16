@@ -1,0 +1,810 @@
+{
+ "markets": [
+  {
+   "id": "2589812",
+   "question": "Will there be no change in Fed interest rates after the October 2026 meeting?",
+   "slug": "will-there-be-no-change-in-fed-interest-rates-after-the-october-2026-meeting-20260617190324031",
+   "category": "Economics",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.865,
+    0.135
+   ],
+   "volume_24h": 463925.5477200001,
+   "volume_total": 13187240.657691998,
+   "liquidity": 576128.8016,
+   "end_date": "2026-10-29T03:59:00Z",
+   "execution": {
+    "band": "clean",
+    "label": "Cleaner",
+    "score": 61.2,
+    "flags": [],
+    "reason": "Better depth and less extreme pricing for research."
+   },
+   "uncertainty": 27.0,
+   "days_left": 12,
+   "polymarket_url": "https://polymarket.com/event/will-there-be-no-change-in-fed-interest-rates-after-the-october-2026-meeting-20260617190324031?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/2589812",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-there-be-no-change-in-fed-interest-rates-after-the-october-2026-meeting-20260617190324031",
+   "updated_at": "2026-10-16T15:13:16.904960+00:00"
+  },
+  {
+   "id": "2589813",
+   "question": "Will the Fed increase interest rates by 25 bps after the October 2026 meeting?",
+   "slug": "will-the-fed-increase-interest-rates-by-25-bps-after-the-october-2026-meeting-20260617190324032",
+   "category": "Economics",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.135,
+    0.865
+   ],
+   "volume_24h": 262751.482512,
+   "volume_total": 10004864.984782988,
+   "liquidity": 380863.8023,
+   "end_date": "2026-10-29T03:59:00Z",
+   "execution": {
+    "band": "clean",
+    "label": "Cleaner",
+    "score": 61.2,
+    "flags": [],
+    "reason": "Better depth and less extreme pricing for research."
+   },
+   "uncertainty": 27.0,
+   "days_left": 12,
+   "polymarket_url": "https://polymarket.com/event/will-the-fed-increase-interest-rates-by-25-bps-after-the-october-2026-meeting-20260617190324032?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/2589813",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-the-fed-increase-interest-rates-by-25-bps-after-the-october-2026-meeting-20260617190324032",
+   "updated_at": "2026-10-16T15:13:16.914786+00:00"
+  },
+  {
+   "id": "1321564",
+   "question": "Will Anthropic have the highest IPO Market Cap 2026?",
+   "slug": "will-anthropic-have-the-highest-ipo-market-cap-2026-673",
+   "category": "Economics",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.5635,
+    0.4365
+   ],
+   "volume_24h": 172034.938536,
+   "volume_total": 1344986.0520079997,
+   "liquidity": 31710.80482,
+   "end_date": "2027-01-02T04:59:00Z",
+   "execution": {
+    "band": "clean",
+    "label": "Cleaner",
+    "score": 81.7,
+    "flags": [],
+    "reason": "Better depth and less extreme pricing for research."
+   },
+   "uncertainty": 87.3,
+   "days_left": 77,
+   "polymarket_url": "https://polymarket.com/event/will-anthropic-have-the-highest-ipo-market-cap-2026-673?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/1321564",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-anthropic-have-the-highest-ipo-market-cap-2026-673",
+   "updated_at": "2026-10-02T17:36:43.009241+00:00"
+  },
+  {
+   "id": "608368",
+   "question": "Will OpenAI not IPO by December 31, 2026?",
+   "slug": "will-openai-not-ipo-by-december-31-2026",
+   "category": "Economics",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.948,
+    0.052
+   ],
+   "volume_24h": 131449.95613099998,
+   "volume_total": 725512.2880210001,
+   "liquidity": 43697.20398,
+   "end_date": "2027-01-01T04:59:00Z",
+   "execution": {
+    "band": "fragile",
+    "label": "Fragile",
+    "score": 43.5,
+    "flags": [
+     "extreme price"
+    ],
+    "reason": "Quote can move or fill badly; verify depth before any sizing."
+   },
+   "uncertainty": 10.4,
+   "days_left": 76,
+   "polymarket_url": "https://polymarket.com/event/will-openai-not-ipo-by-december-31-2026?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/608368",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-openai-not-ipo-by-december-31-2026",
+   "updated_at": "2026-09-14T12:35:35.585754+00:00"
+  },
+  {
+   "id": "609655",
+   "question": "US recession by end of 2026?",
+   "slug": "us-recession-by-end-of-2026",
+   "category": "Economics",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.095,
+    0.905
+   ],
+   "volume_24h": 84607.766872,
+   "volume_total": 2222274.5394780003,
+   "liquidity": 130760.4263,
+   "end_date": "2027-01-31T00:00:00Z",
+   "execution": {
+    "band": "watch",
+    "label": "Watch",
+    "score": 58.5,
+    "flags": [],
+    "reason": "Usable for research, but needs confirmation or better depth."
+   },
+   "uncertainty": 19.0,
+   "days_left": 106,
+   "polymarket_url": "https://polymarket.com/event/us-recession-by-end-of-2026?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/609655",
+   "voxodds_odds_url": "https://voxodds.com/odds/us-recession-by-end-of-2026",
+   "updated_at": "2026-09-26T14:14:17.199088+00:00"
+  },
+  {
+   "id": "4620900",
+   "question": "Another Fed rate hike in 2026?",
+   "slug": "another-fed-rate-hike-in-2026",
+   "category": "Economics",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.775,
+    0.225
+   ],
+   "volume_24h": 63733.37886100001,
+   "volume_total": 845590.8617339998,
+   "liquidity": 80660.9268,
+   "end_date": "2026-12-10T04:59:00Z",
+   "execution": {
+    "band": "clean",
+    "label": "Cleaner",
+    "score": 61.3,
+    "flags": [],
+    "reason": "Better depth and less extreme pricing for research."
+   },
+   "uncertainty": 45.0,
+   "days_left": 54,
+   "polymarket_url": "https://polymarket.com/event/another-fed-rate-hike-in-2026?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/4620900",
+   "voxodds_odds_url": "https://voxodds.com/odds/another-fed-rate-hike-in-2026",
+   "updated_at": "2026-10-16T11:15:14.667785+00:00"
+  },
+  {
+   "id": "3215009",
+   "question": "Will the Fed increase interest rates by 50+ bps after the December 2026 meeting?",
+   "slug": "will-the-fed-increase-interest-rates-by-50-bps-after-the-december-2026-meeting-20260729232808637",
+   "category": "Economics",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.0275,
+    0.9725
+   ],
+   "volume_24h": 59779.754662,
+   "volume_total": 501837.353084,
+   "liquidity": 110408.38206,
+   "end_date": "2026-12-09T23:59:00Z",
+   "execution": {
+    "band": "fragile",
+    "label": "Fragile",
+    "score": 41.9,
+    "flags": [
+     "extreme price"
+    ],
+    "reason": "Quote can move or fill badly; verify depth before any sizing."
+   },
+   "uncertainty": 5.5,
+   "days_left": 54,
+   "polymarket_url": "https://polymarket.com/event/will-the-fed-increase-interest-rates-by-50-bps-after-the-december-2026-meeting-20260729232808637?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/3215009",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-the-fed-increase-interest-rates-by-50-bps-after-the-december-2026-meeting-20260729232808637",
+   "updated_at": "2026-10-15T12:16:36.190711+00:00"
+  },
+  {
+   "id": "1731346",
+   "question": "Iran agrees to surrender enriched uranium stockpile by December 31, 2026?",
+   "slug": "iran-agrees-to-surrender-enriched-uranium-stockpile-by-december-31-2026-752-299",
+   "category": "Economics",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.055,
+    0.945
+   ],
+   "volume_24h": 59040.378416,
+   "volume_total": 2361373.9841030007,
+   "liquidity": 128795.4282,
+   "end_date": "2027-01-01T04:59:00Z",
+   "execution": {
+    "band": "fragile",
+    "label": "Fragile",
+    "score": 43.7,
+    "flags": [
+     "extreme price"
+    ],
+    "reason": "Quote can move or fill badly; verify depth before any sizing."
+   },
+   "uncertainty": 11.0,
+   "days_left": 76,
+   "polymarket_url": "https://polymarket.com/event/iran-agrees-to-surrender-enriched-uranium-stockpile-by-december-31-2026-752-299?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/1731346",
+   "voxodds_odds_url": "https://voxodds.com/odds/iran-agrees-to-surrender-enriched-uranium-stockpile-by-december-31-2026-752-299",
+   "updated_at": "2026-10-16T05:08:14.892278+00:00"
+  },
+  {
+   "id": "3215007",
+   "question": "Will there be no change in Fed interest rates after the December 2026 meeting?",
+   "slug": "will-there-be-no-change-in-fed-interest-rates-after-the-december-2026-meeting-20260729232808635",
+   "category": "Economics",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.195,
+    0.805
+   ],
+   "volume_24h": 58570.927657999986,
+   "volume_total": 801567.9852669999,
+   "liquidity": 150962.4207,
+   "end_date": "2026-12-09T23:59:00Z",
+   "execution": {
+    "band": "clean",
+    "label": "Cleaner",
+    "score": 65.3,
+    "flags": [],
+    "reason": "Better depth and less extreme pricing for research."
+   },
+   "uncertainty": 39.0,
+   "days_left": 54,
+   "polymarket_url": "https://polymarket.com/event/will-there-be-no-change-in-fed-interest-rates-after-the-december-2026-meeting-20260729232808635?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/3215007",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-there-be-no-change-in-fed-interest-rates-after-the-december-2026-meeting-20260729232808635",
+   "updated_at": "2026-10-15T12:16:36.191274+00:00"
+  },
+  {
+   "id": "3215008",
+   "question": "Will the Fed increase interest rates by 25 bps after the December 2026 meeting?",
+   "slug": "will-the-fed-increase-interest-rates-by-25-bps-after-the-december-2026-meeting-20260729232808636",
+   "category": "Economics",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.785,
+    0.215
+   ],
+   "volume_24h": 57801.378527999994,
+   "volume_total": 871071.8299570004,
+   "liquidity": 152670.0406,
+   "end_date": "2026-12-09T23:59:00Z",
+   "execution": {
+    "band": "clean",
+    "label": "Cleaner",
+    "score": 66.6,
+    "flags": [],
+    "reason": "Better depth and less extreme pricing for research."
+   },
+   "uncertainty": 43.0,
+   "days_left": 54,
+   "polymarket_url": "https://polymarket.com/event/will-the-fed-increase-interest-rates-by-25-bps-after-the-december-2026-meeting-20260729232808636?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/3215008",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-the-fed-increase-interest-rates-by-25-bps-after-the-december-2026-meeting-20260729232808636",
+   "updated_at": "2026-10-15T12:16:36.192873+00:00"
+  },
+  {
+   "id": "1321561",
+   "question": "Will SpaceX have the highest IPO Market Cap 2026?",
+   "slug": "will-spacex-have-the-highest-ipo-market-cap-2026-516",
+   "category": "Economics",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.64,
+    0.36
+   ],
+   "volume_24h": 57786.016153,
+   "volume_total": 998996.1005269999,
+   "liquidity": 29700.2835,
+   "end_date": "2027-01-02T04:59:00Z",
+   "execution": {
+    "band": "clean",
+    "label": "Cleaner",
+    "score": 70.5,
+    "flags": [],
+    "reason": "Better depth and less extreme pricing for research."
+   },
+   "uncertainty": 72.0,
+   "days_left": 77,
+   "polymarket_url": "https://polymarket.com/event/will-spacex-have-the-highest-ipo-market-cap-2026-516?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/1321561",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-spacex-have-the-highest-ipo-market-cap-2026-516",
+   "updated_at": "2026-10-16T09:07:35.666161+00:00"
+  },
+  {
+   "id": "2657589",
+   "question": "Will 1 Fed rate hike happen in 2026?",
+   "slug": "will-1-fed-rate-hike-happen-in-2026-20260623190852890",
+   "category": "Economics",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.175,
+    0.825
+   ],
+   "volume_24h": 51881.765382,
+   "volume_total": 292465.82893699995,
+   "liquidity": 60095.8521,
+   "end_date": "2026-12-31T23:59:00Z",
+   "execution": {
+    "band": "clean",
+    "label": "Cleaner",
+    "score": 57.9,
+    "flags": [],
+    "reason": "Better depth and less extreme pricing for research."
+   },
+   "uncertainty": 35.0,
+   "days_left": 76,
+   "polymarket_url": "https://polymarket.com/event/will-1-fed-rate-hike-happen-in-2026-20260623190852890?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/2657589",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-1-fed-rate-hike-happen-in-2026-20260623190852890",
+   "updated_at": "2026-09-30T23:48:04.686875+00:00"
+  },
+  {
+   "id": "616903",
+   "question": "Will 1 Fed rate cut happen in 2026?",
+   "slug": "will-1-fed-rate-cut-happen-in-2026",
+   "category": "Economics",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.017,
+    0.983
+   ],
+   "volume_24h": 50422.561441,
+   "volume_total": 3360887.259387999,
+   "liquidity": 184183.08642,
+   "end_date": "2027-01-01T04:59:00Z",
+   "execution": {
+    "band": "fragile",
+    "label": "Fragile",
+    "score": 41.2,
+    "flags": [
+     "extreme price"
+    ],
+    "reason": "Quote can move or fill badly; verify depth before any sizing."
+   },
+   "uncertainty": 3.4,
+   "days_left": 76,
+   "polymarket_url": "https://polymarket.com/event/will-1-fed-rate-cut-happen-in-2026?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/616903",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-1-fed-rate-cut-happen-in-2026",
+   "updated_at": "2026-09-25T05:53:48.219182+00:00"
+  },
+  {
+   "id": "616902",
+   "question": "Will no Fed rate cuts happen in 2026?",
+   "slug": "will-no-fed-rate-cuts-happen-in-2026",
+   "category": "Economics",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.9535,
+    0.0465
+   ],
+   "volume_24h": 48955.013750000006,
+   "volume_total": 8426581.914322006,
+   "liquidity": 351425.41415,
+   "end_date": "2026-12-31T00:00:00Z",
+   "execution": {
+    "band": "fragile",
+    "label": "Fragile",
+    "score": 43.2,
+    "flags": [
+     "extreme price"
+    ],
+    "reason": "Quote can move or fill badly; verify depth before any sizing."
+   },
+   "uncertainty": 9.3,
+   "days_left": 75,
+   "polymarket_url": "https://polymarket.com/event/will-no-fed-rate-cuts-happen-in-2026?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/616902",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-no-fed-rate-cuts-happen-in-2026",
+   "updated_at": "2026-09-18T05:46:07.089407+00:00"
+  },
+  {
+   "id": "2413330",
+   "question": "Will Anthropic IPO by December 31, 2026?",
+   "slug": "will-anthropic-ipo-by-december-31-2026-546-128-719",
+   "category": "Economics",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.865,
+    0.135
+   ],
+   "volume_24h": 39694.721093,
+   "volume_total": 717564.95394,
+   "liquidity": 28223.4954,
+   "end_date": "2027-07-01T00:00:00Z",
+   "execution": {
+    "band": "clean",
+    "label": "Cleaner",
+    "score": 55.2,
+    "flags": [],
+    "reason": "Better depth and less extreme pricing for research."
+   },
+   "uncertainty": 27.0,
+   "days_left": 257,
+   "polymarket_url": "https://polymarket.com/event/will-anthropic-ipo-by-december-31-2026-546-128-719?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/2413330",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-anthropic-ipo-by-december-31-2026-546-128-719",
+   "updated_at": "2026-09-14T01:03:13.684809+00:00"
+  },
+  {
+   "id": "842090",
+   "question": "Will SpaceX's market cap be between $800B and $900B at market close on IPO day?",
+   "slug": "will-spacexs-market-cap-be-between-800b-and-900b-at-market-close-on-ipo-day",
+   "category": "Economics",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.012,
+    0.988
+   ],
+   "volume_24h": 22625.113283000002,
+   "volume_total": 481921.47696499946,
+   "liquidity": 9470.47116,
+   "end_date": "2027-12-31T00:00:00Z",
+   "execution": {
+    "band": "fragile",
+    "label": "Fragile",
+    "score": 26.8,
+    "flags": [
+     "extreme price"
+    ],
+    "reason": "Quote can move or fill badly; verify depth before any sizing."
+   },
+   "uncertainty": 2.4,
+   "days_left": 440,
+   "polymarket_url": "https://polymarket.com/event/will-spacexs-market-cap-be-between-800b-and-900b-at-market-close-on-ipo-day?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/842090",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-spacexs-market-cap-be-between-800b-and-900b-at-market-close-on-ipo-day",
+   "updated_at": "2026-05-13T09:20:06.641980+00:00"
+  },
+  {
+   "id": "1115677",
+   "question": "Jerome Powell out from Fed Board by December 31?",
+   "slug": "jerome-powell-out-from-fed-board-by-december-31",
+   "category": "Economics",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.425,
+    0.575
+   ],
+   "volume_24h": 15215.31638,
+   "volume_total": 112321.69172099995,
+   "liquidity": 13090.336,
+   "end_date": "2026-12-31T00:00:00Z",
+   "execution": {
+    "band": "watch",
+    "label": "Watch",
+    "score": 66.9,
+    "flags": [],
+    "reason": "Usable for research, but needs confirmation or better depth."
+   },
+   "uncertainty": 85.0,
+   "days_left": 75,
+   "polymarket_url": "https://polymarket.com/event/jerome-powell-out-from-fed-board-by-december-31?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/1115677",
+   "voxodds_odds_url": "https://voxodds.com/odds/jerome-powell-out-from-fed-board-by-december-31",
+   "updated_at": "2026-05-04T12:13:07.382436+00:00"
+  },
+  {
+   "id": "676786",
+   "question": "Brex IPO before 2027?",
+   "slug": "brex-ipo-before-2027",
+   "category": "Economics",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.027,
+    0.973
+   ],
+   "volume_24h": 13771.64,
+   "volume_total": 205719.40691899997,
+   "liquidity": 26632.09743,
+   "end_date": "2026-12-31T00:00:00Z",
+   "execution": {
+    "band": "fragile",
+    "label": "Fragile",
+    "score": 35.8,
+    "flags": [
+     "extreme price"
+    ],
+    "reason": "Quote can move or fill badly; verify depth before any sizing."
+   },
+   "uncertainty": 5.4,
+   "days_left": 75,
+   "polymarket_url": "https://polymarket.com/event/brex-ipo-before-2027?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/676786",
+   "voxodds_odds_url": "https://voxodds.com/odds/brex-ipo-before-2027",
+   "updated_at": "2026-04-26T11:22:35.583804+00:00"
+  },
+  {
+   "id": "842092",
+   "question": "Will SpaceX's market cap be greater than $1T at market close on IPO day?",
+   "slug": "will-spacexs-market-cap-be-greater-than-1t-at-market-close-on-ipo-day",
+   "category": "Economics",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.935,
+    0.065
+   ],
+   "volume_24h": 12351.274487,
+   "volume_total": 598417.5299450003,
+   "liquidity": 4705.7182,
+   "end_date": "2027-12-31T00:00:00Z",
+   "execution": {
+    "band": "fragile",
+    "label": "Fragile",
+    "score": 30.4,
+    "flags": [
+     "extreme price"
+    ],
+    "reason": "Quote can move or fill badly; verify depth before any sizing."
+   },
+   "uncertainty": 13.0,
+   "days_left": 440,
+   "polymarket_url": "https://polymarket.com/event/will-spacexs-market-cap-be-greater-than-1t-at-market-close-on-ipo-day?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/842092",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-spacexs-market-cap-be-greater-than-1t-at-market-close-on-ipo-day",
+   "updated_at": "2026-05-13T08:36:16.579945+00:00"
+  },
+  {
+   "id": "842093",
+   "question": "Will SpaceX not IPO by December 31, 2027?",
+   "slug": "will-spacex-not-ipo-by-december-31-2027",
+   "category": "Economics",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.0165,
+    0.9835
+   ],
+   "volume_24h": 11766.364330999997,
+   "volume_total": 588600.6316350006,
+   "liquidity": 28308.31699,
+   "end_date": "2027-12-31T00:00:00Z",
+   "execution": {
+    "band": "fragile",
+    "label": "Fragile",
+    "score": 35.1,
+    "flags": [
+     "extreme price"
+    ],
+    "reason": "Quote can move or fill badly; verify depth before any sizing."
+   },
+   "uncertainty": 3.3,
+   "days_left": 440,
+   "polymarket_url": "https://polymarket.com/event/will-spacex-not-ipo-by-december-31-2027?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/842093",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-spacex-not-ipo-by-december-31-2027",
+   "updated_at": "2026-05-13T08:36:24.779930+00:00"
+  },
+  {
+   "id": "1250810",
+   "question": "Will SpaceX's market cap be greater than $2.0T at market close on IPO day?",
+   "slug": "will-spacexs-market-cap-be-greater-than-2pt0t-at-market-close-on-ipo-day-277",
+   "category": "Economics",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.62,
+    0.38
+   ],
+   "volume_24h": 10829.834803,
+   "volume_total": 212724.2657249996,
+   "liquidity": 11836.9934,
+   "end_date": "2027-12-31T00:00:00Z",
+   "execution": {
+    "band": "watch",
+    "label": "Watch",
+    "score": 63.8,
+    "flags": [],
+    "reason": "Usable for research, but needs confirmation or better depth."
+   },
+   "uncertainty": 76.0,
+   "days_left": 440,
+   "polymarket_url": "https://polymarket.com/event/will-spacexs-market-cap-be-greater-than-2pt0t-at-market-close-on-ipo-day-277?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/1250810",
+   "voxodds_odds_url": "https://voxodds.com/odds/will-spacexs-market-cap-be-greater-than-2pt0t-at-market-close-on-ipo-day-277",
+   "updated_at": "2026-05-12T22:22:35.471924+00:00"
+  },
+  {
+   "id": "676795",
+   "question": "SpaceX (Space Exploration Technologies Corp.) IPO before 2027?",
+   "slug": "spacex-space-exploration-technologies-corp-ipo-before-2027",
+   "category": "Economics",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.943,
+    0.057
+   ],
+   "volume_24h": 9907.570076000004,
+   "volume_total": 556740.8323449962,
+   "liquidity": 4081.08139,
+   "end_date": "2026-12-31T00:00:00Z",
+   "execution": {
+    "band": "fragile",
+    "label": "Fragile",
+    "score": 17.9,
+    "flags": [
+     "limited depth",
+     "extreme price"
+    ],
+    "reason": "Quote can move or fill badly; verify depth before any sizing."
+   },
+   "uncertainty": 11.4,
+   "days_left": 75,
+   "polymarket_url": "https://polymarket.com/event/spacex-space-exploration-technologies-corp-ipo-before-2027?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/676795",
+   "voxodds_odds_url": "https://voxodds.com/odds/spacex-space-exploration-technologies-corp-ipo-before-2027",
+   "updated_at": "2026-05-05T18:38:00.806908+00:00"
+  },
+  {
+   "id": "691547",
+   "question": "Kraken IPO by December 31, 2026?",
+   "slug": "kraken-ipo-by-december-31-2026-513",
+   "category": "Economics",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.785,
+    0.215
+   ],
+   "volume_24h": 9392.33,
+   "volume_total": 517834.044586002,
+   "liquidity": 1464.5504,
+   "end_date": "2027-01-01T05:00:00Z",
+   "execution": {
+    "band": "watch",
+    "label": "Watch",
+    "score": 40.6,
+    "flags": [
+     "limited depth"
+    ],
+    "reason": "Usable for research, but needs confirmation or better depth."
+   },
+   "uncertainty": 43.0,
+   "days_left": 76,
+   "polymarket_url": "https://polymarket.com/event/kraken-ipo-by-december-31-2026-513?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/691547",
+   "voxodds_odds_url": "https://voxodds.com/odds/kraken-ipo-by-december-31-2026-513",
+   "updated_at": "2026-04-29T19:47:15.415770+00:00"
+  },
+  {
+   "id": "1115676",
+   "question": "Jerome Powell out from Fed Board by May 30?",
+   "slug": "jerome-powell-out-from-fed-board-by-may-30",
+   "category": "Economics",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.0265,
+    0.9735
+   ],
+   "volume_24h": 8606.848995,
+   "volume_total": 187629.8160570003,
+   "liquidity": 18283.02357,
+   "end_date": "2026-12-31T00:00:00Z",
+   "execution": {
+    "band": "fragile",
+    "label": "Fragile",
+    "score": 27.8,
+    "flags": [
+     "extreme price"
+    ],
+    "reason": "Quote can move or fill badly; verify depth before any sizing."
+   },
+   "uncertainty": 5.3,
+   "days_left": 75,
+   "polymarket_url": "https://polymarket.com/event/jerome-powell-out-from-fed-board-by-may-30?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/1115676",
+   "voxodds_odds_url": "https://voxodds.com/odds/jerome-powell-out-from-fed-board-by-may-30",
+   "updated_at": "2026-05-07T13:35:01.321944+00:00"
+  },
+  {
+   "id": "676792",
+   "question": "Anthropic IPO before 2027?",
+   "slug": "anthropic-ipo-before-2027",
+   "category": "Economics",
+   "outcomes": [
+    "Yes",
+    "No"
+   ],
+   "prices": [
+    0.69,
+    0.31
+   ],
+   "volume_24h": 7318.841038000001,
+   "volume_total": 211706.8195169994,
+   "liquidity": 3516.3233,
+   "end_date": "2026-12-31T00:00:00Z",
+   "execution": {
+    "band": "watch",
+    "label": "Watch",
+    "score": 47.1,
+    "flags": [
+     "limited depth"
+    ],
+    "reason": "Usable for research, but needs confirmation or better depth."
+   },
+   "uncertainty": 62.0,
+   "days_left": 75,
+   "polymarket_url": "https://polymarket.com/event/anthropic-ipo-before-2027?via=soft-dev-fz-llc",
+   "voxodds_url": "https://voxodds.com/market/676792",
+   "voxodds_odds_url": "https://voxodds.com/odds/anthropic-ipo-before-2027",
+   "updated_at": "2026-05-02T06:57:45.221734+00:00"
+  }
+ ],
+ "count": 25,
+ "source": "voxodds.com",
+ "retrieved_at": "2026-10-16T15:26:52.877652+00:00",
+ "attribution": "Data from Polymarket. Powered by VoxOdds."
+}

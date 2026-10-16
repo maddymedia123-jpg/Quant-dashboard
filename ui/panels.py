@@ -1359,6 +1359,63 @@ def gold_html(metals, now_ms: int) -> str:
              "<p class='muted ti-note'>Gold only: silver and copper are gated behind a paid tier on this feed, so "
              "they are not shown rather than guessed at.</p>")
     return card_html("Gold · XAU/USD", body, "warn" if getattr(metals, "is_stale", False) else "neutral")
+EVENT_TONE = {"sell_the_news": "warn", "spike_faded": "warn", "positioned": "warn", "confirmed": "", "absorbed": "",
+              "flat": "", "reacting": "", "scheduled": "", "no_data": ""}
+EVENT_LABEL = {"sell_the_news": "sell the news", "spike_faded": "spike faded", "positioned": "positioned",
+               "confirmed": "confirmed", "absorbed": "absorbed", "flat": "flat into it", "reacting": "reacting",
+               "scheduled": "scheduled", "no_data": "no candles"}
+ACTIVE_EVENT_STATES = ("positioned", "reacting", "sell_the_news", "spike_faded", "confirmed")
+
+
+def event_traps_html(reads, now_ms: int) -> str:
+    """Buy the rumour, sell the news: positioning into each high-impact USD print and what it did after."""
+    from core.trades import fmt_when
+    if not reads:
+        return card_html("Event traps", "<p class='muted'>No high-impact USD prints from 48 hours ago onward.</p>",
+                         "neutral")
+    body = "<div class='ti-rows'>"
+    for r in reads:
+        trapped = r.trapped
+        side = f" · {trapped}{' trapped' if trapped in ('longs', 'shorts') else ''}" if trapped else ""
+        label = EVENT_LABEL.get(r.state, r.state)
+        if r.state == "sell_the_news" and (r.runup_pct or 0) < 0:
+            label = "buy the news"
+        nums = " · ".join(x for x in (
+            f"into it {r.runup_pct:+.2f}% ({r.runup_z:+.1f}σ)" if r.runup_pct is not None else "",
+            f"first hour {r.spike_pct:+.2f}% ({r.spike_z:+.1f}σ)" if r.spike_pct is not None else "",
+            f"since {r.since_pct:+.2f}%" if r.since_pct is not None else "",
+            f"normal 4h move ±{r.expected_move_pct:.2f}%" if r.expected_move_pct is not None else "") if x)
+        body += (f"<div class='ti-cal'><div class='ti-split'><strong>{html.escape(r.title)}</strong>"
+                 f"{chip(label + side, EVENT_TONE.get(r.state) or 'outline')}</div>"
+                 f"<span>{html.escape(fmt_when(r.time_ms))}</span><span>{html.escape(r.headline)}</span>"
+                 + (f"<span class='muted'>{html.escape(nums)}</span>" if nums else "") + "</div>")
+    body += ("</div><p class='muted ti-note'>Read from BTC's 1h candles against its own hourly volatility over the "
+             "prior week. The calendar has no actual figures, so the surprise is read from the price. Prints in "
+             "the same minute count as one.</p>")
+    tone = "warn" if any(r.state in ("sell_the_news", "spike_faded", "positioned") for r in reads) else "neutral"
+    return card_html("Event traps · buy the rumour, sell the news", body, tone)
+
+
+NARRATIVE_TONE = {"fresh": "warn", "building": "warn", "running": "outline", "fading": "outline"}
+
+
+def narratives_html(items) -> str:
+    """Which headline stories are rising or dying, and so how much of each is likely priced."""
+    if not items:
+        return card_html("Narrative shelf-life", "<p class='muted'>No tagged topic has two or more headlines in the "
+                         "feed.</p>", "neutral")
+    body = "<div class='ti-rows'>"
+    for n in items:
+        body += (f"<div class='ti-cal'><div class='ti-split'><strong>{html.escape(n.topic.title())}</strong>"
+                 f"{chip(n.state, NARRATIVE_TONE.get(n.state, 'outline'))}</div>"
+                 f"<span>{html.escape(n.shelf_life)}</span>"
+                 f"<span class='muted'>{n.headlines} headlines, {n.recent} in the last 6h · latest: "
+                 f"{html.escape(n.latest_title)}</span></div>")
+    body += ("</div><p class='muted ti-note'>An attention tracker, not a forecast: topics come from keyword tags and "
+             "the feed reaches back about a day and a half, so an age marked + is a floor.</p>")
+    return card_html("Narrative shelf-life", body, "neutral")
+
+
 def predictions_html(preds, now_ms: int, asset: str | None = None, limit: int = 8) -> str:
     """What the crowd is pricing, and whether the quote can actually be filled."""
     if not getattr(preds, "available", False):
@@ -1370,7 +1427,7 @@ def predictions_html(preds, now_ms: int, asset: str | None = None, limit: int = 
         markets = [m for m in markets if asset in (m.get("assets") or [])]
     tradeable = [m for m in markets if m.get("band") in ("clean", "watch")]
     body = (f"<p><strong>{len(markets)} market(s)</strong>"
-            + (f" mentioning {html.escape(asset)}" if asset else "")
+            + (" on the Fed, rates and the economy" if asset == "MACRO" else f" mentioning {html.escape(asset)}" if asset else "")
             + f" · {len(tradeable)} with a quote worth quoting</p><div class='ti-rows'>")
     for m in markets[:limit]:
         band = str(m.get("band") or "unknown")

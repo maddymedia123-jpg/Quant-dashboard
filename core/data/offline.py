@@ -20,7 +20,7 @@ from core.data.kraken_spot import parse_ohlc, parse_ticker
 from core.data.macro import build as build_macro
 from core.data.metals import parse_gold
 from core.data.news import merge, parse_aggregator, parse_feed
-from core.data.prediction import parse_markets
+from core.data.prediction import merge as merge_predictions, parse_markets
 from core.data.sentiment import parse_fng
 from core.data.stablecoins import parse_stablecoins
 from core.data.types import MarketSnapshot, NewsSnapshot, SpotSnapshot
@@ -73,7 +73,8 @@ def fixture_context() -> dict:
         "calendar": _mark(parse_calendar(_load("ff_calendar_thisweek.json"))),
         "news": _mark(_fixture_news()),
         "metals": _mark(parse_gold(_load("goldprice_xau.json"))),
-        "predictions": _mark(parse_markets(_load("voxodds_crypto.json"))),
+        "predictions": _mark(merge_predictions(parse_markets(_load("voxodds_crypto.json")),
+                                               parse_markets(_load("voxodds_economics.json"), macro=True))),
         "macro": _mark(_fixture_macro()),
         "cot": _mark(parse_cot(_load("cftc_cot_btc_cme.json"),
                                int(datetime(2026, 10, 10, tzinfo=timezone.utc).timestamp() * 1000))),

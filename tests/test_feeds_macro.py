@@ -369,15 +369,16 @@ def test_a_dead_odds_endpoint_is_unavailable_not_an_exception():
     assert not snap.available and snap.markets == []
 
 
-def test_the_request_asks_for_the_crypto_category_only():
-    seen = {}
+def test_the_requests_ask_for_named_categories_never_the_whole_board():
+    """Unfiltered, the board returns Dota matches. Crypto, plus Economics for the Fed and macro odds."""
+    seen = []
 
     def handler(request: httpx.Request):
-        seen["url"] = str(request.url)
+        seen.append(request.url.params.get("category"))
         return httpx.Response(200, json=load("voxodds_crypto.json"))
 
     _run(prediction.fetch_predictions(httpx.AsyncClient(transport=httpx.MockTransport(handler))))
-    assert "category=Crypto" in seen["url"]
+    assert sorted(seen) == ["Crypto", "Economics"]
 
 
 def test_the_gold_request_uses_the_singular_parameter():

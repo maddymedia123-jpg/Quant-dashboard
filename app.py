@@ -453,6 +453,13 @@ def _desk_breaks(category: str, data_stamp: str):
     return read_all(m.spot.frames, PROFILES[category].timeframes)
 
 
+@st.cache_data(ttl=TTL["spot"], show_spinner=False)
+def _event_reads(data_stamp: str):
+    """Positioning into and reactions to this week's high-impact USD prints, the same read the judges get."""
+    from core.indicators.event_trap import read_all
+    return read_all(m.spot.frames.get("1h"), m.calendar.events if m.calendar.available else [], now_ms)
+
+
 def render_protocols(profile) -> None:
     """The deterministic reads - volatility, structure, liquidity - and each sub-agent's own deck, one at
     a time behind a switch, as the design lays them out."""
@@ -612,6 +619,14 @@ def category_tab(key):
             render_protocols(profile)
             render_war_room(profile)
         panels.render(panels.agent_summary_html(a, report))
+        if key in ("live", "intraday"):
+            # a print inside these horizons is part of the trade: show it only when there is something to read
+            try:
+                _active = [r for r in _event_reads(_data_stamp()) if r.state in panels.ACTIVE_EVENT_STATES]
+                if _active:
+                    panels.render(panels.event_traps_html(_active, now_ms))
+            except Exception as e:  # noqa: BLE001
+                st.warning(f"Event traps unavailable: {e}")
         if key in ("weekly", "monthly"):
             panels.render(panels.calendar_html(m, now_ms))
             # weekly positioning belongs on the weekly and monthly view only: it is three to ten days
@@ -1059,6 +1074,21 @@ if screen == "macro":
     except Exception as e:  # noqa: BLE001
         st.warning(f"Rates unavailable: {e}")
 
+    # the forecasting layer: positioning into each print, what the print did, and how fresh each story is
+    ev_col, nar_col = st.columns(2, gap="large")
+    with ev_col:
+        try:
+            panels.render(panels.event_traps_html(_event_reads(_data_stamp()), now_ms))
+        except Exception as e:  # noqa: BLE001
+            st.warning(f"Event traps unavailable: {e}")
+    with nar_col:
+        try:
+            from core.indicators.narratives import read as read_narratives
+            panels.render(panels.narratives_html(
+                read_narratives(m.news.headlines, now_ms) if m.news.available else []))
+        except Exception as e:  # noqa: BLE001
+            st.warning(f"Narratives unavailable: {e}")
+
     n_news = len(getattr(m.news, "headlines", []) or []) if getattr(m.news, "available", False) else 0
     panels.render(panels.section_head_html(f"Headlines · {n_news}"))
     topics = panels.news_topics(m.news)
@@ -1071,11 +1101,11 @@ if screen == "macro":
                  "Do not read this as 'no news'.")
 
     panels.render(panels.section_head_html("Prediction markets"))
-    odds_asset = st.segmented_control("Prediction markets for", ["BTC", "ETH", "SOL", "All"], default="BTC",
-                                      key="odds_asset", label_visibility="collapsed") or "BTC"
+    odds_asset = st.segmented_control("Prediction markets for", ["BTC", "ETH", "SOL", "Fed & macro", "All"],
+                                      default="BTC", key="odds_asset", label_visibility="collapsed") or "BTC"
+    _odds_key = {"All": None, "Fed & macro": "MACRO"}.get(odds_asset, odds_asset)
     try:
-        panels.render(panels.predictions_html(m.predictions, now_ms,
-                                              asset=None if odds_asset == "All" else odds_asset, limit=10))
+        panels.render(panels.predictions_html(m.predictions, now_ms, asset=_odds_key, limit=10))
     except Exception as e:  # noqa: BLE001
         st.error(f"The odds feed could not be drawn ({type(e).__name__}: {e}).")
     st.caption("Data from Polymarket. Powered by VoxOdds, which scores whether each quote can be filled. A "

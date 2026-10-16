@@ -82,6 +82,31 @@ def _calendar_events(m: MarketSnapshot) -> dict:
     return {"source": "curated (calendar unavailable)", "events": MACRO_EVENTS}
 
 
+def macro_read(m: MarketSnapshot, now_ms: int | None = None) -> dict:
+    """The macro engine's read, computed in code: positioning into and reactions to each high-impact USD
+    print, the headline narratives and how fresh they are, and what the Fed markets price. Each part fails
+    on its own and says so."""
+    from core.indicators import event_trap, narratives
+    now = now_ms if now_ms is not None else int(m.generated_at.timestamp() * 1000)
+    out: dict[str, Any] = {}
+    try:
+        out["prints"] = ([r.to_state() for r in event_trap.read_all(m.spot.frames.get("1h"), m.calendar.events, now)]
+                         if m.calendar.available else {"available": False, "note": m.calendar.error or "calendar down"})
+    except Exception as e:  # noqa: BLE001 - one part of the read must not take the others down
+        out["prints"] = {"available": False, "note": f"{type(e).__name__}: {e}"}
+    try:
+        out["narratives"] = ([n.to_state() for n in narratives.read(m.news.headlines, now)]
+                             if m.news.available else {"available": False, "note": m.news.error or "news down"})
+    except Exception as e:  # noqa: BLE001
+        out["narratives"] = {"available": False, "note": f"{type(e).__name__}: {e}"}
+    if m.predictions.available:
+        out["fed_and_macro_odds"] = [{"question": x["question"], "probability": round(x["probability"], 3),
+                                      "band": x["band"]} for x in m.predictions.tradeable("MACRO")[:8]]
+    out["method"] = ("prints: BTC 1h moves against its own hourly volatility; narratives: headline attention by "
+                     "topic (feed reaches back ~1.5 days); odds: Polymarket via VoxOdds, clean and watch bands only")
+    return out
+
+
 def common_payload(m: MarketSnapshot, analyses: dict[str, CategoryAnalysis]) -> dict:
     live = analyses.get("live") or next(iter(analyses.values()), None)
     return {
@@ -89,6 +114,7 @@ def common_payload(m: MarketSnapshot, analyses: dict[str, CategoryAnalysis]) -> 
         "spot": _round({"price": m.spot.last, "source": m.spot.source, "price_change_24h_pct": live.price_change_24h_pct if live else None}),
         "categories": {k: category_brief(a) for k, a in analyses.items()},
         "macro_calendar": _calendar_events(m),
+        "macro_read": macro_read(m),
         "generated_at_utc": m.generated_at.strftime("%Y-%m-%d %H:%M UTC"),
     }
 

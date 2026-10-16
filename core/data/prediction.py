@@ -11,6 +11,7 @@ The feed asks for attribution ("Data from Polymarket. Powered by VoxOdds."); it 
 rendered, not dropped."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 
@@ -28,6 +29,11 @@ CATEGORY = "Crypto"
 MAX_MARKETS = 40
 BANDS = ("clean", "watch", "fragile")
 ASSETS = (("BTC", ("bitcoin", "btc")), ("ETH", ("ethereum", "ether")), ("SOL", ("solana",)))
+# The Economics category also lists IPOs and company races; only the markets that move rates and risk are
+# kept, and they are tagged MACRO so a panel can ask for them the way it asks for BTC.
+MACRO_CATEGORY = "Economics"
+MACRO_WORDS = ("fed ", "fed?", "interest rate", "rate hike", "rate cut", "bps", "fomc", "cpi", "inflation",
+               "recession", "unemployment", "jobs report", "payroll", "gdp")
 
 
 def _ms(raw: str | None) -> int | None:
@@ -48,7 +54,7 @@ def _float(value) -> float | None:
     return out if out == out else None      # NaN is not a probability
 
 
-def parse_markets(payload: dict) -> PredictionSnapshot:
+def parse_markets(payload: dict, macro: bool = False) -> PredictionSnapshot:
     if not isinstance(payload, dict):
         return PredictionSnapshot.unavailable("voxodds", f"unexpected payload {type(payload).__name__}")
     rows = payload.get("markets")
@@ -67,6 +73,8 @@ def parse_markets(payload: dict) -> PredictionSnapshot:
         execution = row.get("execution") if isinstance(row.get("execution"), dict) else {}
         band = str(execution.get("band") or "").lower()
         low = question.lower()
+        if macro and not any(w in low + " " for w in MACRO_WORDS):
+            continue
         markets.append({
             "id": str(row.get("id") or ""), "question": question,
             "probability": yes,
@@ -81,10 +89,11 @@ def parse_markets(payload: dict) -> PredictionSnapshot:
             "flags": [str(f) for f in (execution.get("flags") or []) if f],
             "band_reason": str(execution.get("reason") or "").strip(),
             "url": str(row.get("polymarket_url") or row.get("voxodds_url") or ""),
-            "assets": [code for code, words in ASSETS if any(w in low for w in words)],
+            "assets": ["MACRO"] if macro else [code for code, words in ASSETS if any(w in low for w in words)],
         })
     if not markets:
-        return PredictionSnapshot.unavailable("voxodds", "no usable crypto markets in the response")
+        return PredictionSnapshot.unavailable(
+            "voxodds", f"no usable {'macro' if macro else 'crypto'} markets in the response")
 
     markets.sort(key=lambda m: -(m["volume_24h"] or 0.0))
     return PredictionSnapshot(source="voxodds", markets=markets,
@@ -92,12 +101,28 @@ def parse_markets(payload: dict) -> PredictionSnapshot:
                               retrieved_ms=_ms(payload.get("retrieved_at")))
 
 
-async def fetch_predictions(client: httpx.AsyncClient) -> PredictionSnapshot:
+def merge(crypto: PredictionSnapshot, macro: PredictionSnapshot) -> PredictionSnapshot:
+    """Crypto and macro markets in one snapshot. Either half failing is a degraded feed that names it."""
+    if not crypto.available and not macro.available:
+        return PredictionSnapshot.unavailable("voxodds", f"crypto: {crypto.error}; macro: {macro.error}")
+    base = crypto if crypto.available else macro
+    markets = (crypto.markets if crypto.available else []) + (macro.markets if macro.available else [])
+    errors = [f"{n}: {s.error}" for n, s in (("crypto", crypto), ("macro", macro)) if not s.available]
+    return base.model_copy(update={"markets": sorted(markets, key=lambda m: -(m["volume_24h"] or 0.0)),
+                                   "error": "; ".join(errors) or None})
+
+
+async def _fetch(client: httpx.AsyncClient, category: str, macro: bool) -> PredictionSnapshot:
     try:
-        r = await client.get(URL, params={"category": CATEGORY}, headers=HEADERS)
+        r = await client.get(URL, params={"category": category}, headers=HEADERS)
         r.raise_for_status()
-        return parse_markets(r.json())
+        return parse_markets(r.json(), macro=macro)
     except Exception as e:  # noqa: BLE001 - provider boundary
         # str(ReadTimeout()) is empty, which rendered as "No odds feed: ."
-        log.error("prediction markets unavailable: %s", e)
+        log.error("prediction markets (%s) unavailable: %s", category, e)
         return PredictionSnapshot.unavailable("voxodds", f"{type(e).__name__}: {e}".strip(": "))
+
+
+async def fetch_predictions(client: httpx.AsyncClient) -> PredictionSnapshot:
+    crypto, macro = await asyncio.gather(_fetch(client, CATEGORY, False), _fetch(client, MACRO_CATEGORY, True))
+    return merge(crypto, macro)
