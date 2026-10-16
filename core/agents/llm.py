@@ -16,6 +16,17 @@ log = logging.getLogger(__name__)
 GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 RETRY_STATUS = {429, 500, 502, 503, 504}
+# Gemini models are overloaded on and off ("This model is currently experiencing high demand", 503), and
+# not all at once: on 16 Oct flash-lite failed while 3.7-flash answered, then the reverse. So a model that
+# is still overloaded after its retries hands the call to the next one rather than failing the agent.
+GEMINI_SPARES = ("gemini-3.5-flash",)
+
+
+def _overloaded(e: Exception) -> bool:
+    """A busy or unreachable provider, which another model may get past. A refused key does not."""
+    if isinstance(e, httpx.HTTPStatusError):
+        return e.response.status_code in RETRY_STATUS
+    return isinstance(e, (httpx.TimeoutException, httpx.TransportError))
 
 
 @dataclass
@@ -81,7 +92,7 @@ def parse_openrouter(payload: dict) -> tuple[str, int, int, float | None]:
 
 
 class LLMClient:
-    def __init__(self, settings: LLMSettings, client: httpx.AsyncClient | None = None, backoff: tuple[float, float] = (2.0, 6.0)):
+    def __init__(self, settings: LLMSettings, client: httpx.AsyncClient | None = None, backoff: tuple[float, float] = (3.0, 8.0)):
         self.s = settings
         self._client = client or httpx.AsyncClient(timeout=httpx.Timeout(settings.timeout_s, connect=10.0))
         self._sem = asyncio.Semaphore(settings.max_concurrency)
@@ -116,6 +127,10 @@ class LLMClient:
         for attempt in range(3):
             try:
                 r = await self._client.post(url, json=body, headers=headers)
+                # a spent DAILY quota (Gemini free tier: 20 requests per model per day) does not come back
+                # in seconds, so waiting and retrying only delays handing the call to the next model
+                if r.status_code == 429 and "PerDay" in r.text:
+                    r.raise_for_status()
                 if r.status_code in RETRY_STATUS and attempt < 2:
                     await asyncio.sleep(self._backoff[attempt])
                     continue
@@ -132,13 +147,35 @@ class LLMClient:
                     continue
         raise last_exc or RuntimeError("llm request failed")
 
+    def models_for(self, model: str) -> list[str]:
+        """The requested model first, then the provider's other configured models, then the spares."""
+        spares = GEMINI_SPARES if self.s.provider == "gemini" else ()
+        return list(dict.fromkeys([model, self.s.specialist_model, self.s.director_model, *spares]))
+
+    async def _once_any(self, system: str, user: str, model: str, max_tokens: int,
+                        temperature: float) -> tuple[str, int, int, float | None, str]:
+        """`_once` on the requested model, moving to the next only when the provider is overloaded."""
+        tried: list[str] = []
+        for m in self.models_for(model):
+            try:
+                text, pt, ct, cost = await self._once(system, user, m, max_tokens, temperature)
+                if tried:
+                    log.warning("llm: %s overloaded, answered by %s", ", ".join(tried), m)
+                return text, pt, ct, cost, m
+            except Exception as e:  # noqa: BLE001 - decide below whether another model can help
+                if not _overloaded(e):
+                    raise
+                code = getattr(getattr(e, "response", None), "status_code", None) or type(e).__name__
+                tried.append(f"{m} ({code})")
+        raise RuntimeError(f"{self.s.provider} overloaded on every model tried: {', '.join(tried)}")
+
     async def complete_json(self, system: str, user: str, model: str, max_tokens: int = 2048, temperature: float = 0.2) -> LLMResult:
         t0 = time.perf_counter()
         pt_sum = ct_sum = 0
         cost_sum: float | None = None
         async with self._sem:
             try:
-                text, pt, ct, cost = await self._once(system, user, model, max_tokens, temperature)
+                text, pt, ct, cost, model = await self._once_any(system, user, model, max_tokens, temperature)
                 pt_sum += pt
                 ct_sum += ct
                 cost_sum = cost

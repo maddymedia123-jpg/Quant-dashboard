@@ -115,11 +115,19 @@ class Judge:
         t0 = time.perf_counter()
         profile = profile or LIVE
         try:
+            provider = self.provider
             if self.typesafe_key:
-                probs, pt, ct = await self._typesafe(state, side, items, profile)
+                try:
+                    probs, pt, ct = await self._typesafe(state, side, items, profile)
+                except Exception as e:  # noqa: BLE001 - Jev down is a reason to ask the fallback, not to fail
+                    if self._llm is None:
+                        raise
+                    log.warning("TypeSafe failed, judging on %s instead: %s", self.s.provider, e)
+                    probs, pt, ct = await self._fallback(state, side, items, profile)
+                    provider = f"{self.s.provider} (TypeSafe failed: {str(e)[:80]})"
             else:
                 probs, pt, ct = await self._fallback(state, side, items, profile)
-            return JudgeResult(probabilities=probs, provider=self.provider, latency_s=time.perf_counter() - t0,
+            return JudgeResult(probabilities=probs, provider=provider, latency_s=time.perf_counter() - t0,
                                prompt_tokens=pt, completion_tokens=ct)
         except Exception as e:  # noqa: BLE001 - judge boundary: a failure must not stop the run
             log.warning("judge failed (%s): %s", self.provider, e)
@@ -128,20 +136,28 @@ class Judge:
     async def classify(self, state: dict, qid: str, instructions: str, criteria: dict[str, str]) -> ChoiceResult:
         """One categorical judgment with a probability per option (the War Room trap call)."""
         try:
+            ts_failed = None
             if self.typesafe_key:
-                body = {"state": state, "model": TYPESAFE_MODEL,
-                        "questions": {qid: {"type": "choice", "instructions": instructions, "criteria": criteria}}}
-                client = self._client or httpx.AsyncClient(timeout=self._timeout)
                 try:
-                    r = await client.post(TYPESAFE_URL, json=body, headers={"Authorization": f"Bearer {self.typesafe_key}"})
-                    r.raise_for_status()
-                    payload = r.json()
-                finally:
-                    if self._client is None:
-                        await client.aclose()
-                res = parse_typesafe_choice(payload, qid)
-                res.provider = "typesafe"
-                return res
+                    body = {"state": state, "model": TYPESAFE_MODEL,
+                            "questions": {qid: {"type": "choice", "instructions": instructions, "criteria": criteria}}}
+                    client = self._client or httpx.AsyncClient(timeout=self._timeout)
+                    try:
+                        r = await client.post(TYPESAFE_URL, json=body,
+                                              headers={"Authorization": f"Bearer {self.typesafe_key}"})
+                        r.raise_for_status()
+                        payload = r.json()
+                    finally:
+                        if self._client is None:
+                            await client.aclose()
+                    res = parse_typesafe_choice(payload, qid)
+                    res.provider = "typesafe"
+                    return res
+                except Exception as e:  # noqa: BLE001 - fall through to the LLM classifier when there is one
+                    if self._llm is None:
+                        raise
+                    log.warning("TypeSafe classify failed, using %s instead: %s", self.s.provider, e)
+                    ts_failed = str(e)[:80]
             if self._llm is None:
                 raise RuntimeError("no TypeSafe key and no LLM client for the classifier")
             opts = "\n".join(f'- "{k}": {v}' for k, v in criteria.items())
@@ -158,7 +174,7 @@ class Judge:
             if choice not in criteria:
                 choice = max(probs, key=probs.get) if probs else None
             return ChoiceResult(choice=choice, probabilities={k: v for k, v in probs.items() if v is not None},
-                                provider=self.s.provider)
+                                provider=self.s.provider + (f" (TypeSafe failed: {ts_failed})" if ts_failed else ""))
         except Exception as e:  # noqa: BLE001 - judge boundary
             log.warning("classify failed (%s): %s", self.provider, e)
             return ChoiceResult(provider=self.provider, error=str(e)[:300])
