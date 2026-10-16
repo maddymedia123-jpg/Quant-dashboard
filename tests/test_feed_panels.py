@@ -245,3 +245,21 @@ def test_the_topic_filter_narrows_the_list_but_not_the_count():
     assert "Macro story" in h and "ETF story" not in h
     assert "2 headlines" in h and "showing macro" in h, "the count is still of everything received"
     assert panels.news_topics(news(rows + [headline(topic="macro")])) == ["macro", "etf"], "most common first"
+
+
+def test_high_impact_headlines_are_pinned_above_a_quiet_hour():
+    """The count said 9 high-impact while the newest 14 shown were all low: the 9 were further back."""
+    quiet = [headline(title=f"Quiet {i}", impact="low", topic="general", url=f"https://x.test/q{i}",
+                      published_ms=NOW - i * 60_000) for i in range(20)]
+    loud = [headline(title=f"Loud {i}", url=f"https://x.test/l{i}", published_ms=NOW - (30 + i) * HOUR)
+            for i in range(3)]
+    h = panels.news_html(news(quiet + loud), NOW, limit=14)
+    assert "3 high-impact" in h and all(f"Loud {i}" in h for i in range(3)), "every counted story is shown"
+    assert h.index("High impact") < h.index("Loud 0") < h.index("Latest") < h.index("Quiet 0")
+    assert h.count("class='ti-news'") == 14, "pinned stories take places from the latest, not extra ones"
+    assert "Quiet 10" in h and "Quiet 11" not in h
+
+
+def test_without_high_impact_there_is_no_empty_pinned_group():
+    h = panels.news_html(news([headline(impact="low", topic="general")]), NOW)
+    assert "High impact" not in h and "Latest" not in h

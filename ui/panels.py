@@ -1437,8 +1437,22 @@ def news_html(news, now_ms: int, limit: int = 12, topic: str | None = None) -> s
     if getattr(news, "error", None):
         body += (f"<p class='muted'>Partial feed: {html.escape(str(news.error))[:160]} - the count above "
                  "is what did arrive, not everything published.</p>")
-    body += "<div class='ti-rows'>"
-    for h in shown[:limit]:
+    # the high-impact headlines are pinned above the latest ones: counted over the whole feed but listed
+    # newest first, they fell below the cut whenever the last hour was quiet, and the count named stories
+    # the card did not show
+    pinned = [h for h in shown if h.get("impact") == "high"][:limit]
+    rest = [h for h in shown if h.get("impact") != "high"][:max(0, limit - len(pinned))]
+    body += ((f"<span class='ti-label'>High impact</span><div class='ti-rows'>{_news_rows(pinned, now_ms)}</div>"
+              "<span class='ti-label'>Latest</span>") if pinned else "")
+    body += f"<div class='ti-rows'>{_news_rows(rest, now_ms)}</div>"
+    body += ("<p class='muted ti-note'>Topic and impact are keyword tags over the headline text, not a judgment "
+             "of the story. Treat them as a way to sort the list, not as a read on the market.</p>")
+    return card_html("News", body, "down" if high else "neutral")
+
+
+def _news_rows(rows: list[dict], now_ms: int) -> str:
+    body = ""
+    for h in rows:
         assets = " ".join(str(a) for a in (h.get("assets") or [])[:3])
         impact = str(h.get("impact") or "")
         title = html.escape(str(h.get("title") or ""))[:150]
@@ -1453,10 +1467,7 @@ def news_html(news, now_ms: int, limit: int = 12, topic: str | None = None) -> s
                  + chip(str(h.get("topic") or ""), "neutral-fill")
                  + (chip(impact, IMPACT_TONE.get(impact, "neutral")) if impact else "")
                  + "</div></div></div>")
-    body += "</div>"
-    body += ("<p class='muted ti-note'>Topic and impact are keyword tags over the headline text, not a judgment "
-             "of the story. Treat them as a way to sort the list, not as a read on the market.</p>")
-    return card_html("News", body, "down" if high else "neutral")
+    return body
 def gold_html(metals, now_ms: int) -> str:
     """Gold spot, with the feed's own freshness carried through."""
     if not getattr(metals, "available", False):

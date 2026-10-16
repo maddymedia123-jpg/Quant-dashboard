@@ -42,8 +42,12 @@ DOCTYPE_RE = re.compile(rb"<!\s*(DOCTYPE|ENTITY)", re.IGNORECASE)
 # Keyword tagging. Ordered: the first topic whose words appear wins, so the more market-moving
 # categories are tested before the general ones.
 TOPICS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    # war and oil move every risk asset at once; "attacks" on a shipping lane read as low impact before;
+    # listed first so a shipping-lane attack is geopolitics, not a wallet hack
+    ("geopolitics", "high", ("war", "invasion", "missile", "missiles", "hormuz", "iran", "israel", "sanctions",
+                             "brent", "crude", "opec", "oil price")),
     ("security", "high", ("hack", "hacked", "exploit", "stolen", "breach", "drained", "rug pull",
-                          "vulnerability", "attack")),
+                          "vulnerability", "attack", "attacks")),
     ("regulation", "high", ("sec ", "cftc", "lawsuit", "sues", "subpoena", "indict", "ban ", "banned",
                             "regulator", "congress", "senate", "court", "settlement", "fined")),
     ("etf", "high", ("etf", "inflow", "outflow", "blackrock", "ibit", "fidelity", "grayscale")),

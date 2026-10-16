@@ -223,3 +223,10 @@ def test_gate_futures_parse_full_field_set_and_chain(monkeypatch):
     monkeypatch.setattr(gf, "fetch_gate_futures", ok_gate)
     out = asyncio.run(bf.fetch_futures(client=object()))
     assert out.available and out.source == "gate"
+
+
+def test_war_and_oil_are_high_impact():
+    from core.data.news import classify
+    assert classify("Brent oil touches $110 as Iran escalates Hormuz attacks")[:2] == ("geopolitics", "high")
+    assert classify("Exchange suffers attacks on its hot wallet")[:2] == ("security", "high")
+    assert classify("Software firm wins award for warehouse tool")[1] == "low", "whole words: warehouse is not war"
