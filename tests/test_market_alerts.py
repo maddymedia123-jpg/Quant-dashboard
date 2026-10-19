@@ -5,7 +5,7 @@ import httpx
 import pytest
 
 from core import market_alerts as ma
-from core.alerts import Dispatcher, Event
+from core.alerts import URGENT_MARK, Dispatcher, Event
 from core.indicators.cascade import Cascade, TimeframeRead
 from core.store import Store
 
@@ -21,8 +21,11 @@ def store():
 
 
 def cascade(state, bias="bullish"):
-    return Cascade(state, "", TimeframeRead("1d", "bias", bias, "BULL", "bullish"), None, (), bias, None, None, 0,
-                   "Ride the expansion toward the 1d targets. Second sentence is not sent.")
+    """Live Recon's cascade: daily bias, 4h anchor, 15m and 1h engine."""
+    engine = tuple(TimeframeRead(tf, "engine", "neutral", "MIXED", "unclear") for tf in ("15m", "1h"))
+    return Cascade(state, "", TimeframeRead("1d", "bias", bias, "BULL", "bullish"),
+                   TimeframeRead("4h", "anchor", "neutral", "MIXED", "unclear"), engine, bias, None, None, 0,
+                   "Ride the expansion toward the 1d targets.")
 
 
 def trap(i, declared=NOW - H, status="active", resolved=None, side="BULL_TRAP"):
@@ -40,12 +43,36 @@ def test_an_unchanged_state_is_silent():
     assert ma.cascade_event("live", "Live Recon", "A", cascade("A"), NOW) is None
 
 
-def test_a_change_names_both_states_the_bias_and_the_first_line_of_the_playbook():
+def test_a_change_reads_as_desk_then_old_to_new_then_what_it_means():
     e = ma.cascade_event("live", "Live Recon", "A", cascade("B"), NOW, price=78_494.0)
     assert e.kind == "cascade" and not e.urgent
-    assert e.headline.startswith("Live Recon: cascade A · full confluence -> B · pullback (1d bias bullish).")
-    assert "Ride the expansion toward the 1d targets." in e.headline and "Second sentence" not in e.headline
-    assert "$78,494" in e.headline and e.dedup_key == f"cascade:live:A->B:{NOW}"
+    assert e.headline.split("\n") == [
+        "Live Recon (1h) · BTC $78,494",
+        "Strong setup up -> Pause in an uptrend",
+        "Daily trend is still up, but the 1h/15m lost their push. A breather, not a reversal.",
+    ]
+    assert e.dedup_key == f"cascade:live:A->B:{NOW}"
+
+
+def test_every_state_has_a_plain_name_and_the_letters_never_show():
+    for prev, new, name in (("B", "A", "Strong setup up"), ("A", "B", "Pause in an uptrend"),
+                            ("B", "C", "Uptrend losing control")):
+        h = ma.cascade_event("live", "Live Recon", prev, cascade(new), NOW).headline
+        assert h.split("\n")[1].endswith(name)
+        assert "cascade" not in h and "-> A" not in h and "-> B" not in h and "vector" not in h and "engine" not in h
+    down = ma.cascade_event("weekly", "Weekly", "B", cascade("A", "bearish"), NOW).headline
+    assert "Pause in a downtrend -> Strong setup down" in down and "Best conditions for downside" in down
+
+
+def test_the_explanation_follows_where_the_desk_came_from():
+    said = {prev: ma.cascade_event("live", "Live Recon", prev, cascade("B"), NOW).headline.split("\n")[2]
+            for prev in ("A", "C", "N")}
+    assert "lost their push" in said["A"]
+    assert "stopped fighting it" in said["C"]
+    assert "picked a direction again" in said["N"]
+    assert "turned against the daily uptrend" in ma.cascade_event("live", "Live Recon", "B", cascade("C"), NOW).headline
+    flat = ma.cascade_event("live", "Live Recon", "B", cascade("N", "neutral"), NOW).headline
+    assert "No bigger trend" in flat and "not breakouts" in flat
 
 
 def test_a_control_shift_is_urgent():
@@ -67,15 +94,20 @@ def test_the_same_change_on_a_new_candle_is_a_new_alert_but_not_on_the_same_one(
 def test_a_trap_declared_today_is_announced_and_an_old_one_is_not():
     events = ma.trap_events([trap(1), trap(2, declared=NOW - 2 * 86_400_000)], NOW)
     assert [e.dedup_key for e in events] == ["trap:1:declared"]
-    assert events[0].urgent and "TRAP declared: 4h bull trap at $80,000 (intraday desk)" in events[0].headline
-    assert "Plays out at $78,000; invalid past $81,000." in events[0].headline
+    assert events[0].urgent
+    assert events[0].headline.split("\n") == ["TRAP · Intraday (4h)",
+                                              "The pop above $80,000 should fail and drop.",
+                                              "Target $78,000 · Wrong if price goes past $81,000."]
 
 
 def test_a_settled_trap_is_announced_with_its_outcome():
     e = ma.trap_events([trap(3, declared=NOW - 3 * 86_400_000, status="invalidated", resolved=NOW - H,
                              side="BEAR_TRAP")], NOW)
     assert [x.dedup_key for x in e] == ["trap:3:invalidated"]
-    assert "TRAP invalidated: the break was real: 4h bear trap" in e[0].headline
+    assert e[0].headline == ("TRAP failed · Intraday (4h)\nThe dip below $80,000 was a real move, not a trap: "
+                             "price went past $81,000 (now $78,000).")
+    worked = ma.trap_events([trap(4, declared=NOW - 3 * 86_400_000, status="played_out", resolved=NOW - H)], NOW)
+    assert worked[0].headline == "TRAP worked · Intraday (4h)\nThe pop above $80,000 failed as called: price reached $78,000."
 
 
 # ---------- the ledger ----------
@@ -121,8 +153,9 @@ def test_alerts_reach_discord_with_urgent_ones_marked():
     calm = ma.cascade_event("live", "Live Recon", "A", cascade("B"), NOW)
     delivered, problems = d.send([shift, calm])
     assert len(delivered) == 2 and not problems
-    lines = sent[0]["content"].split("\n")
-    assert lines[0].startswith("[!] Weekly: cascade B") and lines[1].startswith("Live Recon: cascade A")
+    blocks = sent[0]["content"].split("\n\n")
+    assert len(blocks) == 2, "a blank line between alerts, so two three-line alerts do not run together"
+    assert blocks[0].startswith(URGENT_MARK + "Weekly (1d)") and blocks[1].startswith("Live Recon (1h)")
 
 
 def test_a_refused_send_is_not_marked_delivered():

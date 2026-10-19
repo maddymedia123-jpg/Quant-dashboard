@@ -199,8 +199,9 @@ def test_an_urgent_event_is_marked_in_the_message():
                        lambda r: (seen.update(body=r.content.decode()), httpx.Response(204))[1])))
     d.send([Event("target", "k1", "TP1 reached"), Event("stop", "k2", "the stop was reached")])
     lines = seen["body"]
-    assert "[!] the stop was reached" in lines
-    assert "[!] TP1 reached" not in lines, "only the urgent ones are marked"
+    from core.alerts import URGENT_MARK
+    assert URGENT_MARK + "the stop was reached" in lines
+    assert URGENT_MARK + "TP1 reached" not in lines, "only the urgent ones are marked"
 
 
 def test_one_channel_failing_does_not_lose_an_event_the_other_took():

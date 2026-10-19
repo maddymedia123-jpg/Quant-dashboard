@@ -93,6 +93,9 @@ class Channel:
     reason: str = ""
 
 
+URGENT_MARK = "\U0001F6A8 "   # the siren emoji: a stop, a TRAP call or a control shift
+
+
 class Dispatcher:
     """Sends events to whichever channels are configured. Unconfigured ones are named, not hidden."""
 
@@ -148,7 +151,8 @@ class Dispatcher:
         as notified and the rest are tried again next pass."""
         if not events:
             return [], []
-        text = "\n".join(("[!] " if e.urgent else "") + e.headline for e in events)
+        # a blank line between events: a market alert is three lines, and run together they read as one
+        text = "\n\n".join((URGENT_MARK if e.urgent else "") + e.headline for e in events)
         delivered, problems = False, []
 
         if self.telegram_token and self.telegram_chat:
