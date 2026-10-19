@@ -174,6 +174,30 @@ class TrackRecord:
     base_up: float | None           # share of all horizons that closed higher, for comparison
 
 
+def to_state(f: Forecast, tr: TrackRecord | None) -> dict:
+    """The forecast as the war-room judges read it: the range and the level odds, which have earned
+    trust, and the lean together with the record that says whether it has."""
+    if not f.available:
+        return {"available": False, "note": f.reason}
+    r = lambda v: None if v is None else round(float(v), 2)  # noqa: E731
+    out = {
+        "available": True, "method": "median of 4,000 simulated paths: volatility of the last 50 candles, Hurst "
+                                     "momentum drift, dealer gamma scaling the range on 1h/4h",
+        "candle_minutes": f.bar_ms // 60_000, "candles_ahead": len(f.steps),
+        "price": r(f.price), "path_end_median": r(f.end_median), "range_68": [r(f.end_low), r(f.end_high)],
+        "p_close_higher": round(f.p_up, 3),
+        "level_touch_odds": [{"level": lv.label, "price": r(lv.price), "side": lv.side,
+                              "p_trades_there": round(lv.p_touch, 3)} for lv in f.levels],
+        "hurst": None if f.hurst is None else round(f.hurst, 3), "gamma_regime": f.gamma_regime,
+    }
+    if tr is not None and tr.origins:
+        out["track_record"] = {"candles_replayed": tr.origins, "range_68_held": r(tr.band_hit),
+                               "lean_right": r(tr.direction_hit), "price_rose_anyway": r(tr.base_up),
+                               "note": "if lean_right is not above price_rose_anyway, the lean has no edge: "
+                                       "trust the range and the level odds, not the lean"}
+    return out
+
+
 def track_record(closes, horizon: int, origins: int = 300) -> TrackRecord:
     """Replay the model (volatility and Hurst drift; no gamma, which has no history) at each of the last
     `origins` closes that have a full horizon after them, and score it against what happened."""

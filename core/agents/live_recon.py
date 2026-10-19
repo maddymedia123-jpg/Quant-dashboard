@@ -168,6 +168,16 @@ def build_state(m, analyses: dict, now_ms: int | None = None, profile: ReconProf
         bias_tf, anchor_tf, engine_tfs = profile.cascade
         state["cascade"] = classify(m.spot.frames, bias_tf, anchor_tf, engine_tfs).to_state()
     state["horizon"] = profile.horizon
+    # the desk's forecast pane, as the screen shows it: the range, the level odds and the record behind them
+    desk = analyses.get(profile.category)
+    if desk is not None:
+        try:
+            from core.indicators.forecast import desk_forecast, to_state as forecast_state
+            f, tr = desk_forecast(desk, m.options.gamma if m.options.available else None,
+                                  m.spot.frames.get(desk.chart_tf))
+            state["forecast"] = forecast_state(f, tr)
+        except Exception as e:  # noqa: BLE001 - the forecast must not take the war room down
+            state["forecast"] = {"available": False, "note": f"{type(e).__name__}: {e}"}
 
     state["derivatives"], derivs_missing = derivatives_payload(m)
     state["derivatives"]["unavailable"] = derivs_missing

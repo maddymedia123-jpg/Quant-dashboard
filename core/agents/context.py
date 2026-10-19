@@ -102,8 +102,51 @@ def macro_read(m: MarketSnapshot, now_ms: int | None = None) -> dict:
     if m.predictions.available:
         out["fed_and_macro_odds"] = [{"question": x["question"], "probability": round(x["probability"], 3),
                                       "band": x["band"]} for x in m.predictions.tradeable("MACRO")[:8]]
+    out["rates_and_dollar"] = _rates(m)
+    out["gold"] = _gold(m)
     out["method"] = ("prints: BTC 1h moves against its own hourly volatility; narratives: headline attention by "
-                     "topic (feed reaches back ~1.5 days); odds: Polymarket via VoxOdds, clean and watch bands only")
+                     "topic (feed reaches back ~1.5 days); odds: Polymarket via VoxOdds, clean and watch bands only; "
+                     "rates: US 2y and 10y yields and the broad dollar index with their one-week change")
+    return out
+
+
+def _rates(m: MarketSnapshot) -> dict:
+    """The US 2y and 10y and the dollar, as the US macro card shows them: value, one-week change, date,
+    and whether the series is stale - so a judge never reads last month's yield as today's."""
+    mac = getattr(m, "macro", None)
+    if mac is None or not mac.available:
+        return {"available": False, "note": getattr(mac, "error", None) or "macro feed down"}
+    out: dict[str, Any] = {"available": True, "source": mac.source}
+    for sid, s in mac.series.items():
+        if not s.get("available"):
+            out[sid] = {"available": False, "note": s.get("note")}
+            continue
+        out[sid] = {"label": s.get("label"), "value": s.get("value"), "unit": s.get("unit"),
+                    "change_1w": s.get("change"), "age_days": s.get("age_days"), "stale": s.get("stale")}
+    if mac.spread_2s10s is not None:
+        out["spread_2s10s_pct"] = round(mac.spread_2s10s, 3)
+    return out
+
+
+def _gold(m: MarketSnapshot) -> dict:
+    g = getattr(m, "metals", None)
+    if g is None or not g.available or not g.xau_usd:
+        return {"available": False, "note": getattr(g, "error", None) or "gold feed down"}
+    return {"available": True, "xau_usd": round(g.xau_usd, 2), "stale": bool(g.is_stale), "source": g.source}
+
+
+def _cot(m: MarketSnapshot) -> dict:
+    """CME Bitcoin futures positioning, weekly (Tuesday positions, Friday release), in contracts."""
+    c = getattr(m, "cot", None)
+    if c is None or not c.available:
+        return {"available": False, "note": getattr(c, "error", None) or "COT feed down"}
+    keys = ("market", "age_days", "stale", "contract_btc", "open_interest", "open_interest_change", "spec_long",
+            "spec_short", "spec_net", "spec_net_change", "spec_net_pct_oi", "commercial_net", "small_trader_net",
+            "cot_index", "weeks_in_index")
+    out = {"available": True, **{k: getattr(c, k, None) for k in keys}}
+    out["reading"] = ("cot_index is where the large speculators' net sits in its own 52-week range: 80+ crowded "
+                      "long, 20 or below crowded short. Weekly data: context for the weekly and monthly desks, "
+                      "not intraday timing.")
     return out
 
 
@@ -199,6 +242,11 @@ def derivatives_payload(m: MarketSnapshot) -> tuple[dict, list[str]]:
         data["exchange_flows"] = flows
     else:
         unavailable.append("exchange_flows")
+    cot = _cot(m)
+    if cot.get("available"):
+        data["cot"] = cot
+    else:
+        unavailable.append("cot")
     if "futures" in data:
         for rate in ("funding_rate", "funding_7d_mean", "predicted_funding_rate"):
             value = getattr(m.futures, rate, None)
