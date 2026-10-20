@@ -63,7 +63,8 @@ def direction_call(df: pd.DataFrame, stack: EmaStack, rsi_series: pd.Series, lev
     vol_ref = float(df["volume"].tail(20).mean()) or 1.0
     cvd_vote = _clamp(slope / (vol_ref * 2.0))
     if abs(cvd_vote) >= 0.3:
-        drivers.append(f"CVD {'rising' if cvd_vote > 0 else 'falling'} over last 5 bars")
+        # an estimate from where candles closed in their range, not taker flow - so it is not called CVD
+        drivers.append(f"candle closes show {'buying' if cvd_vote > 0 else 'selling'} pressure over last 5 bars")
 
     sr_vote = 0.0
     near_sup = [l for l in levels if l.kind == "support" and l.touches >= 2 and 0 <= price - l.price <= 0.5 * atr_v]

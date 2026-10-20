@@ -22,6 +22,10 @@ def _round(v: Any, nd: int = 4) -> Any:
     if isinstance(v, float):
         if math.isnan(v) or math.isinf(v):
             return None
+        # a small number keeps its significant figures: four decimal places turned a funding rate of
+        # 3.5e-05 into 0.0, and the specialists then reported "neutral funding (0.0%)"
+        if v != 0 and abs(v) < 1:
+            return float(f"{v:.{nd}g}")
         return round(v, nd)
     if isinstance(v, dict):
         return {k: _round(x, nd) for k, x in v.items()}
@@ -46,7 +50,31 @@ def _fib_brief(a: CategoryAnalysis) -> dict | None:
             "upcoming": [{"zone": f"F{z.k}", "time": iso(z.timestamp_ms), "bars_away": z.bars_from_now} for z in f.upcoming]}
 
 
-def category_brief(a: CategoryAnalysis) -> dict:
+CVD_BARS = 5
+
+
+def cvd_brief(a: CategoryAnalysis, m: MarketSnapshot | None = None) -> dict:
+    """The last five bars of cumulative volume delta on the desk's chart timeframe.
+
+    Real taker flow when the feed has it: market buys minus market sells on the Gate.io BTC perpetual, in
+    BTC - the same contract the candles come from. Only without it does this fall back to an estimate
+    from where each candle closed in its range, and the method says which one it is. The agents used to
+    get the estimate under the name "CVD" and read it as spot CVD, while the real flow said the opposite."""
+    flow = getattr(m, "taker_flow", None) if m is not None else None
+    frame = flow.frames.get(a.chart_tf) if flow is not None and getattr(flow, "available", False) else None
+    if frame is not None and len(frame) >= CVD_BARS:
+        tail = frame.tail(CVD_BARS)
+        buy, sell = float(tail["buy"].sum()), float(tail["sell"].sum())
+        return {"delta_btc": round(buy - sell, 2), "taker_buy_btc": round(buy, 2), "taker_sell_btc": round(sell, 2),
+                "bars": CVD_BARS, "timeframe": a.chart_tf,
+                "method": "real taker flow: market buys minus market sells, Gate.io BTC_USDT perpetual "
+                          "(the newest bar is still forming)"}
+    return {"estimate": round(cvd_slope(a.chart_df, CVD_BARS), 2), "bars": CVD_BARS, "timeframe": a.chart_tf,
+            "method": "ESTIMATE from where each candle closed in its range - no taker data for this "
+                      "timeframe; not real CVD"}
+
+
+def category_brief(a: CategoryAnalysis, m: MarketSnapshot | None = None) -> dict:
     rsi_last = float(a.rsi.dropna().iloc[-1]) if a.rsi.notna().any() else None
     return _round({
         "chart_tf": a.chart_tf, "context_tf": a.context_tf, "price": a.price,
@@ -68,7 +96,7 @@ def category_brief(a: CategoryAnalysis) -> dict:
                       "breakout": p.breakout, "target": p.target, "invalidation": p.invalidation,
                       "apex_bars": p.apex_bars, "note": p.note} for p in a.patterns],
         "squeeze": {"score": a.squeeze.score, "direction": a.squeeze.direction, "drivers": a.squeeze.drivers},
-        "cvd_slope_5bars": cvd_slope(a.chart_df),
+        "cvd_5bars": cvd_brief(a, m),
         "price_change_24h_pct": a.price_change_24h_pct,
     })
 
@@ -155,7 +183,7 @@ def common_payload(m: MarketSnapshot, analyses: dict[str, CategoryAnalysis]) -> 
     return {
         "asset": "BTC perpetual (BTC_USDT)" if "perp" in (m.spot.symbol or "") else "BTC/USD spot",
         "spot": _round({"price": m.spot.last, "source": m.spot.source, "price_change_24h_pct": live.price_change_24h_pct if live else None}),
-        "categories": {k: category_brief(a) for k, a in analyses.items()},
+        "categories": {k: category_brief(a, m) for k, a in analyses.items()},
         "macro_calendar": _calendar_events(m),
         "macro_read": macro_read(m),
         "generated_at_utc": m.generated_at.strftime("%Y-%m-%d %H:%M UTC"),
@@ -193,7 +221,7 @@ def domain_payload(domain: str, m: MarketSnapshot, analyses: dict[str, CategoryA
             data["taker_buy_sell_ratio"] = _round(m.futures.taker_buy_sell_ratio)
         else:
             unavailable.append("futures")
-        data["flow_by_category"] = {k: {"cvd_slope_5bars": category_brief(a)["cvd_slope_5bars"], "direction": a.direction.direction,
+        data["flow_by_category"] = {k: {"cvd_5bars": cvd_brief(a, m), "direction": a.direction.direction,
                                         "drivers": a.direction.drivers} for k, a in analyses.items()}
     elif domain == "sentiment":
         take("futures", drop=("oi_history", "open_interest", "open_interest_usd", "oi_change_24h_pct", "mark_price"))

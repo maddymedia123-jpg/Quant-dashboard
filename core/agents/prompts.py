@@ -51,10 +51,10 @@ _DOMAINS = {
         "output": "Liquidity & Heatmap Intelligence Brief",
     },
     "flow": {
-        "title": "SPOT vs FUTURES CVD DIVERGENCE SPECIALIST",
-        "data_sources": "Whale trade tape (BTC buy vs sell notional, largest prints), taker buy/sell ratio, spot CVD slope per timeframe, per-timeframe direction drivers.",
-        "bullish": "Argue that negative spot CVD is TEMPORARY distribution or exchange-internal transfer noise, not genuine selling. Identify CVD inflection points, whale accumulation on dips, and outflows to cold storage as bullish.",
-        "bearish": "Argue that negative spot CVD is GENUINE institutional distribution. Futures-driven rallies without spot confirmation are BULL TRAPS that resolve with sharp mean reversion. Identify declining spot volume on rallies, exchange inflows, and whale dumping patterns.",
+        "title": "TAKER FLOW & CVD SPECIALIST",
+        "data_sources": "Whale trade tape (BTC buy vs sell notional, largest prints), taker buy/sell ratio, and per timeframe the last five bars of real CVD (cvd_5bars: market buys minus market sells in BTC on the Gate.io BTC perpetual - perp flow, not spot; when it says ESTIMATE it is a candle-shape estimate, not CVD), per-timeframe direction drivers.",
+        "bullish": "Argue that negative CVD is TEMPORARY selling being absorbed, not genuine distribution. Identify CVD inflection points, whale accumulation on dips, and selling that fails to move price as bullish.",
+        "bearish": "Argue that negative CVD is GENUINE distribution. Rallies on falling CVD (price up while market sellers dominate) are BULL TRAPS that resolve with sharp mean reversion. Identify fading taker buying on rallies and whale dumping patterns.",
         "output": "Volume & Flow Intelligence Brief",
     },
     "sentiment": {

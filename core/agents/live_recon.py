@@ -132,7 +132,7 @@ def timeframe_brief(m, tf: str, context_tf: str) -> dict | None:
 
     a = analyze_category(Category(tf, f"{tf} read", tf, context_tf, 4, f"next 4 x {tf}"),
                          m.spot.frames, m.futures)
-    return category_brief(a) if a is not None else None
+    return category_brief(a, m) if a is not None else None
 
 
 def build_state(m, analyses: dict, now_ms: int | None = None, profile: ReconProfile | None = None) -> dict:
