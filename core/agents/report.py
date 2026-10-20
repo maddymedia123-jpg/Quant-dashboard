@@ -97,15 +97,23 @@ def to_markdown(r: TrapReport) -> str:
                       f"- **Valid for:** {pl.expires_hours:.0f}h"]
 
     parts += ["", "---", "", "## APPENDIX"]
+    one = r.mode == "1-agent"
+    # the 1-agent report has no separate volatility or accuracy agent: "not produced this run" read as a
+    # failure when nothing failed
     parts.append("### Volatility Agent")
-    if r.volatility:
+    if one:
+        parts.append("_Not part of the 1-agent report: the single model reads the volatility data directly._")
+    elif r.volatility:
         parts += [r.volatility.regime_summary, ""]
         parts += [f"- **{k}**: {v}" for k, v in r.volatility.per_category.items()]
         parts += ["", _ul(r.volatility.range_expectations)]
     else:
         parts.append(MISSING)
     parts.append("\n### Accuracy & Correlation Agent")
-    if r.accuracy:
+    if one:
+        parts.append("_Not part of the 1-agent report: its contradictions section does this job, and the "
+                     "scorecard checks the calls against price._")
+    elif r.accuracy:
         a = r.accuracy
         parts += [f"Consistency score: **{a.consistency_score:.0f}/100**", a.cross_timeframe_alignment, "",
                   "Contradictions found:", _ul(a.contradictions_found), "", a.correlation_notes, "", "Data quality flags:", _ul(a.data_quality_flags)]

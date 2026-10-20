@@ -231,3 +231,10 @@ def test_the_one_call_waits_longer_than_the_specialists():
     s = LLMSettings(provider="gemini", api_key="k", specialist_model="a", director_model="b")
     c = one_agent.client_for(s)
     assert c.s.timeout_s == one_agent.TIMEOUT_S and s.timeout_s == 90.0, "the shared settings are not changed"
+
+
+def test_the_1_agent_appendix_does_not_read_as_a_failure(ctx):
+    m, an = ctx
+    md = to_markdown(one_agent.run_one_agent_sync(Fake([OUT]), m, an, "x"))
+    appendix = md.split("## APPENDIX")[1]
+    assert "not produced this run" not in appendix and appendix.count("Not part of the 1-agent report") == 2
