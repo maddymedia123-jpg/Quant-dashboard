@@ -188,9 +188,12 @@ def test_the_page_logs_alerts_but_never_sends_from_fixtures(monkeypatch, tmp_pat
     import streamlit as st
     st.cache_resource.clear()                                  # the app caches its Store across runs
     st.cache_data.clear()
+    import time as _t
     seed = Store()
     for desk in ("live", "intraday", "weekly", "monthly"):
         seed.swap_cascade_state(desk, "Z", NOW)               # a stale state, so this load is a change
+    seed.put_trap("live", "BEAR_TRAP", "1h", 80_000.0, 79_500.0, 81_000.0, int(_t.time() * 1000) - H, 70.0,
+                  "BEAR_TRAP", ["test"])
     seed.close()
     from streamlit.testing.v1 import AppTest
     at = AppTest.from_file(str(__import__("pathlib").Path(__file__).resolve().parent.parent / "app.py"),
@@ -200,6 +203,9 @@ def test_the_page_logs_alerts_but_never_sends_from_fixtures(monkeypatch, tmp_pat
     assert not at.exception
     s = Store()
     logged = s.market_alerts()
+    states = [s.swap_cascade_state(d, "Z", NOW) for d in ("live", "intraday", "weekly", "monthly")]
     s.close()
-    assert len(logged) == 4 and all(r["kind"] in ("cascade", "shift") for r in logged), logged
+    assert "trap:1:declared" in {r["dedup_key"] for r in logged}, logged
+    assert not any(r["kind"] in ("cascade", "shift") for r in logged), "cascade changes are context, not alerts"
+    assert all(st_ != "Z" for st_ in states), "the cascade states are still recorded"
     assert all(r["notified"] == 0 for r in logged) and _no_real_alerts == [], "logged, never sent"

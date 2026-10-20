@@ -884,31 +884,38 @@ def _alerts_may_send() -> bool:
 
 
 def market_alert_pass() -> None:
-    """Cascade state changes on every desk and TRAP calls: detect, log once, push what a channel accepts.
+    """The latest 1-agent plan, watched against candles, and TRAP calls: detect, log once, push.
 
-    Runs on every page load whatever screen is open, because a change on the Monthly desk matters while
-    the trader is looking at Live Recon. Nothing is sent while no page is open."""
+    Alerts tell a trader what to do and when (WATCH / CONFIRMED / NO SETUP / TARGET / STOPPED / EXPIRED,
+    from core.plan_alerts). The desks' cascade states are no longer messages of their own - "Strong setup
+    down -> Pause in a downtrend" told nobody what to do - they ride along as the Context line of a WATCH.
+    Runs on every page load whatever screen is open. Nothing is sent while no page is open."""
     from core import market_alerts as ma
-    events = []
+    from core import plan_alerts as pa
+    context = []
     for key in CATEGORIES:
-        prof = PROFILES[key]
         c = _desk_cascade(key, _data_stamp())
-        engine_df = m.spot.frames.get(prof.cascade[2][-1])
-        candle_ms = int(engine_df["timestamp"].iloc[-1]) if engine_df is not None and len(engine_df) else now_ms
-        previous = store.swap_cascade_state(key, c.state, now_ms)
-        e = ma.cascade_event(key, prof.label, previous, c, candle_ms, m.spot.last)
-        if e is not None:
-            events.append(e)
+        store.swap_cascade_state(key, c.state, now_ms)          # still recorded, for the record
+        if key in ("live", "intraday") and c.state not in ma.SILENT_STATES:
+            trend = c.bias.direction if c.bias is not None else None
+            context.append(f"{PROFILES[key].label} {ma.state_name(c.state, trend).lower()}")
+    events = pa.events(pa.latest_plan_report(store), m.spot.frames,
+                       m.taker_flow.frames if m.taker_flow.available else None, now_ms, m.spot.last,
+                       context="; ".join(context))
     events += ma.trap_events(store.traps(limit=200), now_ms)
     for e in events:
         store.add_market_alert(now_ms, e.kind, e.dedup_key, e.headline, e.price)
-    pending = store.market_alerts(unnotified_only=True, limit=MAX_PER_PASS)
-    if not pending or not _alerts_may_send():
+    if not _alerts_may_send():
+        return
+    # claimed under the store's lock: a second open page finds these taken and sends nothing
+    pending = store.claim_market_alerts(now_ms, limit=MAX_PER_PASS)
+    if not pending:
         return
     delivered, problems = Dispatcher(_secrets()).send(
         [Event(p["kind"], p["dedup_key"], p["headline"], p.get("price")) for p in pending])
     keys = {e.dedup_key for e in delivered}
     store.mark_market_notified([p["id"] for p in pending if p["dedup_key"] in keys])
+    store.release_market_alerts([p["id"] for p in pending if p["dedup_key"] not in keys])
     if problems:
         st.session_state["market_alert_problem"] = problems[0]
 

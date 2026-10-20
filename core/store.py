@@ -90,7 +90,8 @@ CREATE TABLE IF NOT EXISTS futures_samples (
 CREATE INDEX IF NOT EXISTS idx_futures_samples_ts ON futures_samples (ts_ms);
 CREATE TABLE IF NOT EXISTS market_alerts (
     id INTEGER PRIMARY KEY AUTOINCREMENT, ts_ms INTEGER NOT NULL, kind TEXT NOT NULL,
-    dedup_key TEXT NOT NULL UNIQUE, headline TEXT NOT NULL, price REAL, notified INTEGER NOT NULL DEFAULT 0);
+    dedup_key TEXT NOT NULL UNIQUE, headline TEXT NOT NULL, price REAL, notified INTEGER NOT NULL DEFAULT 0,
+    claimed_ms INTEGER);
 CREATE TABLE IF NOT EXISTS cascade_states (
     category TEXT PRIMARY KEY, state TEXT NOT NULL, ts_ms INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_calls_open ON calls (scored_ms, ts_ms);
@@ -138,6 +139,7 @@ class Store:
         "traps": {"resolved_ms": "INTEGER", "resolved_price": "REAL", "notes": "TEXT", "score": "REAL",
                   "head_call": "TEXT", "detail": "TEXT"},
         # which pipeline wrote a report, the snapshot it read, and its plan as numbers with how it ended
+        "market_alerts": {"claimed_ms": "INTEGER"},
         "reports": {"mode": "TEXT NOT NULL DEFAULT '15-agent'", "snapshot_id": "TEXT", "plan": "TEXT",
                     "plan_outcome": "TEXT", "plan_scored_ms": "INTEGER"},
     }
@@ -604,11 +606,41 @@ class Store:
         with self._lock:
             return _rows(self._conn.execute(sql, (limit,)))
 
+    # notified: 0 waiting, 2 claimed by a page that is sending it now, 1 delivered.
+    CLAIM_TIMEOUT_MS = 10 * 60_000
+
+    def claim_market_alerts(self, now_ms: int, limit: int = 100) -> list[dict]:
+        """Take the waiting alerts for this page to send, oldest first, in one locked step.
+
+        Two pages open at once used to read the same waiting alerts before either marked them sent, so
+        both posted them - the doubled Discord messages of 20 Oct. A claim is taken under the lock, so the
+        second page finds nothing to send. A claim older than CLAIM_TIMEOUT_MS (the page died mid-send) is
+        released for the next pass."""
+        with self._lock:
+            self._conn.execute("UPDATE market_alerts SET notified=0 WHERE notified=2 AND claimed_ms < ?",
+                               (int(now_ms) - self.CLAIM_TIMEOUT_MS,))
+            rows = _rows(self._conn.execute(
+                "SELECT * FROM market_alerts WHERE notified=0 ORDER BY ts_ms, id LIMIT ?", (int(limit),)))
+            if rows:
+                self._conn.execute("UPDATE market_alerts SET notified=2, claimed_ms=? WHERE notified=0 AND id IN (%s)"
+                                   % ",".join("?" * len(rows)), (int(now_ms), *[r["id"] for r in rows]))
+            self._conn.commit()
+        return rows
+
+    def release_market_alerts(self, ids: list[int]) -> None:
+        """Hand back what a channel refused, so the next pass tries it again."""
+        if not ids:
+            return
+        with self._lock:
+            self._conn.execute("UPDATE market_alerts SET notified=0 WHERE notified=2 AND id IN (%s)"
+                               % ",".join("?" * len(ids)), tuple(ids))
+            self._conn.commit()
+
     def mark_market_notified(self, ids: list[int]) -> int:
         if not ids:
             return 0
         with self._lock:
-            cur = self._conn.execute("UPDATE market_alerts SET notified=1 WHERE notified=0 AND id IN (%s)"
+            cur = self._conn.execute("UPDATE market_alerts SET notified=1 WHERE notified IN (0, 2) AND id IN (%s)"
                                      % ",".join("?" * len(ids)), tuple(ids))
             self._conn.commit()
         return cur.rowcount
