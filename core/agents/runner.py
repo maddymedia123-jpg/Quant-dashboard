@@ -20,8 +20,9 @@ from core.indicators.category import CategoryAnalysis
 
 ProgressFn = Callable[[str, str], None]
 SPECIALIST_IDS = tuple(SPECIALISTS.keys())
-WINDOW = "Live 15m · Intraday 1h · Weekly 4h · Monthly 1d"
-MAX_TOKENS = {"specialist": 1500, "desk": 2000, "aux": 1500, "director": 4000}
+WINDOW = "Live Recon 1h · Intraday 4h · Weekly 1D · Monthly 1W"
+# the Director model thinks before it answers, and thinking counts against this cap
+MAX_TOKENS = {"specialist": 1500, "desk": 2000, "aux": 1500, "director": 8000}
 
 
 def _noop(_agent_id: str, _status: str) -> None:

@@ -9,8 +9,8 @@ Streamlit dashboard with TradingView-style charts. Three layers:
    liquidity protocols (below) and an active-trade stress-test.
 2. **A war room per category** — eleven agents scoring a 100-point checklist, a trap audit, and a
    summary pinned to that category's candle.
-3. **The 13-agent Director report** (`Run Analysis`) — ten specialists, two desks, an accuracy agent
-   and the Director.
+3. **The 15-agent Director report** (`Run Analysis`) — ten specialists, a volatility agent, two desks,
+   an accuracy agent and the Director.
 
 Nothing on the page is invented. Every feed carries an availability flag, missing values render as `—`,
 and every score can be recomputed from the probabilities and the weights in the code.
@@ -442,7 +442,7 @@ tab shows hit rates with sample sizes; under 10 samples is labelled indicative.
     # optional overrides
     LLM_PROVIDER = "gemini"         # or "openrouter"
     SPECIALIST_MODEL = "gemini-3.5-flash-lite"
-    DIRECTOR_MODEL = "gemini-3.7-flash"
+    DIRECTOR_MODEL = "gemini-3.8-flash"
     LLM_MAX_CONCURRENCY = "4"
 
 ## Storage

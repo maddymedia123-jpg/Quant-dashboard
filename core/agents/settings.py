@@ -5,7 +5,8 @@ import os
 from dataclasses import dataclass
 
 DEFAULTS = {
-    "gemini": {"specialist": "gemini-3.5-flash-lite", "director": "gemini-3.7-flash"},
+    # 3.7 Flash dropped off Google's model list (Oct 2026); 3.8 Flash is the current best Flash, with a free tier
+    "gemini": {"specialist": "gemini-3.5-flash-lite", "director": "gemini-3.8-flash"},
     "openrouter": {"specialist": "nvidia/nemotron-3.5-lightning:free", "director": "nvidia/nemotron-3.5-lightning:free"},
 }
 

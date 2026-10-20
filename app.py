@@ -167,7 +167,7 @@ settings = load_settings()
 st.session_state.setdefault("trap_report", None)
 run_clicked = _run_col.button(
     "Run Analysis", type="primary", width="stretch", disabled=settings is None,
-    help=(f"13-agent Trap Intelligence report via {settings.provider}: specialists on {settings.specialist_model}, Director on {settings.director_model}."
+    help=(f"15-agent Trap Intelligence report via {settings.provider}: specialists on {settings.specialist_model}, Director on {settings.director_model}."
           if settings else "Add GEMINI_API_KEY or OPENROUTER_API_KEY to .streamlit/secrets.toml (or Streamlit Cloud Secrets) to enable."),
 )
 
