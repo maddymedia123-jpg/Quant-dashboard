@@ -37,7 +37,10 @@ def _drop_stale_modules() -> None:
 
 _drop_stale_modules()
 
-from core.accuracy import majority_direction, record_report, score_due_calls, score_reports, summary  # noqa: E402
+from core.accuracy import (  # noqa: E402
+    majority_direction, mode_scorecard, record_report, score_due_calls, score_plans, score_reports, summary,
+)
+from core.agents.one_agent import client_for as one_agent_client, run_one_agent_sync  # noqa: E402
 from core.agents.llm import LLMClient
 from core.agents.report import to_markdown
 from core.agents.runner import run_pipeline_sync
@@ -167,7 +170,8 @@ settings = load_settings()
 st.session_state.setdefault("trap_report", None)
 run_clicked = _run_col.button(
     "Run Analysis", type="primary", width="stretch", disabled=settings is None,
-    help=(f"15-agent Trap Intelligence report via {settings.provider}: specialists on {settings.specialist_model}, Director on {settings.director_model}."
+    help=(f"1-agent Director report: one call on {settings.director_model} reading the whole state. The "
+          "Director report screen can also run the 15-agent pipeline, or both on the same snapshot."
           if settings else "Add GEMINI_API_KEY or OPENROUTER_API_KEY to .streamlit/secrets.toml (or Streamlit Cloud Secrets) to enable."),
 )
 
@@ -307,30 +311,62 @@ def run_war_room(profile) -> None:
 
 
 # ---------- run analysis ----------
-if run_clicked and settings is not None and analyses:
-    with st.status("Running Trap Intelligence pipeline...", expanded=True) as status:
-        lines = st.empty()
-        seen: dict[str, str] = {}
+# Two pipelines write the same report: the 1-agent Director (one call, plan as numbers) and the classic
+# 15-agent chain. "both" runs them on this one snapshot, so the compare view sets like against like.
+if not isinstance(st.session_state.get("director_reports"), dict):
+    st.session_state["director_reports"] = {}
+_director_mode = "1-agent" if run_clicked else st.session_state.pop("director_pending", None)
 
-        def _progress(agent_id: str, state: str) -> None:
-            seen[agent_id] = state
-            done = sum(1 for v in seen.values() if v in ("ok", "done", "failed", "error"))
-            lines.markdown(f"<p>{done} of {len(seen)} agents answered. Specialists run in parallel; the desks, "
-                           "the accuracy agent and the Director follow.</p><div class='ti-agents'>"
-                           + "".join(f"<div><strong>{html.escape(k)}</strong><span class='muted'>"
-                                     f"{html.escape(str(v))}</span></div>" for k, v in seen.items())
-                           + "</div>", unsafe_allow_html=True)
 
-        try:
-            report = run_pipeline_sync(LLMClient(settings), m, analyses, settings,
-                                       raw_metrics=panels.raw_metrics_rows(m), progress=_progress)
-            st.session_state["trap_report"] = report
-            intraday_a = analyses.get("intraday")
-            record_report(store, report, m.spot.last or next(iter(analyses.values())).price,
-                          intraday_a.vol.sigma_pct if intraday_a else None, majority_direction(analyses), now_ms)
-            status.update(label=f"Report {report.report_id} ready in {report.wall_time_s:.0f}s", state="complete", expanded=False)
-        except Exception as e:  # noqa: BLE001 - never crash the page on an LLM failure
-            status.update(label=f"Pipeline failed: {e}", state="error")
+def _keep_report(rep) -> None:
+    st.session_state["director_reports"][rep.mode] = rep
+    st.session_state["trap_report"] = rep
+    intraday_a = analyses.get("intraday")
+    record_report(store, rep, m.spot.last or next(iter(analyses.values())).price,
+                  intraday_a.vol.sigma_pct if intraday_a else None, majority_direction(analyses), now_ms)
+
+
+if _director_mode and settings is not None and analyses:
+    snapshot_id = f"S-{m.generated_at:%Y%m%d-%H%M%S}"
+    modes = ("1-agent", "15-agent") if _director_mode == "both" else (_director_mode,)
+    for mode in modes:
+        if mode == "1-agent":
+            with st.status(f"1-agent Director on {settings.director_model}: one call reading the whole state...",
+                           expanded=False) as status:
+                try:
+                    rep = run_one_agent_sync(one_agent_client(settings), m, analyses, settings.director_model,
+                                             panels.raw_metrics_rows(m), snapshot_id)
+                    if rep.director is None:
+                        status.update(label=f"1-agent Director failed: {rep.runs[0].error}", state="error")
+                    else:
+                        _keep_report(rep)
+                        status.update(label=f"1-agent report {rep.report_id} ready in {rep.wall_time_s:.0f}s "
+                                            f"on {rep.runs[0].model}", state="complete")
+                except Exception as e:  # noqa: BLE001 - never crash the page on an LLM failure
+                    status.update(label=f"1-agent Director failed: {e}", state="error")
+            continue
+        with st.status("Running the 15-agent pipeline...", expanded=True) as status:
+            lines = st.empty()
+            seen: dict[str, str] = {}
+
+            def _progress(agent_id: str, state: str) -> None:
+                seen[agent_id] = state
+                done = sum(1 for v in seen.values() if v in ("ok", "done", "failed", "error"))
+                lines.markdown(f"<p>{done} of {len(seen)} agents answered. Specialists run in parallel; the desks, "
+                               "the accuracy agent and the Director follow.</p><div class='ti-agents'>"
+                               + "".join(f"<div><strong>{html.escape(k)}</strong><span class='muted'>"
+                                         f"{html.escape(str(v))}</span></div>" for k, v in seen.items())
+                               + "</div>", unsafe_allow_html=True)
+
+            try:
+                rep = run_pipeline_sync(LLMClient(settings), m, analyses, settings,
+                                        raw_metrics=panels.raw_metrics_rows(m), progress=_progress)
+                rep.snapshot_id = snapshot_id
+                _keep_report(rep)
+                status.update(label=f"15-agent report {rep.report_id} ready in {rep.wall_time_s:.0f}s",
+                              state="complete", expanded=False)
+            except Exception as e:  # noqa: BLE001 - never crash the page on an LLM failure
+                status.update(label=f"15-agent pipeline failed: {e}", state="error")
     st.rerun()
 
 # ---------- war rooms ----------
@@ -349,6 +385,7 @@ try:
         _px = m.spot.last or next(iter(analyses.values())).price
         score_due_calls(store, now_ms, _px)
         score_reports(store, now_ms, _px)
+        score_plans(store, m.spot.frames, now_ms)
 except Exception as e:  # noqa: BLE001 - ledger problems must never blank the page
     st.warning(f"Ledger unavailable this refresh: {e}")
 
@@ -1100,37 +1137,62 @@ if screen == "trade":
 if screen == "director":
     labels = {k: c.label for k, c in CATEGORIES.items()}
     tfs = {k: c.chart_tf for k, c in CATEGORIES.items()}
-    hero, act = st.columns([3, 1.2], vertical_alignment="bottom")
-    if report is not None:
-        age = panels._trap_age(int(report.generated_at.timestamp() * 1000), now_ms)
-        with hero:
-            panels.render(
-                f"<div class='ti-hero'><div class='ti-hero-main'><span class='ti-kicker'>07 · Report "
-                f"{html.escape(report.report_id)}</span><h1>Director report</h1><div class='ti-hero-meta'><span>"
-                f"Ten specialists, a volatility agent, two desks, an accuracy agent and the Director. Generated "
-                f"{fmt_when(int(report.generated_at.timestamp() * 1000))}, {age} ago.</span></div></div></div>")
-        with act:
-            md = to_markdown(report)
-            st.download_button("Download .md", md, file_name=f"{report.report_id}.md", mime="text/markdown",
-                               width="stretch")
-            st.caption("Run Analysis in the top bar runs it again.")
-        panels.render(panels.report_stats_html(report))
-        panels.render(panels.director_html(report))
-        panels.render(panels.director_lists_html(report))
-        panels.render(panels.section_head_html("Per desk"))
-        panels.render(panels.director_desks_html(report, labels, tfs))
-        with st.expander(f"Specialist briefs ({len(report.briefs)})"):
-            panels.render(panels.briefs_html(report))
+    reports = st.session_state.get("director_reports") or {}
+    if report is not None and report.mode not in reports:
+        reports[report.mode] = report          # a report from before this screen kept both
+    panels.render(panels.engine_hero_html(
+        7, "Director report",
+        "Two ways to write the same report: one model reading the whole state (1-agent), or the classic chain "
+        "of fifteen. Run both on one snapshot to compare them, and the scorecard below keeps the score."))
+    b1, b2, b3 = st.columns(3)
+    _runs = (
+        (b1, "Run 1-agent (fast)", "1-agent", f"One call on {settings.director_model if settings else '-'}, about "
+                                              "a minute. Writes the plan as numbers the alerts watch."),
+        (b2, "Run 15-agent (classic)", "15-agent", "Fifteen calls, about four minutes. The plan is prose only."),
+        (b3, "Run both (compare)", "both", "Both on the same snapshot: sixteen calls, so about one comparison a "
+                                           "day on the free Gemini tier."),
+    )
+    for col, label, mode, tip in _runs:
+        if col.button(label, key=f"director_{mode}", width="stretch", disabled=settings is None or not analyses,
+                      type="primary" if mode == "1-agent" else "secondary", help=tip):
+            st.session_state["director_pending"] = mode
+            st.rerun()
+    if not settings:
+        st.caption("Add GEMINI_API_KEY or OPENROUTER_API_KEY to secrets to enable the reports.")
+
+    r1, r15 = reports.get("1-agent"), reports.get("15-agent")
+    if r1 is not None and r15 is not None:
+        panels.render(panels.compare_html(r1, r15))
+    shown = [r for r in (r1, r15) if r is not None]
+    if shown:
+        tabs = st.tabs([f"{r.mode} · {r.report_id}" for r in shown])
+        for tab, rep in zip(tabs, shown):
+            with tab:
+                age = panels._trap_age(int(rep.generated_at.timestamp() * 1000), now_ms)
+                st.caption(f"{panels.MODE_WORDS[rep.mode]}. Generated "
+                           f"{fmt_when(int(rep.generated_at.timestamp() * 1000))}, {age} ago.")
+                st.download_button("Download .md", to_markdown(rep), file_name=f"{rep.report_id}.md",
+                                   mime="text/markdown", key=f"dl_{rep.report_id}")
+                panels.render(panels.report_stats_html(rep))
+                panels.render(panels.director_html(rep))
+                if rep.plan is not None:
+                    panels.render(panels.plan_html(rep.plan))
+                panels.render(panels.cases_html(rep))
+                panels.render(panels.director_lists_html(rep))
+                panels.render(panels.section_head_html("Per desk"))
+                panels.render(panels.director_desks_html(rep, labels, tfs))
+                if rep.briefs:
+                    with st.expander(f"Specialist briefs ({len(rep.briefs)})"):
+                        panels.render(panels.briefs_html(rep))
     else:
-        with hero:
-            panels.render(panels.engine_hero_html(
-                7, "Director report",
-                "Ten specialists, a volatility agent, two desks, an accuracy agent and the Director."))
-        hint = ("Run Analysis in the top bar generates the Director's report." if settings
-                else "Add GEMINI_API_KEY or OPENROUTER_API_KEY to secrets to enable Run Analysis.")
         panels.render(panels.card_html("Trap Intelligence Report",
-                                       f"<p class='muted'>{hint} Section 1 of that report, the raw metric "
-                                       "snapshot, is live below.</p>"))
+                                       "<p class='muted'>No report yet. Run 1-agent for the fast report, or Run "
+                                       "both to compare the two pipelines. Section 1, the raw metric snapshot, "
+                                       "is live below.</p>"))
+    try:
+        panels.render(panels.scorecard_html(mode_scorecard(store)))
+    except Exception as e:  # noqa: BLE001 - the scorecard must not blank the tab
+        st.warning(f"Scorecard unavailable: {e}")
 
     left, right = st.columns(2, gap="large")
     with left:

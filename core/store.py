@@ -40,7 +40,8 @@ CREATE TABLE IF NOT EXISTS calls (
 CREATE TABLE IF NOT EXISTS reports (
     id INTEGER PRIMARY KEY AUTOINCREMENT, report_id TEXT UNIQUE NOT NULL, ts_ms INTEGER NOT NULL,
     classification TEXT NOT NULL, price REAL NOT NULL, sigma24_pct REAL, majority_dir TEXT,
-    move_24h_pct REAL, hit_24h INTEGER, move_7d_pct REAL, hit_7d INTEGER);
+    move_24h_pct REAL, hit_24h INTEGER, move_7d_pct REAL, hit_7d INTEGER,
+    mode TEXT NOT NULL DEFAULT '15-agent', snapshot_id TEXT, plan TEXT, plan_outcome TEXT, plan_scored_ms INTEGER);
 CREATE TABLE IF NOT EXISTS live_anchors (
     window_open_ms INTEGER PRIMARY KEY, window_close_ms INTEGER NOT NULL, published_ms INTEGER NOT NULL,
     bias TEXT NOT NULL, margin REAL, confidence REAL, trap TEXT, price REAL, payload TEXT NOT NULL);
@@ -136,6 +137,9 @@ class Store:
         "trade_events": {"notified": "INTEGER NOT NULL DEFAULT 0", "price": "REAL"},
         "traps": {"resolved_ms": "INTEGER", "resolved_price": "REAL", "notes": "TEXT", "score": "REAL",
                   "head_call": "TEXT", "detail": "TEXT"},
+        # which pipeline wrote a report, the snapshot it read, and its plan as numbers with how it ended
+        "reports": {"mode": "TEXT NOT NULL DEFAULT '15-agent'", "snapshot_id": "TEXT", "plan": "TEXT",
+                    "plan_outcome": "TEXT", "plan_scored_ms": "INTEGER"},
     }
 
     def _add_missing_columns(self) -> None:
@@ -207,17 +211,27 @@ class Store:
             return _rows(self._conn.execute(q, (int(limit),)))
 
     # ---- reports ----
-    def add_report(self, report_id: str, ts_ms: int, classification: str, price: float, sigma24_pct: float | None, majority_dir: str | None) -> bool:
+    def add_report(self, report_id: str, ts_ms: int, classification: str, price: float, sigma24_pct: float | None,
+                   majority_dir: str | None, mode: str = "15-agent", snapshot_id: str | None = None,
+                   plan: str | None = None) -> bool:
         with self._lock:
             cur = self._conn.execute(
-                "INSERT OR IGNORE INTO reports (report_id, ts_ms, classification, price, sigma24_pct, majority_dir) VALUES (?,?,?,?,?,?)",
-                (report_id, int(ts_ms), classification, float(price), sigma24_pct, majority_dir))
+                "INSERT OR IGNORE INTO reports (report_id, ts_ms, classification, price, sigma24_pct, majority_dir, "
+                "mode, snapshot_id, plan) VALUES (?,?,?,?,?,?,?,?,?)",
+                (report_id, int(ts_ms), classification, float(price), sigma24_pct, majority_dir, mode, snapshot_id, plan))
             self._conn.commit()
             return cur.rowcount == 1
 
     def reports(self, limit: int = 50) -> list[dict]:
         with self._lock:
             return _rows(self._conn.execute("SELECT * FROM reports ORDER BY ts_ms DESC LIMIT ?", (int(limit),)))
+
+    def set_plan_outcome(self, row_id: int, outcome: str, scored_ms: int | None) -> None:
+        """`open` keeps a plan live (scored_ms None); anything else is final."""
+        with self._lock:
+            self._conn.execute("UPDATE reports SET plan_outcome=?, plan_scored_ms=? WHERE id=?",
+                               (outcome, scored_ms, int(row_id)))
+            self._conn.commit()
 
     def score_report(self, row_id: int, horizon: str, move_pct: float, hit: bool) -> None:
         col_move, col_hit = ("move_24h_pct", "hit_24h") if horizon == "24h" else ("move_7d_pct", "hit_7d")

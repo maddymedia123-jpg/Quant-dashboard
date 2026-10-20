@@ -2090,3 +2090,112 @@ def forecast_html(f, tr, horizon_label: str) -> str:
     body += (f"<p class='muted ti-note'>The path is the median of 4,000 simulated paths, not a promise: built from "
              f"{html.escape(', '.join(parts))}. Hollow candles are the path; the dashed lines are the 68% range.</p>")
     return card_html(f"Forecast · {horizon}", body, "neutral")
+
+
+# ---------- 1-agent vs 15-agent ----------
+MODE_WORDS = {"1-agent": "1-agent · one model reading the whole state",
+              "15-agent": "15-agent · ten specialists, a volatility agent, two desks, accuracy, Director"}
+
+
+def plan_html(plan) -> str:
+    """The plan as numbers - what the alerts will watch."""
+    if plan is None:
+        return ""
+    if plan.side == "NONE":
+        return card_html("Plan · no trade", f"<p>{html.escape(plan.why_none or 'No edge in this data.')}</p>")
+    money = lambda x: fmt_num(x, 0, "$")  # noqa: E731
+    tone = "down" if plan.side == "SHORT" else "up"
+    # _kv takes escaped values: everything below is a number or a word the schema fixes, except the
+    # confirmation lines, which _li escapes
+    body = ("<div class='ti-grid4'>"
+            + _kv("Side", plan.side) + _kv("Entry zone", f"{money(plan.zone_low)} – {money(plan.zone_high)}")
+            + _kv("Stop", money(plan.stop)) + _kv("Targets", " · ".join(money(t) for t in plan.targets))
+            + "</div><div class='ti-grid4'>"
+            + _kv("Confirms on", f"{plan.confirm_timeframe} close {'below' if plan.side == 'SHORT' else 'above'} "
+                                 f"{money(plan.confirm_close)}" if plan.confirm_close else plan.confirm_timeframe)
+            + _kv("Taker buy/sell", (f"{'below' if plan.side == 'SHORT' else 'above'} {plan.taker_ratio_limit:.2f}"
+                                    if plan.taker_ratio_limit else "—"))
+            + _kv("Risk · leverage", f"{plan.risk_pct or '—'}% · {plan.max_leverage or '—'}x")
+            + _kv("Valid for", f"{plan.expires_hours:.0f}h") + "</div>")
+    if plan.confirmations:
+        body += "<span class='ti-label'>Confirmation rules</span>" + _li(plan.confirmations)
+    return card_html(f"Plan · {plan.side.lower()} · watched by the alerts", body, tone)
+
+
+def cases_html(report) -> str:
+    """The bull case and the bear case side by side, with how strongly each is held."""
+    if not report.desks:
+        return ""
+    cols = ""
+    for side in ("bullish", "bearish"):
+        d = report.desks.get(side)
+        if d is None:
+            continue
+        cols += (f"<div><div class='ti-split'><span class='ti-h4'>{'Bull' if side == 'bullish' else 'Bear'} case</span>"
+                 f"<span class='muted'>conviction {d.conviction:.0f}/10</span></div>"
+                 f"{_bar(d.conviction * 10, 'up' if side == 'bullish' else 'down')}<p>{html.escape(d.summary)}</p>"
+                 + (_li(d.convergence[:4]) if d.convergence else "") + "</div>")
+    return f"<div class='ti-two'>{cols}</div>"
+
+
+def compare_html(r1, r15) -> str:
+    """The two pipelines on one table: the call, the odds, the plan and what each cost."""
+    same = bool(r1.snapshot_id and r1.snapshot_id == r15.snapshot_id)
+
+    def call(r):
+        d = r.director
+        if d is None:
+            return "failed", "—", "—"
+        top = max(d.scenarios, key=lambda s: s.probability)
+        return CLASS_WORDS.get(d.trap_classification, d.trap_classification), \
+            f"{html.escape(top.name)} · {top.probability:.0f}%", \
+            html.escape(d.trade_plan.new_entry_conditions[:220])
+
+    def plan(r):
+        p = r.plan
+        if p is None:
+            return "prose only (no numbers)"
+        if p.side == "NONE":
+            return "no trade"
+        return (f"{p.side} {fmt_num(p.zone_low, 0, '$')}–{fmt_num(p.zone_high, 0, '$')} · stop "
+                f"{fmt_num(p.stop, 0, '$')} · T1 {fmt_num(p.targets[0], 0, '$')}")
+
+    def cost(r):
+        return f"{len(r.runs)} calls · {r.wall_time_s:.0f}s · {r.total_tokens:,} tokens"
+
+    c1, c15 = call(r1), call(r15)
+    rows = [("Classification", c1[0], c15[0]), ("Main scenario", c1[1], c15[1]),
+            ("Entry conditions", c1[2], c15[2]), ("Plan as numbers", plan(r1), plan(r15)),
+            ("Bull · bear conviction",
+             " · ".join(f"{r1.desks[s].conviction:.0f}" for s in ("bullish", "bearish") if s in r1.desks) or "—",
+             " · ".join(f"{r15.desks[s].conviction:.0f}" for s in ("bullish", "bearish") if s in r15.desks) or "—"),
+            ("Cost", cost(r1), cost(r15)), ("Report", r1.report_id, r15.report_id)]
+    body = ("<table><thead><tr><th></th><th>1-agent</th><th>15-agent</th></tr></thead><tbody>"
+            + "".join(f"<tr><td class='muted'>{html.escape(k)}</td><td>{a}</td><td>{b}</td></tr>" for k, a, b in rows)
+            + "</tbody></table>")
+    note = ("Both read the same market snapshot." if same else
+            "These two read different snapshots, so they are not like for like: use Run both to compare fairly.")
+    return card_html("1-agent vs 15-agent", body + f"<p class='muted ti-note'>{note}</p>", "neutral")
+
+
+def scorecard_html(cards: dict) -> str:
+    """How each pipeline's calls turned out, scored by the same rules."""
+    def rate(h):
+        return f"{h.rate:.0%} of {h.n}" if h.n else "not scored yet"
+    rows = ""
+    for mode in ("1-agent", "15-agent"):
+        c = cards.get(mode)
+        if c is None:
+            rows += f"<tr><td>{mode}</td><td colspan='4' class='muted'>no reports yet</td></tr>"
+            continue
+        p = c["plans"]
+        plans = (f"{p.get('target', 0)} target · {p.get('stop', 0)} stop · {p.get('not_triggered', 0)} never "
+                 f"triggered · {p.get('open', 0)} open" if sum(p.values()) else "—")
+        rows += (f"<tr><td><strong>{mode}</strong></td><td>{c['reports']}</td><td>{rate(c['h24'])}</td>"
+                 f"<td>{rate(c['d7'])}</td><td>{plans}</td></tr>")
+    body = ("<table><thead><tr><th>Pipeline</th><th>Reports</th><th>Call right, 24h</th><th>Call right, 7d</th>"
+            f"<th>Plans</th></tr></thead><tbody>{rows}</tbody></table>"
+            "<p class='muted ti-note'>The trap call is scored by where price is 24h and 7 days later. A plan is "
+            "scored as traded: price reaches the zone, a candle closes beyond the confirmation level, then stop "
+            "or first target, whichever is touched first. Fewer than 10 scored reports is too few to choose on.</p>")
+    return card_html("Scorecard · 1-agent vs 15-agent", body, "neutral")

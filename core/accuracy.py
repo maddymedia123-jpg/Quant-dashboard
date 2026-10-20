@@ -61,7 +61,94 @@ def score_due_calls(store, now_ms: int, price: float) -> int:
 def record_report(store, report, price: float, sigma24_pct: float | None, majority_dir: str, now_ms: int) -> bool:
     if report is None or report.director is None:
         return False
-    return store.add_report(report.report_id, now_ms, report.director.trap_classification, price, sigma24_pct, majority_dir)
+    plan = report.plan.model_dump_json() if getattr(report, "plan", None) is not None else None
+    return store.add_report(report.report_id, now_ms, report.director.trap_classification, price, sigma24_pct,
+                            majority_dir, mode=getattr(report, "mode", "15-agent"),
+                            snapshot_id=getattr(report, "snapshot_id", None), plan=plan)
+
+
+# ---------- plan outcomes ----------
+# A plan is scored the way it would have been traded: price reaches the zone, then a CLOSED candle on the
+# plan's confirmation timeframe closes beyond confirm_close (the taker-ratio rule is not replayed - there is
+# no per-candle history of it here), and from that close the first of stop or first target to be touched
+# decides it. A candle that spans both counts as the stop: the cautious reading.
+PLAN_OUTCOMES = ("target", "stop", "not_triggered", "no_trade", "open")
+
+
+def plan_outcome(plan: dict, ts_ms: int, frames: dict, now_ms: int) -> str:
+    side = plan.get("side")
+    if side not in ("LONG", "SHORT"):
+        return "no_trade"
+    low, high, stop = plan["zone_low"], plan["zone_high"], plan["stop"]
+    # the nearest target, whatever order the plan listed them in
+    t1 = max(plan["targets"]) if side == "SHORT" else min(plan["targets"])
+    confirm = plan.get("confirm_close")
+    expires = ts_ms + int(float(plan.get("expires_hours") or 24) * 3_600_000)
+    fine, conf = frames.get("15m"), frames.get(plan.get("confirm_timeframe") or "1h")
+    if fine is None or conf is None or not len(fine):
+        return "open"
+    bar_ms = TF_MS.get(plan.get("confirm_timeframe") or "1h", 3_600_000)
+    rows = [r for r in fine.itertuples() if int(r.timestamp) >= ts_ms]
+    touched = next((int(r.timestamp) for r in rows if r.high >= low and r.low <= high and int(r.timestamp) < expires), None)
+    if touched is None:
+        return "not_triggered" if now_ms >= expires else "open"
+    entry_ms = None
+    for r in conf.itertuples():
+        t = int(r.timestamp)
+        if t + bar_ms <= touched or t + bar_ms > min(now_ms, expires + bar_ms):
+            continue                               # before the touch, still forming, or past expiry
+        level = confirm if confirm is not None else (low if side == "SHORT" else high)
+        if (side == "SHORT" and r.close < level) or (side == "LONG" and r.close > level):
+            entry_ms = t + bar_ms
+            break
+    if entry_ms is None:
+        return "not_triggered" if now_ms >= expires + bar_ms else "open"
+    for r in rows:
+        if int(r.timestamp) < entry_ms:
+            continue
+        hit_stop = r.high >= stop if side == "SHORT" else r.low <= stop
+        hit_t1 = r.low <= t1 if side == "SHORT" else r.high >= t1
+        if hit_stop:
+            return "stop"
+        if hit_t1:
+            return "target"
+    return "open"
+
+
+TF_MS = {"15m": 900_000, "1h": 3_600_000, "4h": 14_400_000, "1d": 86_400_000}
+
+
+def score_plans(store, frames: dict, now_ms: int) -> int:
+    """Settle every plan still open; returns how many reached a final outcome this pass."""
+    import json
+    n = 0
+    for r in store.reports(limit=500):
+        if not r.get("plan") or r.get("plan_scored_ms"):
+            continue
+        out = plan_outcome(json.loads(r["plan"]), int(r["ts_ms"]), frames, now_ms)
+        if out != (r.get("plan_outcome") or "open"):
+            store.set_plan_outcome(int(r["id"]), out, None if out == "open" else now_ms)
+            n += out != "open"
+    return n
+
+
+def mode_scorecard(store) -> dict:
+    """1-agent against 15-agent: classification hit rates at 24h and 7d, and how the plans ended."""
+    out: dict[str, dict] = {}
+    for r in store.reports(limit=1000):
+        mode = r.get("mode") or "15-agent"
+        card = out.setdefault(mode, {"reports": 0, "h24": HitRate(), "d7": HitRate(),
+                                     "plans": Counter()})
+        card["reports"] += 1
+        if r["hit_24h"] is not None:
+            card["h24"].n += 1
+            card["h24"].hits += int(r["hit_24h"])
+        if r["hit_7d"] is not None:
+            card["d7"].n += 1
+            card["d7"].hits += int(r["hit_7d"])
+        if r.get("plan"):
+            card["plans"][r.get("plan_outcome") or "open"] += 1
+    return out
 
 
 def report_hit(classification: str, move_pct: float, sigma24_pct: float | None, majority_dir: str | None, horizon: str) -> bool:

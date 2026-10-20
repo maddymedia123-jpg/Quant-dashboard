@@ -16,6 +16,8 @@ CATEGORY_KEYS = ("live", "intraday", "weekly", "monthly")
 def _num(v):
     """Coerce '7', '7.5', '60%' → float; leave numbers alone."""
     if isinstance(v, str):
+        # thousands separators first: "$84,200" read as 84 before, which is a price off by a thousand times
+        v = re.sub(r"(?<=\d),(?=\d{3}\b)", "", v)
         m = re.search(r"-?\d+(?:\.\d+)?", v)
         if not m:
             raise ValueError(f"not a number: {v!r}")
@@ -140,6 +142,78 @@ class DirectorReport(BaseModel):
         return self
 
 
+class PlanLevels(BaseModel):
+    """The trade plan as numbers code can watch: the zone, the candle that confirms, the stop, the targets.
+
+    Prose plans could not drive alerts; these can. The geometry is checked here, so a stop on the wrong
+    side of the zone or a target behind the entry is refused before it reaches the screen."""
+    side: Literal["LONG", "SHORT", "NONE"]
+    zone_low: Optional[float] = None
+    zone_high: Optional[float] = None
+    confirm_timeframe: Literal["15m", "1h", "4h", "1d"] = "1h"
+    confirm_close: Optional[float] = None       # SHORT: a confirming candle closes BELOW this; LONG: ABOVE it
+    taker_ratio_limit: Optional[float] = None   # SHORT: taker buy/sell must be below it; LONG: above it
+    confirmations: list[str] = Field(default_factory=list)   # the same rules in words, for the screen
+    stop: Optional[float] = None
+    targets: list[float] = Field(default_factory=list)
+    expires_hours: float = 24.0
+    risk_pct: Optional[float] = None
+    max_leverage: Optional[float] = None
+    why_none: str = ""
+
+    @field_validator("zone_low", "zone_high", "confirm_close", "taker_ratio_limit", "stop", "risk_pct",
+                     "max_leverage", "expires_hours", mode="before")
+    @classmethod
+    def _n(cls, v):
+        return None if v in (None, "", "null") else _num(v)
+
+    @field_validator("targets", mode="before")
+    @classmethod
+    def _t(cls, v):
+        return [_num(x) for x in (v or [])]
+
+    @model_validator(mode="after")
+    def _geometry(self):
+        if self.side == "NONE":
+            return self
+        if None in (self.zone_low, self.zone_high, self.stop) or not self.targets:
+            raise ValueError("a LONG or SHORT plan needs zone_low, zone_high, stop and at least one target")
+        if self.zone_low > self.zone_high:
+            self.zone_low, self.zone_high = self.zone_high, self.zone_low
+        if self.side == "SHORT":
+            if self.stop <= self.zone_high:
+                raise ValueError(f"SHORT stop {self.stop} must be above the zone high {self.zone_high}")
+            if any(t >= self.zone_low for t in self.targets):
+                raise ValueError(f"SHORT targets {self.targets} must all be below the zone low {self.zone_low}")
+            self.targets = sorted(self.targets, reverse=True)
+        else:
+            if self.stop >= self.zone_low:
+                raise ValueError(f"LONG stop {self.stop} must be below the zone low {self.zone_low}")
+            if any(t <= self.zone_high for t in self.targets):
+                raise ValueError(f"LONG targets {self.targets} must all be above the zone high {self.zone_high}")
+            self.targets = sorted(self.targets)
+        if not 1 <= self.expires_hours <= 24 * 30:
+            raise ValueError("expires_hours must be between 1 and 720")
+        return self
+
+
+class OneAgentOutput(BaseModel):
+    """Everything the fifteen-agent pipeline produces, from one model reading the whole state at once."""
+    bull_case: DeskReport
+    bear_case: DeskReport
+    executive_summary: str
+    trap_classification: Literal["BULL_TRAP", "BEAR_TRAP", "NO_TRAP", "RANGE_TRAP"]
+    classification_rationale: str
+    contradictions: list[Contradiction] = Field(default_factory=list)
+    convergence: list[str] = Field(default_factory=list)
+    blind_spots: list[str] = Field(default_factory=list)
+    scenarios: list[Scenario]
+    trade_plan: TradePlan
+    plan: PlanLevels
+    category_summaries: dict[str, str] = Field(default_factory=dict)
+    data_quality_flags: list[str] = Field(default_factory=list)
+
+
 class AgentRun(BaseModel):
     agent_id: str
     ok: bool
@@ -166,6 +240,9 @@ class TrapReport(BaseModel):
     wall_time_s: float = 0.0
     unavailable_domains: list[str] = Field(default_factory=list)
     raw_metrics: list[tuple[str, str, str]] = Field(default_factory=list)
+    mode: Literal["15-agent", "1-agent"] = "15-agent"
+    plan: Optional[PlanLevels] = None          # the 1-agent report's plan as numbers; None for the 15-agent one
+    snapshot_id: Optional[str] = None          # the same id on two reports means they read the same data
 
     @property
     def total_tokens(self) -> int:

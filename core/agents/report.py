@@ -40,6 +40,7 @@ def to_markdown(r: TrapReport) -> str:
         f"## Timestamp: {r.generated_at:%Y-%m-%d} {_dual(r.generated_at)}",
         f"## Asset: {r.asset}",
         f"## Analysis Window: {r.window}",
+        f"## Pipeline: {r.mode}" + (f" · snapshot {r.snapshot_id}" if r.snapshot_id else ""),
         "",
         "---",
         "",
@@ -81,6 +82,19 @@ def to_markdown(r: TrapReport) -> str:
             f"6. **Leverage Maximum:** {p.max_leverage}",
             "7. **Time-Based Rules:**", _ul(p.time_rules),
         ]
+    if r.plan is not None:
+        pl = r.plan
+        parts += ["", "### Plan as numbers (watched by the alerts)"]
+        if pl.side == "NONE":
+            parts.append(f"No trade: {pl.why_none}")
+        else:
+            beyond = "below" if pl.side == "SHORT" else "above"
+            parts += [f"- **Side:** {pl.side}", f"- **Entry zone:** {pl.zone_low:,.0f} – {pl.zone_high:,.0f}",
+                      f"- **Confirms on:** {pl.confirm_timeframe} close {beyond} "
+                      + (f"{pl.confirm_close:,.0f}" if pl.confirm_close else "the zone")
+                      + (f"; taker buy/sell {beyond} {pl.taker_ratio_limit:.2f}" if pl.taker_ratio_limit else ""),
+                      f"- **Stop:** {pl.stop:,.0f}", f"- **Targets:** {', '.join(f'{t:,.0f}' for t in pl.targets)}",
+                      f"- **Valid for:** {pl.expires_hours:.0f}h"]
 
     parts += ["", "---", "", "## APPENDIX"]
     parts.append("### Volatility Agent")
