@@ -119,3 +119,26 @@ def trap_events(traps: list[dict], now_ms: int) -> list[Event]:
                         f"${invalid:,.0f} (now ${at:,.0f}).")
             out.append(Event("trap_settled", f"trap:{t['id']}:{status}", text, t.get("resolved_price")))
     return out
+
+
+# ---------- the cascade alerts that still go out on their own ----------
+# Since the plan alerts (core.plan_alerts) took over, a desk's state change is a message of its own only
+# when it matters with no report run: a desk lining up strongly (A) or its trend losing control (C).
+# "Pause" moves stay quiet. And the new state must hold for HOLD_MS first: read from candles still
+# forming, a state can flip and flip back within minutes (Intraday went A at 02:13 and back at 02:17 on
+# 20 Oct), and a flicker is not news.
+IMPORTANT_STATES = ("A", "C")
+HOLD_MS = {"live": 5 * 60_000, "intraday": 15 * 60_000, "weekly": 60 * 60_000, "monthly": 4 * 60 * 60_000}
+
+
+def important_cascade_event(desk: str, label: str, track: dict, cascade, now_ms: int,
+                            price: float | None = None) -> Event | None:
+    """The alert for a desk that moved into A or C and has held it, once per episode, or None."""
+    state, prior = track.get("state"), track.get("prior_state")
+    if track.get("first") or state not in IMPORTANT_STATES or prior is None or prior == state:
+        return None
+    since = int(track.get("since_ms") or now_ms)
+    if now_ms - since < HOLD_MS.get(desk, 15 * 60_000):
+        return None
+    # keyed on when the state began: the same episode is one message, a new one later is another
+    return cascade_event(desk, label, prior, cascade, since, price)

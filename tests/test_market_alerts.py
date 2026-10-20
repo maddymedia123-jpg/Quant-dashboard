@@ -209,3 +209,51 @@ def test_the_page_logs_alerts_but_never_sends_from_fixtures(monkeypatch, tmp_pat
     assert not any(r["kind"] in ("cascade", "shift") for r in logged), "cascade changes are context, not alerts"
     assert all(st_ != "Z" for st_ in states), "the cascade states are still recorded"
     assert all(r["notified"] == 0 for r in logged) and _no_real_alerts == [], "logged, never sent"
+
+
+# ---------- the important cascade changes, held ----------
+MIN = 60_000
+
+
+def test_track_keeps_when_a_state_began_and_what_it_replaced(store):
+    assert store.track_cascade("live", "B", NOW) == {"state": "B", "since_ms": NOW, "prior_state": None, "first": True}
+    assert store.track_cascade("live", "A", NOW + MIN)["since_ms"] == NOW + MIN
+    held = store.track_cascade("live", "A", NOW + 9 * MIN)
+    assert held == {"state": "A", "since_ms": NOW + MIN, "prior_state": "B", "first": False}, "a refresh keeps the start"
+
+
+def test_a_strong_setup_waits_until_it_has_held(store):
+    store.track_cascade("intraday", "B", NOW)
+    t = store.track_cascade("intraday", "A", NOW + MIN)
+    assert ma.important_cascade_event("intraday", "Intraday", t, cascade("A"), NOW + 5 * MIN) is None, "too soon"
+    t = store.track_cascade("intraday", "A", NOW + 17 * MIN)
+    e = ma.important_cascade_event("intraday", "Intraday", t, cascade("A"), NOW + 17 * MIN, 82_909.0)
+    assert e is not None and e.dedup_key == f"cascade:intraday:B->A:{NOW + MIN}"
+    assert "Pause in an uptrend -> Strong setup up" in e.headline
+
+
+def test_the_0213_flicker_sends_nothing(store):
+    """20 Oct: Intraday went A at 02:13 and back to B at 02:17 - both were sent. Neither is now."""
+    store.track_cascade("intraday", "B", NOW)
+    t = store.track_cascade("intraday", "A", NOW + 13 * MIN)
+    assert ma.important_cascade_event("intraday", "Intraday", t, cascade("A"), NOW + 13 * MIN) is None
+    t = store.track_cascade("intraday", "B", NOW + 17 * MIN)
+    assert ma.important_cascade_event("intraday", "Intraday", t, cascade("B"), NOW + 40 * MIN) is None
+
+
+def test_pauses_and_no_trend_stay_quiet_and_a_control_shift_does_not(store):
+    store.track_cascade("live", "A", NOW)
+    t = store.track_cascade("live", "B", NOW + MIN)
+    assert ma.important_cascade_event("live", "Live Recon", t, cascade("B"), NOW + 60 * MIN) is None
+    t = store.track_cascade("live", "N", NOW + 61 * MIN)
+    assert ma.important_cascade_event("live", "Live Recon", t, cascade("N", "neutral"), NOW + 120 * MIN) is None
+    store.track_cascade("weekly", "B", NOW)
+    t = store.track_cascade("weekly", "C", NOW + MIN)
+    assert ma.important_cascade_event("weekly", "Weekly", t, cascade("C"), NOW + 30 * MIN) is None, "weekly holds an hour"
+    e = ma.important_cascade_event("weekly", "Weekly", t, cascade("C"), NOW + 62 * MIN)
+    assert e is not None and e.urgent and "Uptrend losing control" in e.headline
+
+
+def test_the_first_reading_after_a_reboot_is_not_news(store):
+    t = store.track_cascade("live", "A", NOW)
+    assert ma.important_cascade_event("live", "Live Recon", t, cascade("A"), NOW + 99 * MIN) is None

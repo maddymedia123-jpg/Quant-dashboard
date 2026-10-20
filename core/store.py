@@ -93,7 +93,7 @@ CREATE TABLE IF NOT EXISTS market_alerts (
     dedup_key TEXT NOT NULL UNIQUE, headline TEXT NOT NULL, price REAL, notified INTEGER NOT NULL DEFAULT 0,
     claimed_ms INTEGER);
 CREATE TABLE IF NOT EXISTS cascade_states (
-    category TEXT PRIMARY KEY, state TEXT NOT NULL, ts_ms INTEGER NOT NULL);
+    category TEXT PRIMARY KEY, state TEXT NOT NULL, ts_ms INTEGER NOT NULL, since_ms INTEGER, prior_state TEXT);
 CREATE INDEX IF NOT EXISTS idx_calls_open ON calls (scored_ms, ts_ms);
 CREATE INDEX IF NOT EXISTS idx_signals_cat ON signals (category, ts_ms);
 """
@@ -140,6 +140,7 @@ class Store:
                   "head_call": "TEXT", "detail": "TEXT"},
         # which pipeline wrote a report, the snapshot it read, and its plan as numbers with how it ended
         "market_alerts": {"claimed_ms": "INTEGER"},
+        "cascade_states": {"since_ms": "INTEGER", "prior_state": "TEXT"},
         "reports": {"mode": "TEXT NOT NULL DEFAULT '15-agent'", "snapshot_id": "TEXT", "plan": "TEXT",
                     "plan_outcome": "TEXT", "plan_scored_ms": "INTEGER"},
     }
@@ -588,6 +589,29 @@ class Store:
                 (category, state, ts_ms))
             self._conn.commit()
         return row["state"] if row else None
+
+    def track_cascade(self, category: str, state: str, now_ms: int) -> dict:
+        """Record a desk's cascade state and say how long it has held and what it replaced.
+
+        Returns {state, since_ms, prior_state, first}: `since_ms` moves only when the state changes, so a
+        state read on every refresh keeps the time it began - which is what lets an alert wait until a
+        change has held, instead of firing on a half-built candle that flips back four minutes later."""
+        with self._lock:
+            row = self._conn.execute("SELECT state, since_ms, prior_state FROM cascade_states WHERE category=?",
+                                     (category,)).fetchone()
+            if row is None:
+                since, prior, first = now_ms, None, True
+            elif row["state"] != state:
+                since, prior, first = now_ms, row["state"], False
+            else:
+                since, prior, first = (row["since_ms"] or now_ms), row["prior_state"], False
+            self._conn.execute(
+                "INSERT INTO cascade_states (category, state, ts_ms, since_ms, prior_state) VALUES (?,?,?,?,?) "
+                "ON CONFLICT(category) DO UPDATE SET state=excluded.state, ts_ms=excluded.ts_ms, "
+                "since_ms=excluded.since_ms, prior_state=excluded.prior_state",
+                (category, state, now_ms, since, prior))
+            self._conn.commit()
+        return {"state": state, "since_ms": int(since), "prior_state": prior, "first": first}
 
     def add_market_alert(self, ts_ms: int, kind: str, dedup_key: str, headline: str,
                          price: float | None = None) -> int | None:

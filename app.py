@@ -887,19 +887,24 @@ def market_alert_pass() -> None:
     """The latest 1-agent plan, watched against candles, and TRAP calls: detect, log once, push.
 
     Alerts tell a trader what to do and when (WATCH / CONFIRMED / NO SETUP / TARGET / STOPPED / EXPIRED,
-    from core.plan_alerts). The desks' cascade states are no longer messages of their own - "Strong setup
-    down -> Pause in a downtrend" told nobody what to do - they ride along as the Context line of a WATCH.
+    from core.plan_alerts). A desk's cascade change is a message of its own only into a strong setup (A)
+    or a trend losing control (C), once it has held (core.market_alerts.HOLD_MS); "pause" moves ride along
+    as the Context line of a WATCH instead.
     Runs on every page load whatever screen is open. Nothing is sent while no page is open."""
     from core import market_alerts as ma
     from core import plan_alerts as pa
-    context = []
+    context, events = [], []
     for key in CATEGORIES:
         c = _desk_cascade(key, _data_stamp())
-        store.swap_cascade_state(key, c.state, now_ms)          # still recorded, for the record
+        track = store.track_cascade(key, c.state, now_ms)
+        # alone only when it matters and has held: a strong setup (A) or a trend losing control (C)
+        e = ma.important_cascade_event(key, PROFILES[key].label, track, c, now_ms, m.spot.last)
+        if e is not None:
+            events.append(e)
         if key in ("live", "intraday") and c.state not in ma.SILENT_STATES:
             trend = c.bias.direction if c.bias is not None else None
             context.append(f"{PROFILES[key].label} {ma.state_name(c.state, trend).lower()}")
-    events = pa.events(pa.latest_plan_report(store), m.spot.frames,
+    events += pa.events(pa.latest_plan_report(store), m.spot.frames,
                        m.taker_flow.frames if m.taker_flow.available else None, now_ms, m.spot.last,
                        context="; ".join(context))
     events += ma.trap_events(store.traps(limit=200), now_ms)
