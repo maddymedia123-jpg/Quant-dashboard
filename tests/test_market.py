@@ -25,11 +25,15 @@ def test_fetch_all_isolates_provider_failures(monkeypatch):
     monkeypatch.setattr(market, "fetch_sentiment", ok_sent)
     # fetch_kraken_futures is the last futures fallback: without it patched this test reached the real
     # exchange and only passed while the network happened to be unreachable.
+    # every feed is patched: the ones left real reached the internet, so the list of unavailable feeds
+    # depended on which live feeds happened to answer (it failed whenever FRED or COT was down)
     for name in ("fetch_hyperliquid", "fetch_coinlobster", "fetch_stablecoins", "fetch_calendar",
-                 "fetch_kraken_futures"):
+                 "fetch_kraken_futures", "fetch_news", "fetch_gold", "fetch_predictions", "fetch_macro",
+                 "fetch_cot", "fetch_taker_flow", "fetch_exchange_flows"):
         monkeypatch.setattr(market, name, boom)  # never touch the network in tests
 
     snap = asyncio.run(market.fetch_all())
     assert snap.spot.available
     assert snap.futures.available is False and "network down" in snap.futures.error
-    assert snap.unavailable() == ["futures", "hyperliquid", "liquidations", "whales", "stablecoins", "calendar"]
+    assert snap.unavailable() == ["futures", "hyperliquid", "liquidations", "whales", "stablecoins", "calendar",
+                                  "news", "metals", "predictions", "macro", "cot", "taker_flow", "exchange_flows"]

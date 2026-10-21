@@ -178,6 +178,12 @@ def _cot(m: MarketSnapshot) -> dict:
     return out
 
 
+def _turning_window(m: MarketSnapshot) -> dict:
+    """When BTC usually turns (measured), so no agent times a scenario off Fibonacci zones, which failed."""
+    from core.indicators.turn_window import to_state
+    return to_state(int(m.generated_at.timestamp() * 1000))
+
+
 def common_payload(m: MarketSnapshot, analyses: dict[str, CategoryAnalysis]) -> dict:
     live = analyses.get("live") or next(iter(analyses.values()), None)
     return {
@@ -186,6 +192,7 @@ def common_payload(m: MarketSnapshot, analyses: dict[str, CategoryAnalysis]) -> 
         "categories": {k: category_brief(a, m) for k, a in analyses.items()},
         "macro_calendar": _calendar_events(m),
         "macro_read": macro_read(m),
+        "turning_window": _turning_window(m),
         "generated_at_utc": m.generated_at.strftime("%Y-%m-%d %H:%M UTC"),
     }
 

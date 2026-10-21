@@ -25,6 +25,10 @@ from dataclasses import dataclass
 from core.alerts import Event
 
 TF_MS = {"15m": 900_000, "1h": 3_600_000, "4h": 14_400_000, "1d": 86_400_000}
+TF_WORDS = {"15m": "15-minute", "1h": "1-hour", "4h": "4-hour", "1d": "daily"}
+# never in a bot message: the reader is not a trader (his Section 8)
+BANNED_WORDS = ("gamma", "cvd", "rsi", "fibonacci", "delta", "option", "vwap", "amt", "taker", "ema",
+                "liquidity", "sweep", "vah", "val ", "order flow", "funding", "open interest", "squeeze")
 STALE_AFTER_MS = 2 * 3_600_000
 LATE_AFTER_MS = 15 * 60_000
 
@@ -89,13 +93,24 @@ def replay(plan: dict, ts_ms: int, frames: dict, flows: dict | None, now_ms: int
                                                   f"before {_when(expires)}. No trade.", price_now))
         return steps
     next_close = (touch // bar + 1) * bar
+    # The rules are written here from the plan's numbers, not copied from the model's own wording: that
+    # wording ("4h CVD remains net negative") is exactly the jargon the bot must not send.
+    rules = f"a {TF_WORDS.get(tf, tf)} candle closes {beyond} {_money(level)}"
+    if ratio_limit is not None:
+        rules += f", with {'sellers' if short else 'buyers'} doing more of the trading on that candle"
+    kind_word = {"BULL_TRAP": "fake breakout up", "BEAR_TRAP": "fake breakdown", "RANGE_TRAP": "range",
+                 "NO_TRAP": "trend"}.get(classification, "latest")
+    from core.indicators.turn_window import next_window
+    tw = next_window(touch)
     steps.append(Step("watch", touch, (
         f"🟡 WATCH · BTC {_money(price_now)}\n"
-        f"Price reached the {word} zone ({zone}) from the {classification.replace('_', ' ').lower() or 'latest'} report.\n"
-        f"Next check: {tf} close at {_when(next_close)}.\n"
-        f"{word.capitalize()} only if: " + ("; ".join(plan.get("confirmations") or [])
-                                             or f"a {tf} candle closes {beyond} {_money(level)}") + ".\n"
-        f"Cancelled if a {tf} candle closes {far} {_money(high if short else low)}. Plan wrong past {_money(stop)}."
+        f"Price reached the {word} zone ({zone}) from the {kind_word} report.\n"
+        f"Next check: {TF_WORDS.get(tf, tf)} close at {_when(next_close)}.\n"
+        f"{word.capitalize()} only if: {rules}.\n"
+        f"Cancelled if a {TF_WORDS.get(tf, tf)} candle closes {far} {_money(high if short else low)}. "
+        f"Plan wrong past {_money(stop)}.\n"
+        + ("We are inside the busiest turning hours of the day right now." if tw.active
+           else f"Busiest turning hours: {tw.label}.")
         + (f"\nContext: {context}" if context else "")), price_now))
 
     # 2. the confirming close, or the setup breaking first
@@ -110,7 +125,7 @@ def replay(plan: dict, ts_ms: int, frames: dict, flows: dict | None, now_ms: int
                                                      f"stop level {_money(stop)} before any confirmation.", stop))
             return steps
         if (short and r.close > high) or (not short and r.close < low):
-            steps.append(Step("cancelled", close_ms, f"⚪ NO SETUP · {word} cancelled\nThe {tf} candle closed at "
+            steps.append(Step("cancelled", close_ms, f"⚪ NO SETUP · {word} cancelled\nThe {TF_WORDS.get(tf, tf)} candle closed at "
                                                      f"{_money(r.close)}, {far} the zone ({zone}): no rejection.",
                               float(r.close)))
             return steps
@@ -120,17 +135,19 @@ def replay(plan: dict, ts_ms: int, frames: dict, flows: dict | None, now_ms: int
                     (short and ratio >= ratio_limit) or (not short and ratio <= ratio_limit)):
                 continue                                   # the close is there, the flow is not: keep waiting
             entry_ms, entry_px = close_ms, float(r.close)
-            flow_note = (f" (taker buy/sell {ratio:.2f})" if ratio is not None else
-                         " (taker ratio not available for this candle)" if ratio_limit is not None else "")
+            who = ("sellers" if ratio < 1 else "buyers") if ratio is not None else None
+            flow_note = (f" ({who} did more of the trading)" if who else
+                         " (the buyer/seller check was not available for this candle)" if ratio_limit is not None
+                         else "")
             steps.append(Step("confirmed", close_ms, (
                 f"✅ SETUP CONFIRMED · {word} · BTC {_money(entry_px)}\n"
-                f"The {tf} candle closed at {_money(entry_px)}, {beyond} {_money(level)}{flow_note}.\n"
+                f"The {TF_WORDS.get(tf, tf)} candle closed at {_money(entry_px)}, {beyond} {_money(level)}{flow_note}.\n"
                 f"Entry zone {zone} · stop {_money(stop)} · targets " + " / ".join(_money(t) for t in targets)),
                 entry_px))
             break
     if entry_ms is None:
         if now_ms >= expires + bar:
-            steps.append(Step("expired", expires, f"⌛ PLAN EXPIRED · {word}\nPrice reached the zone but no {tf} "
+            steps.append(Step("expired", expires, f"⌛ PLAN EXPIRED · {word}\nPrice reached the zone but no {TF_WORDS.get(tf, tf)} "
                                                   f"candle confirmed before {_when(expires)}. No trade.", price_now))
         return steps
 

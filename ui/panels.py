@@ -180,20 +180,19 @@ def layman_lines(a: CategoryAnalysis) -> list[tuple[str, str]]:
         notes.append(f"RSI {rsi_last:.0f}, overbought, the move is stretched")
     elif rsi_last is not None and rsi_last <= 30:
         notes.append(f"RSI {rsi_last:.0f}, oversold, the drop is stretched")
-    rw = a.reversal
-    if rw is not None and rw.status == "ACTIVE":
-        lean = "with mixed signals" if rw.bias == "mixed" else f"leaning {rw.bias}"
-        # the confluence list is engine shorthand ("at resistance 82,506 (6 touches)"); the card below has it
-        notes.append(f"a reversal window is open right now, {lean}")
+    # The Fibonacci "reversal window" used to be told here. Tested on a year of hourly candles it timed turns
+    # no better than a random hour (core.indicators.turn_window), so it stays on its card as a drawing and
+    # the timing a reader is told comes from the measured turning window in the summary box instead.
     if a.patterns:
         p0 = a.patterns[0]
         name = p0.name.lower()
+        art = "an" if name[:1] in "aeiou" else "a"          # "an inverse head and shoulders"
         if p0.status == "confirmed":
-            notes.append(f"a {name} just confirmed, {p0.bias}" + (f", pointing to {money(p0.target)}" if p0.target else ""))
+            notes.append(f"{art} {name} just confirmed, {p0.bias}" + (f", pointing to {money(p0.target)}" if p0.target else ""))
         elif p0.bias == "neutral":
-            notes.append(f"a {name} is forming, neutral until it breaks")
+            notes.append(f"{art} {name} is forming, neutral until it breaks")
         else:
-            notes.append(f"a {name} is forming, {p0.bias}"
+            notes.append(f"{art} {name} is forming, {p0.bias}"
                          + (f", a break of {money(p0.breakout)} points to {money(p0.target)}"
                             if p0.breakout and p0.target else ""))
     if a.divergences:
@@ -319,13 +318,15 @@ def fib_html(a: CategoryAnalysis) -> str:
     if f is None:
         return card_html(title, "<p class='muted'>Not enough history for Fibonacci time zones.</p>")
     body, tone = "", "neutral"
+    body += ("<p class='muted ti-note'>Tested on a year of hourly BTC candles, these time zones did not time "
+             "turns (a turn within two hours 17.3% of the time, against 18.7% for any hour). Shown as a drawing; "
+             "for timing, see the turning window in the summary at the foot of this desk.</p>")
     if rw is not None:
         label = {"ACTIVE": "Window open", "UPCOMING": "Upcoming", "TIME_ONLY": "Time only"}.get(rw.status, rw.status)
         body += f"<div class='ti-tags'>{chip(label, 'accent')}</div>"
         head = f"F{rw.zone_k} {_bars(rw.bars_away)}" + (f" · ±{rw.window_bars} bar" if rw.status == "ACTIVE" else "")
         body += f"<div class='ti-h3'>{html.escape(head)}</div>"
         if rw.status == "ACTIVE":
-            tone = "warn"
             body += (f"<p>Reversal window open: a Fibonacci reversal window is open with a "
                      f"<strong>{html.escape(rw.bias)}</strong> lean.</p>")
             if rw.confluence:
@@ -2199,3 +2200,50 @@ def scorecard_html(cards: dict) -> str:
             "scored as traded: price reaches the zone, a candle closes beyond the confirmation level, then stop "
             "or first target, whichever is touched first. Fewer than 10 scored reports is too few to choose on.</p>")
     return card_html("Scorecard · 1-agent vs 15-agent", body, "neutral")
+
+
+# ---------- the summary box at the foot of every desk ----------
+def summary_lines(a: CategoryAnalysis, now_ms: int) -> list[tuple[str, str]]:
+    """Four lines a non-trader can act on: what the market is doing, when it usually turns, where price is
+    headed, and the level that cancels the view. No indicator names - the cards above carry those."""
+    from core.indicators.turn_window import next_window
+
+    d = a.direction
+    money = lambda x: fmt_num(x, 0, "$")  # noqa: E731
+    sups = sorted((lv for lv in a.levels if lv.kind == "support" and lv.price < a.price), key=lambda lv: -lv.price)
+    ceils = sorted((lv for lv in a.levels if lv.kind == "resistance" and lv.price > a.price), key=lambda lv: lv.price)
+    floor, ceiling = (sups[0].price if sups else a.vol.exp_low), (ceils[0].price if ceils else a.vol.exp_high)
+    horizon = FORECAST_HORIZON.get(a.vol.horizon_label, a.vol.horizon_label)
+
+    if d.direction == "BULLISH":
+        doing = f"Leaning UP ({_conf_word(d.confidence).lower()}). BTC is {money(a.price)}."
+        headed = f"Toward {money(ceiling)} over the {horizon}." if ceiling else "No clear target above yet."
+    elif d.direction == "BEARISH":
+        doing = f"Leaning DOWN ({_conf_word(d.confidence).lower()}). BTC is {money(a.price)}."
+        headed = f"Toward {money(floor)} over the {horizon}." if floor else "No clear target below yet."
+    else:
+        doing = f"Going SIDEWAYS. BTC is {money(a.price)}, with no clear side."
+        headed = (f"Between {money(floor)} and {money(ceiling)} until one side breaks."
+                  if floor and ceiling else "No clear range yet.")
+
+    if d.direction in ("BULLISH", "BEARISH") and d.invalidation is not None:
+        wrong = "below" if d.direction == "BULLISH" else "above"
+        danger = f"If price closes {wrong} {money(d.invalidation)}, this view is wrong."
+    elif floor and ceiling:
+        danger = f"A close below {money(floor)} or above {money(ceiling)} picks a side."
+    else:
+        danger = "No clear line yet."
+
+    w = next_window(now_ms)
+    when = (f"NOW, until {w.ends}: the busiest turning hours of the day." if w.active
+            else f"Next {w.label}.") + " About a third of BTC's turns happen in these four hours."
+    return [("What the market is doing", doing), ("When it usually turns", when),
+            ("Where price is headed", headed), ("Danger level", danger)]
+
+
+def summary_box_html(a: CategoryAnalysis, label: str, now_ms: int) -> str:
+    rows = "".join(f"<p><strong>{html.escape(k, quote=False)}:</strong> {html.escape(t, quote=False)}</p>"
+                   for k, t in summary_lines(a, now_ms))
+    return (f"<div class='ti-read'><span class='ti-kicker'>Summary · {html.escape(label)}</span>{rows}"
+            "<p class='muted ti-note'>Measured turning hours, not a prediction of this desk's direction. "
+            "Not trading advice.</p></div>")

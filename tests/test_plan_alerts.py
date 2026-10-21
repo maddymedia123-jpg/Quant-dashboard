@@ -50,11 +50,15 @@ def test_the_whole_short_reads_in_plain_words():
     assert [x.name for x in s] == ["watch", "confirmed", "target1"]
     watch = s[0].headline
     assert watch.startswith("🟡 WATCH · BTC $83,000") and "short zone ($83,075–$83,535)" in watch
-    assert "from the bull trap report" in watch and "Next check: 1h close at" in watch
-    assert "Short only if: 1h close below 83,077; taker buy/sell below 0.90." in watch
-    assert "Cancelled if a 1h candle closes above $83,535. Plan wrong past $85,238." in watch
+    assert "from the fake breakout up report" in watch and "Next check: 1-hour close at" in watch
+    assert ("Short only if: a 1-hour candle closes below $83,077, with sellers doing more of the trading on "
+            "that candle.") in watch, "written from the plan's numbers, not the model's wording"
+    assert "1h close below 83,077" not in watch, "the model's own confirmation text is not sent"
+    assert "Cancelled if a 1-hour candle closes above $83,535. Plan wrong past $85,238." in watch
+    assert "turning hours" in watch
     assert watch.endswith("Context: Live Recon pause in an uptrend")
-    assert s[1].headline.startswith("✅ SETUP CONFIRMED · short · BTC $83,050") and "(taker buy/sell 0.80)" in s[1].headline
+    assert s[1].headline.startswith("✅ SETUP CONFIRMED · short · BTC $83,050")
+    assert "(sellers did more of the trading)" in s[1].headline
     assert "targets $82,237 / $80,600 / $78,000" in s[1].headline, "nearest target first"
     assert s[2].headline.startswith("🎯 TARGET 1 HIT · $82,237") and "+0.98%" in s[2].headline
     assert "Next: $80,600." in s[2].headline
@@ -160,3 +164,42 @@ def test_without_a_taker_rule_the_close_alone_confirms(ratio_limit):
     plan = dict(PLAN, taker_ratio_limit=ratio_limit)
     s = steps(UP + REJECT + FALL, ratios=[1.2, 1.2, 1.2], plan=plan)
     assert [x.name for x in s] == ["watch", "confirmed", "target1"]
+
+
+# ---------- no jargon reaches the bot ----------
+def test_no_bot_message_carries_a_banned_word():
+    """His Section 8: the reader is not a trader. Every plan step, cascade alert and TRAP message is scanned."""
+    from core import market_alerts as ma
+    from core.indicators.cascade import Cascade, TimeframeRead
+    msgs = []
+    for path, ratios in ((UP + REJECT + FALL, [1.0, 0.8, 0.8]), (UP + [(83700, 83500, 83650)] * 4, None),
+                         (UP + REJECT + [(85300, 83000, 85250)] * 4, [1.0, 0.8, 1.2]),
+                         ([(83000, 82900, 82950)] * 8, None)):
+        msgs += [x.headline for x in steps(path, ratios=ratios, now=T0 + 30 * H)]
+    plan = dict(PLAN, confirmations=["4h CVD remains net negative", "RSI below 70", "VWAP rejection"])
+    msgs += [x.headline for x in steps(UP + REJECT + FALL, ratios=[1.0, 0.8, 0.8], plan=plan)]
+    eng = tuple(TimeframeRead(t, "engine", "neutral", "MIXED", "unclear") for t in ("15m", "1h"))
+    for prev, state, bias in (("B", "A", "bullish"), ("A", "C", "bearish"), ("A", "B", "bullish"), ("B", "N", "neutral")):
+        c = Cascade(state, "", TimeframeRead("1d", "bias", bias, "BULL", "bullish"),
+                    TimeframeRead("4h", "anchor", "neutral", "MIXED", "unclear"), eng, bias, None, None, 0, "x")
+        msgs.append(ma.cascade_event("live", "Live Recon", prev, c, T0, 82_000.0).headline)
+    trap = {"id": 1, "side": "BEAR_TRAP", "timeframe": "1h", "level": 81963, "plays_out": 82378, "invalidation": 81756,
+            "declared_ms": T0, "category": "live", "status": "invalidated", "resolved_ms": T0 + 1, "resolved_price": 81700}
+    msgs += [e.headline for e in ma.trap_events([trap], T0 + 2)]
+    assert len(msgs) >= 12
+    for msg in msgs:
+        low = msg.lower()
+        for word in pa.BANNED_WORDS:
+            assert word not in low, f"{word!r} in: {msg}"
+
+
+def test_the_turning_window_is_the_measured_us_session():
+    from core.indicators import turn_window as tw
+    morning = T0 - (T0 % (24 * H)) + 6 * H
+    w = tw.next_window(morning)
+    assert not w.active and w.label.startswith("12:00–16:00 UTC (17:00–21:00 PKT")
+    assert tw.next_window(morning + 7 * H).active, "13:00 UTC is inside"
+    late = tw.next_window(morning + 11 * H)                       # 17:00 UTC: today's has ended
+    assert late.start_ms == w.start_ms + 24 * H
+    state = tw.to_state(morning)
+    assert state["share_of_turns"] == 0.35 and "Fibonacci" in state["note"] and "no edge" in state["note"]

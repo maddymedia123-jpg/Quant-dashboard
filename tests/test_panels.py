@@ -144,7 +144,9 @@ def test_fib_and_pattern_cards_render_and_escape():
     assert "Fibonacci time" in h and "Anchors:" in h and "Retracement of the" in h
     a.reversal = ReversalWindow("ACTIVE", "bearish", 5, a.fib.upcoming[0].timestamp_ms, 0, 2, ["at resistance 78,600 (4 touches)"])
     h = panels.fib_html(a)
-    assert "Window open" in h and "Reversal window open" in h and "bearish" in h and "ti-card warn" in h
+    assert "Window open" in h and "Reversal window open" in h and "bearish" in h
+    assert "ti-card warn" not in h, "tested and found no edge: not highlighted as a warning"
+    assert "did not time turns" in h and "17.3%" in h
     a.patterns = [Pattern("<b>Double top</b>", "bearish", "forming", 0.8, 77000.0, 75000.0, 79000.0, [], 0, note="second top being tested now")]
     p = panels.patterns_html(a)
     assert "&lt;b&gt;Double top" in p
@@ -153,7 +155,7 @@ def test_fib_and_pattern_cards_render_and_escape():
         assert f"<span class='ti-label'>{label}</span><span class='ti-kv-v '>{value}</span>" in p, label
     lay = panels.layman_html(a)
     assert "Also worth noting:" in lay and "&lt;b&gt;double top&lt;/b&gt; is forming, bearish" in lay
-    assert "reversal window is open right now" in lay
+    assert "reversal window" not in lay, "Fibonacci timing is no longer told to the reader"
     a.patterns = []
     assert "No clean pattern" in panels.patterns_html(a)
 
