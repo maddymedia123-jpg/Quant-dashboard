@@ -34,7 +34,7 @@ FETCHED = ("15m", "1h", "4h", "1d")
 ROWS = 300                    # per interval: enough for a 20-bar read and its history, small enough to poll
 DEFAULT_MULTIPLIER = 0.0001   # used only if the contract endpoint fails; the value Gate.io publishes
 MAX_BYTES = 2 * 1024 * 1024
-COLUMNS = ["timestamp", "buy", "sell", "delta", "long_liq_usd", "short_liq_usd"]
+COLUMNS = ["timestamp", "buy", "sell", "delta", "long_liq_usd", "short_liq_usd", "oi_btc", "funding_rate"]
 DAY_MS, WEEK_MS = 86_400_000, 7 * 86_400_000
 EPOCH_MONDAY_MS = 4 * DAY_MS
 
@@ -47,7 +47,9 @@ def _num(v) -> float | None:
 
 
 def parse_stats(rows, multiplier: float) -> pd.DataFrame:
-    """One row per period, in BTC: taker buy, taker sell, their difference, and liquidations in USD.
+    """One row per period, in BTC: taker buy, taker sell, their difference, liquidations in USD, the open
+    interest in BTC and the funding rate at the period's stamp (the last two empty when the row has none -
+    never read as zero).
 
     A row missing either taker size is dropped rather than read as zero - a zero would be a fake
     balanced period in the middle of the series."""
@@ -61,7 +63,9 @@ def parse_stats(rows, multiplier: float) -> pd.DataFrame:
         if t is None or buy is None or sell is None:
             continue
         out.append([int(t) * 1000, buy * multiplier, sell * multiplier, (buy - sell) * multiplier,
-                    _num(r.get("long_liq_usd")) or 0.0, _num(r.get("short_liq_usd")) or 0.0])
+                    _num(r.get("long_liq_usd")) or 0.0, _num(r.get("short_liq_usd")) or 0.0,
+                    oi * multiplier if (oi := _num(r.get("open_interest"))) is not None else None,
+                    _num(r.get("last_funding_rate"))])
     df = pd.DataFrame(out, columns=COLUMNS)
     df["timestamp"] = df["timestamp"].astype("int64")
     return df.sort_values("timestamp").drop_duplicates("timestamp").reset_index(drop=True)
@@ -69,7 +73,10 @@ def parse_stats(rows, multiplier: float) -> pd.DataFrame:
 
 def _sum_by(daily: pd.DataFrame, bucket: list[int]) -> pd.DataFrame:
     g = daily.assign(bucket=bucket).groupby("bucket", sort=True)
-    out = g[["buy", "sell", "delta", "long_liq_usd", "short_liq_usd"]].sum().reset_index()
+    out = g[["buy", "sell", "delta", "long_liq_usd", "short_liq_usd"]].sum()
+    out["oi_btc"] = g["oi_btc"].last()           # open interest is a level: the period's last, never a sum
+    out["funding_rate"] = g["funding_rate"].mean()
+    out = out.reset_index()
     out = out.rename(columns={"bucket": "timestamp"})
     out["timestamp"] = out["timestamp"].astype("int64")
     return out[COLUMNS]

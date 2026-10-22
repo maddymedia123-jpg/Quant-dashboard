@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from core.agents.context import category_brief, common_payload, derivatives_payload
+from core.indicators import desk_derivs
 from core.agents.recon_profiles import LIVE, ReconProfile
 from core.indicators import liquidity as lq
 from core.indicators import harmonics as hm
@@ -179,14 +180,15 @@ def build_state(m, analyses: dict, now_ms: int | None = None, profile: ReconProf
         except Exception as e:  # noqa: BLE001 - the forecast must not take the war room down
             state["forecast"] = {"available": False, "note": f"{type(e).__name__}: {e}"}
 
+    now = now_ms if now_ms is not None else int(m.generated_at.timestamp() * 1000)
     state["derivatives"], derivs_missing = derivatives_payload(m)
     state["derivatives"]["unavailable"] = derivs_missing
     # every feed that failed, not only the derivatives ones: a judge reading an empty list assumes
     # sentiment and the calendar are present
     state["unavailable"] = sorted(set(m.unavailable()) | set(derivs_missing))
+    desk_derivs.match_window(state["derivatives"], profile.category, m, now)
 
-    now = now_ms if now_ms is not None else int(m.generated_at.timestamp() * 1000)
-    oi_history = list(getattr(m.futures, "oi_history", []) or [])
+    oi_history = desk_derivs.oi_history(m)
     state["smc"], state["liquidity"], state["volatility"] = {}, {}, {}
     for tf in profile.timeframes:
         df = m.spot.frames.get(tf)

@@ -201,9 +201,11 @@ def test_every_tab_shows_its_sub_agent_deck(tour):
     markdown = tour.text
     assert markdown.count("Institutional quantitative matrix") == 4
     # labels that belong to the deck alone - "Hurst" also appears in the volatility matrix above it
-    for reading in ("Point of control", "Options max pain", "Taker buy/sell", "Range position",
-                    "Funding 7d mean", "Longs liquidated 24h"):
+    for reading in ("Point of control", "Max pain 20", "Taker buy/sell", "Range position"):  # "Max pain <date>"
         assert markdown.count(reading) == 4, reading
+    # each desk reads liquidations over its own window: one desk each
+    for over in ("4h", "24h", "7d", "30d"):
+        assert markdown.count(f"Longs liquidated {over}") == 1, over
     assert "A dash means no feed, not zero." in markdown
 
 

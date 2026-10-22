@@ -57,6 +57,7 @@ def sub_agent_deck(state: dict, profile: ReconProfile | None = None) -> list[Dec
     opts = _get(state, "derivatives", "options", default={})
     liqs = _get(state, "derivatives", "liquidations", default={})
     exf = _get(state, "derivatives", "exchange_flows", default={})
+    matched = _get(state, "derivatives", "matched_window", default={})
     missing = list(_get(state, "derivatives", "unavailable", default=[]) or [])
 
     def agent(key: str, timeframe: str, rows: list[Row], note: str = "") -> DeckAgent:
@@ -103,7 +104,17 @@ def sub_agent_deck(state: dict, profile: ReconProfile | None = None) -> list[Dec
             ("Sellside pool", _get(pool_s, "price"), "usd"),
             ("Harmonic", _harmonic(smc), "text"),
         ]),
-        agent("derivs", mtf, [
+        agent("derivs", mtf, _derivs_rows(fut, opts, liqs, exf, matched),
+              note=("no data from " + ", ".join(missing)) if missing else ""),
+    ]
+    return deck
+
+
+def _derivs_rows(fut: dict, opts: dict, liqs: dict, exf: dict, matched: dict) -> list:
+    """The derivatives readings over the desk's own window (open interest, liquidations, funding and
+    max pain); a desk state without one (an old pinned payload) shows the 24-hour snapshot as before."""
+    if not matched:
+        return [
             ("Funding", _get(fut, "funding_rate"), "rate"),
             ("Funding 7d mean", _get(fut, "funding_7d_mean"), "rate"),
             ("Open interest 24h", _get(fut, "oi_change_24h_pct"), "pct"),
@@ -113,6 +124,19 @@ def sub_agent_deck(state: dict, profile: ReconProfile | None = None) -> list[Dec
             ("Options max pain", _get(opts, "max_pain"), "usd"),
             ("IV skew", _get(opts, "iv_skew"), "pct"),
             ("Exchange netflow 7d, BTC", _get(exf, "net_7d_btc"), "num"),
-        ], note=("no data from " + ", ".join(missing)) if missing else ""),
-    ]
-    return deck
+        ]
+    fund = matched.get("funding") or {}
+    rows = [("Funding", _get(fut, "funding_rate"), "rate")]
+    if fund.get("over"):
+        rows.append((f"Funding mean {fund['over']}", fund.get("mean_8h_rate"), "rate"))
+    ois = matched.get("open_interest") or []
+    rows += [(f"Open interest {o['over']}", o.get("change_pct"), "pct") for o in ois] or [("Open interest", None, "pct")]
+    over = _get(matched, "liquidations", "over", default="")
+    rows += [("Long/short ratio", _get(fut, "long_short_ratio"), "num"),
+             (f"Longs liquidated {over}".strip(), _get(matched, "liquidations", "longs_usd"), "usd"),
+             (f"Shorts liquidated {over}".strip(), _get(matched, "liquidations", "shorts_usd"), "usd")]
+    mp = matched.get("max_pain") or {}
+    rows += [(f"Max pain {mp['expiry']}" if mp.get("expiry") else "Options max pain", mp.get("price"), "usd"),
+             ("IV skew", _get(opts, "iv_skew"), "pct"),
+             ("Exchange netflow 7d, BTC", _get(exf, "net_7d_btc"), "num")]
+    return rows

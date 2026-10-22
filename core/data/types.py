@@ -218,7 +218,7 @@ class COTSnapshot(Availability):
 
 class TakerFlowSnapshot(Availability):
     """Real taker buy and sell volume per period, in BTC, from a perpetual-futures venue's own stats.
-    frames: timeframe -> columns timestamp, buy, sell, delta, long_liq_usd, short_liq_usd."""
+    frames: timeframe -> columns timestamp, buy, sell, delta, long_liq_usd, short_liq_usd, oi_btc, funding_rate."""
     contract: str = ""
     btc_per_contract: Optional[float] = None
     frames: dict[str, pd.DataFrame] = Field(default_factory=dict)

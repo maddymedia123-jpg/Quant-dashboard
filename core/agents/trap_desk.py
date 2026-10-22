@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from core.agents.judge import Judge
 from core.agents.recon_profiles import LIVE, ReconProfile
 from core.agents.rubric import BEARISH, BULLISH, DOMAIN_BY_KEY, RubricItem
+from core.indicators.desk_derivs import DAY_MS, SPAN_MS
 from core.traps import BULL_TRAP, TrapCandidate
 
 log = logging.getLogger(__name__)
@@ -123,10 +124,15 @@ def desk_view(state: dict, candidate: TrapCandidate, profile: ReconProfile | Non
     # Open interest *change* is unsigned with respect to direction: a genuine breakdown builds open
     # interest exactly as a genuine breakout does, so the same test serves both sides. It is context
     # only - crowding is as consistent with a trap as with a real break - so it never vetoes.
-    oi = ((state.get("derivatives") or {}).get("futures") or {}).get("oi_change_24h_pct")
+    # Read over the desk's own window (the longest one it has); the 5%-a-day bar scales with the square
+    # root of time, the way a random drift would, so a 4h desk is not held to a 24h number.
+    derivs = state.get("derivatives") or {}
+    ois = (derivs.get("matched_window") or {}).get("open_interest") or []
+    oi, over = ((ois[-1].get("change_pct"), ois[-1].get("over")) if ois
+                else ((derivs.get("futures") or {}).get("oi_change_24h_pct"), "24h"))
     try:
-        if oi is not None and float(oi) > OI_BUILDING_PCT:
-            weak.append(f"open interest is building into the move ({float(oi):+.1f}% over 24h)")
+        if oi is not None and float(oi) > OI_BUILDING_PCT * (SPAN_MS.get(over, DAY_MS) / DAY_MS) ** 0.5:
+            weak.append(f"open interest is building into the move ({float(oi):+.1f}% over {over})")
     except (TypeError, ValueError):
         pass
 

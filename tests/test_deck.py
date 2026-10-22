@@ -54,7 +54,8 @@ def test_every_reading_comes_from_the_state_and_is_filled_on_live_data(market_an
 
     derivs = dict((label, value) for label, value, _ in by_key["derivs"].rows)
     assert derivs["Funding"] is not None and derivs["Long/short ratio"] is not None
-    assert derivs["Options max pain"] > 0
+    assert next(v for k, v in derivs.items() if k.startswith("Max pain")) > 0
+    assert derivs["Longs liquidated 4h"] is not None, "the live desk reads its own 4h window"
 
 
 def test_a_missing_feed_leaves_the_reading_empty_and_says_so(market_and_analyses):
@@ -63,7 +64,7 @@ def test_a_missing_feed_leaves_the_reading_empty_and_says_so(market_and_analyses
                                  "options": OptionsSnapshot.unavailable("deribit", "timeout")})
     by_key = {a.key: a for a in deck_for(blind, analyses)}
     derivs = dict((label, value) for label, value, _ in by_key["derivs"].rows)
-    assert derivs["Funding"] is None and derivs["Options max pain"] is None
+    assert derivs["Funding"] is None and derivs["Options max pain"] is None, derivs
     assert "futures" in by_key["derivs"].note and "options" in by_key["derivs"].note
 
 

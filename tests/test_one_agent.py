@@ -238,3 +238,14 @@ def test_the_1_agent_appendix_does_not_read_as_a_failure(ctx):
     md = to_markdown(one_agent.run_one_agent_sync(Fake([OUT]), m, an, "x"))
     appendix = md.split("## APPENDIX")[1]
     assert "not produced this run" not in appendix and appendix.count("Not part of the 1-agent report") == 2
+
+
+def test_the_director_reads_each_desk_over_its_own_window(ctx):
+    """His v15 Section 2: a weekly read never leans on a 24-hour open interest change."""
+    m, analyses = ctx[0], ctx[1]
+    state = one_agent.director_state(m, analyses)
+    windows = {k: v["window"] for k, v in state["desk_derivatives"].items()}
+    assert windows == {"live": "the next 4 hours", "intraday": "the next 24 hours",
+                       "weekly": "the next 7 days", "monthly": "the next 30 days"}
+    assert state["desk_derivatives"]["weekly"]["liquidations"]["over"] == "7d"
+    assert "desk_derivatives[desk]" in one_agent.ONE_AGENT_TEXT

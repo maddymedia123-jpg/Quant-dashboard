@@ -263,11 +263,27 @@ def test_state_carries_the_derivatives_evidence_its_domain_is_scored_on(market_a
     d = lr.build_state(m, analyses)["derivatives"]
     json.dumps(d)
     assert d["futures"]["funding_rate"] is not None
-    assert "funding_7d_mean" in d["futures"] and "oi_change_24h_pct" in d["futures"]
+    assert "funding_7d_mean" in d["futures"]
     assert d["futures"]["long_short_ratio"] is not None and d["futures"]["taker_buy_sell_ratio"] is not None
-    assert d["options"]["max_pain"] > 0 and "iv_skew" in d["options"]
-    assert "liquidations" in d and "long_usd" in d["liquidations"]
+    assert "iv_skew" in d["options"]
+    # open interest, liquidations and max pain arrive over the desk's own window, not as 24h blocks
+    w = d["matched_window"]
+    assert w["window"] == "the next 4 hours" and w["max_pain"]["price"] > 0
+    assert w["liquidations"]["over"] == "4h" and w["taker_delta"]["over"] == "4h"
+    assert "oi_change_24h_pct" not in d["futures"] and "liquidations" not in d and "max_pain" not in d["options"]
     assert "stablecoins" in d
+
+
+def test_only_the_24h_desk_keeps_the_24h_snapshot_and_only_monthly_the_quarterly_max_pain(market_and_analyses):
+    from core.agents.recon_profiles import PROFILES
+
+    m, analyses = market_and_analyses
+    for key, over in (("live", "4h"), ("intraday", "24h"), ("weekly", "7d"), ("monthly", "30d")):
+        d = lr.build_state(m, analyses, profile=PROFILES[key])["derivatives"]
+        assert d["matched_window"]["liquidations"]["over"] == over, key
+        assert ("liquidations" in d) == (key == "intraday"), key
+        assert ("oi_change_24h_pct" in d["futures"]) == (key == "intraday"), key
+        assert ("max_pain" in d["options"]) == (key == "monthly"), key
 
 
 def test_missing_derivatives_feeds_are_named_rather_than_left_blank(market_and_analyses):
