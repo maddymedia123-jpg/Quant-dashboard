@@ -429,3 +429,13 @@ def test_a_desk_warning_opens_the_trap_desk(tmp_path, monkeypatch):
     assert not at.exception, [e.value for e in at.exception]
     assert at.radio(key="screen").value == "trap" and at.button_group(key="screen_nav").value == "trap"
     assert "05 · Engine" in " ".join(m.value for m in at.markdown)
+
+
+def test_one_range_per_desk_and_the_strip_reads_the_desk_window(app):
+    """The plain read, the volatility card and the forecast quote one 68% range; Live's strip says 4h."""
+    import re
+    md = " ".join(m.value for m in visit(app, "live").markdown)
+    fc = re.search(r"68% range <strong>(\$[\d,]+) to (\$[\d,]+)</strong>", md)
+    plain = re.search(r"Normal range for the next 4 hours \(where it ends two times in three\): (\$[\d,]+) to (\$[\d,]+)", md)
+    assert fc and plain and fc.groups() == plain.groups(), (fc and fc.groups(), plain and plain.groups())
+    assert "Liq 4h" in md and "Taker delta 4h" in md and "Liq 24h" not in md

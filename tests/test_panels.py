@@ -30,7 +30,7 @@ def test_kpis_cover_required_fields_with_dash_for_missing():
     m = _market()
     a = analyze_category(CATEGORIES["live"], m.spot.frames, m.futures)
     labels = [k["label"] for k in panels.kpis_for(a, m)]
-    for req in ("Price", "Direction", "RSI 14", "ATR %", "Funding", "OI 24h", "Long/Short", "Liq 24h", "Fear & Greed"):
+    for req in ("Price", "Direction now", "RSI 14", "ATR %", "Funding", "OI 24h", "Long/Short", "Liq 24h", "Fear & Greed"):
         assert req in labels
     liq = next(k for k in panels.kpis_for(a, m) if k["label"] == "Liq 24h")
     assert liq["value"] == "$204M" and liq["delta"] == "75% longs" and liq["tone"] == "down"
@@ -141,10 +141,12 @@ def test_fib_and_pattern_cards_render_and_escape():
     m = _market()
     a = analyze_category(CATEGORIES["live"], m.spot.frames, m.futures)
     h = panels.fib_html(a)
-    assert "Fibonacci time" in h and "Anchors:" in h and "Retracement of the" in h
+    assert "Fibonacci time · drawing only" in h and "count from the last short swing" in h
+    assert "retracement of the larger" in h
     a.reversal = ReversalWindow("ACTIVE", "bearish", 5, a.fib.upcoming[0].timestamp_ms, 0, 2, ["at resistance 78,600 (4 touches)"])
     h = panels.fib_html(a)
-    assert "Window open" in h and "Reversal window open" in h and "bearish" in h
+    for call in ("Window open", "Reversal window open", "Next reversal window", "Confluence building"):
+        assert call not in h, "tested and found no edge: never worded as a timing call"
     assert "ti-card warn" not in h, "tested and found no edge: not highlighted as a warning"
     assert "did not time turns" in h and "17.3%" in h
     a.patterns = [Pattern("<b>Double top</b>", "bearish", "forming", 0.8, 77000.0, 75000.0, 79000.0, [], 0, note="second top being tested now")]
@@ -455,3 +457,17 @@ def test_the_open_interest_column_follows_the_desks_own_timeframes():
            "open_interest": {"1d": 1.5, "1w": -2.0, "1M": None}}
     h = panels.liquidity_html({"1d": row})
     assert "<th>OI 1d/1w/1M</th>" in h and "+1.5% / -2.0% / —" in h, "not dashes for 15m/1h/4h"
+
+
+def test_the_number_strip_reads_the_desks_own_window():
+    m = _market()
+    a = analyze_category(CATEGORIES["live"], m.spot.frames, m.futures)
+    w = {"open_interest": [{"over": "1h", "change_pct": 0.1}, {"over": "4h", "change_pct": -1.2, "now_btc": 58_400}],
+         "liquidations": {"over": "4h", "longs_usd": 3e6, "shorts_usd": 1e6},
+         "taker_delta": {"over": "4h", "delta_btc": -38.0},
+         "max_pain": {"expiry": "2026-10-24", "price": 82_000.0}}
+    k = {x["label"]: x for x in panels.kpis_for(a, m, w)}
+    assert k["OI 4h"]["value"] == "-1.2%" and "Liq 4h" in k and k["Liq 4h"]["delta"] == "75% longs"
+    assert k["Taker delta 4h"]["value"] == "-38 BTC" and k["Max pain"]["value"] == "$82,000"
+    assert not {"OI 24h", "Liq 24h", "Taker delta 24h"} & set(k), "no 24h block on a 4h desk"
+    assert "OI 24h" in {x["label"] for x in panels.kpis_for(a, m)}, "without a window it says 24h, honestly"

@@ -30,7 +30,7 @@ def test_the_live_recon_example_reads_as_agreed():
     r = read(analysis())
     assert r["What's happening"] == "Strong lean lower. BTC is $81,557 on the 1h chart."
     assert r["Levels that matter"] == ("Floor $80,985 (held 4 times), ceiling $81,655 (rejected 7 times). "
-                                       "Normal range for the next 4 hours: $80,752 to $82,371.")
+                                       "Normal range for the next 4 hours (where it ends two times in three): $80,752 to $82,371.")
     assert r["What changes the view"] == ("A 1h close above $81,926, or the moving averages turning up, flips this "
                                           "higher. Losing $80,985 opens the way toward $80,410.")
     assert "Also worth noting" not in r, "an ordinary day is three lines"

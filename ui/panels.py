@@ -55,14 +55,50 @@ def _taker_kpi(flow) -> dict:
             "tone": "up" if net > 0 else "down" if net < 0 else None}
 
 
-def kpis_for(a: CategoryAnalysis, m: MarketSnapshot) -> list[dict]:
+def _window_kpis(w: dict) -> list[dict]:
+    """Open interest, liquidations, taker delta and max pain over the desk's own window
+    (core.indicators.desk_derivs): the strip used to show the 24h snapshot and the biggest expiry on every desk."""
+    ois = w.get("open_interest") or []
+    o = ois[-1] if ois else {}
+    oi = {"label": f"OI {o.get('over', '')}".strip(), "value": fmt_pct(o.get("change_pct"), 1),
+          "delta": f"{fmt_num(o.get('now_btc'), 0)} BTC" if o.get("now_btc") else None,
+          "tone": "up" if (o.get("change_pct") or 0) >= 0 else "down"}
+    lq = w.get("liquidations") or {}
+    total = (lq.get("longs_usd") or 0) + (lq.get("shorts_usd") or 0)
+    share = (lq.get("longs_usd") or 0) / total * 100 if total else None
+    liq = {"label": f"Liq {lq.get('over', '')}".strip(), "value": fmt_num(total / 1e6, 1, "$", "M") if total else "—",
+           "delta": f"{share:.0f}% longs" if share is not None else None,
+           "tone": ("down" if share >= 60 else "up" if share <= 40 else None) if share is not None else None}
+    td = w.get("taker_delta") or {}
+    net = td.get("delta_btc")
+    taker = {"label": f"Taker delta {td.get('over', '')}".strip(),
+             "value": f"{net:+,.0f} BTC" if net is not None else "—",
+             "delta": ("buyers paying" if net > 0 else "sellers paying" if net < 0 else "balanced") if net is not None
+             else "no taker feed", "tone": ("up" if net > 0 else "down" if net < 0 else None) if net is not None else None}
+    mp = w.get("max_pain") or {}
+    pain = {"label": "Max pain", "value": fmt_num(mp.get("price"), 0, "$"), "delta": mp.get("expiry"), "tone": None}
+    return [oi, liq, taker, pain]
+
+
+def kpis_for(a: CategoryAnalysis, m: MarketSnapshot, window: dict | None = None) -> list[dict]:
+    """The desk's number strip. With `window` (the desk's own-window derivatives) the open interest,
+    liquidations, taker delta and max pain are read over that window, labelled with it."""
     f, s, o = m.futures, m.sentiment, m.options
     rsi_last = float(a.rsi.dropna().iloc[-1]) if a.rsi.notna().any() else None
     pc = a.price_change_24h_pct
+    strip = _kpis_24h(a, m, f, s, o, rsi_last, pc)
+    if window:
+        oi, liq, taker, pain = _window_kpis(window)
+        swap = {"OI 24h": oi, "Liq 24h": liq, "Taker delta 24h": taker, "Max pain": pain}
+        strip = [swap.get(k["label"], k) for k in strip]
+    return strip
+
+
+def _kpis_24h(a, m, f, s, o, rsi_last, pc) -> list[dict]:
     return [
         {"label": "Price", "value": fmt_num(a.price, 0, "$"), "delta": (fmt_pct(pc) + " 24h") if pc is not None else None,
          "tone": "up" if (pc or 0) >= 0 else "down"},
-        {"label": "Direction", "value": a.direction.direction, "delta": f"confidence {a.direction.confidence:.0%}", "tone": tone_for_direction(a.direction.direction)},
+        {"label": "Direction now", "value": a.direction.direction, "delta": f"confidence {a.direction.confidence:.0%}", "tone": tone_for_direction(a.direction.direction)},
         {"label": "RSI 14", "value": fmt_num(rsi_last, 0), "delta": a.ema.state + " EMA stack", "tone": {"BULL": "up", "BEAR": "down"}.get(a.ema.state)},
         {"label": "ATR %", "value": fmt_num(a.vol.atr_pct, 2, suffix="%"), "delta": a.vol.regime + " regime", "tone": "warn" if a.vol.regime == "HIGH" else None},
         {"label": "Funding", "value": fmt_pct(f.funding_rate * 100, 4) if f.funding_rate is not None else "—",
@@ -138,7 +174,7 @@ def layman_lines(a: CategoryAnalysis) -> list[tuple[str, str]]:
         span = f"{money(v.exp_low)} to {money(v.exp_high)}"
         levels += " " + {"HIGH": f"Range for the {horizon}, wider than usual: {span}.",
                          "LOW": f"Range for the {horizon}, tighter than usual: {span}."}.get(
-            v.regime, f"Normal range for the {horizon}: {span}.")
+            v.regime, f"Normal range for the {horizon} (where it ends two times in three): {span}.")
     elif not levels:
         levels = "Not enough history yet for levels or a range."
     if not (sup or ceil) and v.exp_low and v.exp_high:
@@ -248,13 +284,18 @@ def anchored_direction_html(a: CategoryAnalysis, v, now_ms: int) -> str:
     if v.unconfirmed:
         body += (f"<p><span class='ti-chip warn'>live read {html.escape(v.live.direction)} ({v.live.confidence:.0%})</span> "
                  f"unconfirmed until a trigger fires</p>")
+    else:
+        # same side, different strength: without this the strip's "confidence 12%" and this card's 3% read
+        # as two answers to one question
+        body += (f"<p class='muted'>Live read now: {html.escape(v.live.direction)} {v.live.confidence:.0%}. "
+                 "The anchored call holds until a re-anchor trigger fires.</p>")
     if v.changed and v.triggers_fired and v.triggers_fired != ["initial"]:
         body += f"<p class='muted'>Re-anchored now on: {html.escape(', '.join(v.triggers_fired))}</p>"
     body += (f"<div class='ti-pair'><div><span class='ti-label'>Anchor</span><span class='ti-pair-v'>"
              f"{fmt_num(an.anchor, 0, '$')}</span></div><div><span class='ti-label'>Invalidation</span>"
              f"<span class='ti-pair-v down'>{fmt_num(an.invalidation, 0, '$')}</span></div></div>")
     body += f"<span class='ti-label'>Flips if</span><p>{html.escape(an.flips_if)}</p>"
-    body += f"<span class='ti-label'>Drivers</span>" + _li(an.drivers)
+    body += f"<span class='ti-label'>Drivers, as read when anchored</span>" + _li(an.drivers)
     body += ("<details class='ti-triggers'><summary>Show the eight re-anchor triggers</summary><div class='ti-tags'>"
              + "".join(chip(t.strip(), "neutral-fill") for t in TRIGGERS_WATCHED.split("·"))
              + f"</div><p class='muted'>Triggers watched: {TRIGGERS_WATCHED}</p></details>")
@@ -312,43 +353,33 @@ def _bars(n: int | None) -> str:
 
 
 def fib_html(a: CategoryAnalysis) -> str:
-    """Fibonacci time zones (two-point), the reversal window, and retracement levels."""
-    f, rw, fr = a.fib, a.reversal, a.fib_retr
-    title = "Fibonacci time · reversal window"
+    """Fibonacci time zones and retracement levels, shown as a drawing only.
+
+    The time zones were tested and did not time turns, so nothing here is worded as a call: no "next
+    reversal window", no "confluence building", no open-window banner. The zones are listed as dates and
+    the two swings the card uses are named apart - the time zones count from the last short swing, the
+    retracement is drawn on the larger leg - because side by side they read as one contradictory swing."""
+    f, fr = a.fib, a.fib_retr
+    title = "Fibonacci time · drawing only, no timing edge"
     if f is None:
         return card_html(title, "<p class='muted'>Not enough history for Fibonacci time zones.</p>")
-    body, tone = "", "neutral"
-    body += ("<p class='muted ti-note'>Tested on a year of hourly BTC candles, these time zones did not time "
-             "turns (a turn within two hours 17.3% of the time, against 18.7% for any hour). Shown as a drawing; "
-             "for timing, see the turning window in the summary at the foot of this desk.</p>")
-    if rw is not None:
-        label = {"ACTIVE": "Window open", "UPCOMING": "Upcoming", "TIME_ONLY": "Time only"}.get(rw.status, rw.status)
-        body += f"<div class='ti-tags'>{chip(label, 'accent')}</div>"
-        head = f"F{rw.zone_k} {_bars(rw.bars_away)}" + (f" · ±{rw.window_bars} bar" if rw.status == "ACTIVE" else "")
-        body += f"<div class='ti-h3'>{html.escape(head)}</div>"
-        if rw.status == "ACTIVE":
-            body += (f"<p>Reversal window open: a Fibonacci reversal window is open with a "
-                     f"<strong>{html.escape(rw.bias)}</strong> lean.</p>")
-            if rw.confluence:
-                body += "<span class='ti-label'>Confluence</span>" + _li(rw.confluence)
-        elif rw.status == "TIME_ONLY":
-            body += ("<p>A Fibonacci time zone, but price has no confluence (no level, divergence, retracement "
-                     "or pattern), so no reversal signal.</p>")
-        else:
-            body += f"<p>Next reversal window: {_utc(rw.zone_ms)}.</p>"
-            if rw.confluence:
-                body += "<span class='ti-label'>Confluence building now</span>" + _li(rw.confluence)
+    body = ("<p class='muted ti-note'>Tested on a year of hourly BTC candles, these time zones did not time "
+            "turns (a turn within two hours 17.3% of the time, against 18.7% for any hour). Shown as a drawing "
+            "only; for timing, see the turning window in the summary at the foot of this desk.</p>")
     if f.upcoming:
-        body += "<div class='ti-rows'>" + "".join(
-            f"<div class='ti-row3'><strong>F{z.k}</strong><span>{_utc(z.timestamp_ms)}</span>"
-            f"<span class='muted'>{_bars(z.bars_from_now)}</span></div>" for z in f.upcoming) + "</div>"
+        body += ("<span class='ti-label'>Time zones ahead (drawing)</span><div class='ti-rows muted'>" + "".join(
+            f"<div class='ti-row3'><span>F{z.k}</span><span>{_utc(z.timestamp_ms)}</span>"
+            f"<span>{_bars(z.bars_from_now)}</span></div>" for z in f.upcoming) + "</div>")
+    body += (f"<p class='muted ti-note'>Time zones count from the last short swing: {f.anchor_kind} "
+             f"{fmt_num(f.anchor_price, 0, '$')} ({_utc(f.anchor_ms)}) to {f.anchor2_kind} "
+             f"{fmt_num(f.anchor2_price, 0, '$')} ({_utc(f.anchor2_ms)}), one unit = {f.unit_bars} bars.</p>")
     if fr is not None:
-        body += (f"<span class='ti-label'>Retracement of the {fr.leg} leg, {fmt_num(fr.low, 0, '$')} – "
+        body += (f"<span class='ti-label'>Price retracement of the larger {fr.leg} leg, {fmt_num(fr.low, 0, '$')} – "
                  f"{fmt_num(fr.high, 0, '$')}</span><div class='ti-grid3'>"
                  + "".join(_kv(str(r), fmt_num(fr.levels[r], 0, '$')) for r in (0.382, 0.5, 0.618)) + "</div>")
-    body += (f"<p class='muted ti-note'>Anchors: {f.anchor_kind} {fmt_num(f.anchor_price, 0, '$')} ({_utc(f.anchor_ms)}) → "
-             f"{f.anchor2_kind} {fmt_num(f.anchor2_price, 0, '$')} ({_utc(f.anchor2_ms)}) · unit {f.unit_bars} bars</p>")
-    return card_html(title, body, tone)
+    return card_html(title, body, "neutral")
+
+
 def patterns_html(a: CategoryAnalysis) -> str:
     if not a.patterns:
         return card_html("Chart patterns", "<p class='muted'>No clean pattern in the last 120 bars.</p>")
@@ -389,7 +420,7 @@ def volatility_html(a: CategoryAnalysis) -> str:
     body = (f"<div class='ti-split'><span class='ti-h3'>{html.escape(v.regime)} regime</span>"
             f"<span>ATR {fmt_num(v.atr, 0, '$')} · {fmt_num(v.atr_pct, 2, suffix='%')}</span></div>")
     body += "<div class='ti-rows'>"
-    body += (f"<div class='ti-split'><span class='ti-label'>Expected range, {html.escape(v.horizon_label)}</span>"
+    body += (f"<div class='ti-split'><span class='ti-label'>68% range, {html.escape(v.horizon_label)}</span>"
              f"<span><strong>{fmt_num(v.exp_low, 0, '$')} – {fmt_num(v.exp_high, 0, '$')}</strong> "
              f"<span class='muted'>±{fmt_num(v.sigma_pct, 2, suffix='%')}</span></span></div>")
     body += (f"<div class='ti-split'><span class='ti-label'>2σ band, 20-bar</span>"
@@ -1861,16 +1892,33 @@ def gamma_bar_html(g: dict | None, price: float | None = None, desk: str = "") -
     lv = "".join(f"<span><b>{n}</b> {fmt_num(v, 0, '$')}</span>" for n, v in levels)
     n_exp = len(g.get("expiries") or [])
     days = g.get("horizon_days") or 30
-    scope = (f"{desk}: options settling in the next " + (f"{days:g} day" if days == 1 else f"{days:g} days")) if desk else ""
+    scope = (f"{desk}: options settling in the next " + ("24 hours" if days == 1 else f"{days:g} days")) if desk else ""
     tip = (f"Net GEX {net_txt} per 1% move, from {g.get('options_used', 0)} options across {n_exp} expiries in the "
-           f"next {days:g} day{'' if days == 1 else 's'}. Assumes the naive dealer sign: calls positive, puts negative. "
+           f"next {'24 hours' if days == 1 else f'{days:g} days'}. Assumes the naive dealer sign: calls positive, puts negative. "
            "Real dealer positioning is not published.")
     return (f"<div class='ti-gamma {tone}' title='{html.escape(tip)}'><i class='ti-gamma-mark'></i>"
             f"<span class='ti-gamma-reg'>{label}</span>"
             + (f"<span class='ti-gamma-scope'>{html.escape(scope)}</span>" if scope else "") +
             f"<span class='ti-gamma-net'>net {net_txt} / 1%{html.escape(side)}</span>"
             f"<span class='ti-gamma-lv'>{lv}</span>"
-            f"<span class='ti-gamma-play'>{html.escape(play)}</span></div>")
+            f"<span class='ti-gamma-play'>{html.escape(play + _wall_sides(g, price))}</span></div>")
+
+
+def _wall_sides(g: dict, price: float | None) -> str:
+    """A call wall is normally above price (a ceiling) and a put wall below (a floor). On a short expiry
+    either can sit on the other side - big open interest at a strike price has already crossed - and then
+    "ceiling" and "floor" read backwards, so the bar says what they are instead."""
+    if not price:
+        return ""
+    cw, pw = g.get("call_wall"), g.get("put_wall")
+    odd = [f"the call wall ({fmt_num(cw, 0, '$')}) is below price" if cw and cw < price else "",
+           f"the put wall ({fmt_num(pw, 0, '$')}) is above price" if pw and pw > price else ""]
+    odd = [o for o in odd if o]
+    if not odd:
+        return ""
+    one = len(odd) == 1
+    return (" Note: " + " and ".join(odd) + f". Price has already crossed {'that strike' if one else 'those strikes'}, so "
+            f"read {'it as a level' if one else 'them as levels'} price may be pulled back to, not as a ceiling or a floor.")
 
 
 def rail_tone(verdict, analysis) -> str:

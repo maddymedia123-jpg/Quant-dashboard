@@ -49,7 +49,8 @@ def test_an_invalidation_inside_the_zone_is_pushed_past_it():
 def test_sideways_takes_his_example_from_the_nearer_edge_and_names_both_ways_out():
     s = ls.lines(desk("NEUTRAL", 0.1, None), DERIVS, 50, NOON)     # $300 above the floor, $500 below the ceiling
     assert s["bias"] == "Range-Bound / Conditional Long on Floor Retest at $80,800"
-    assert "picks a side on a 1-hour close above $81,600 (up) or below $80,650 (down)" in s["summary"]
+    assert ("tilts lower on a 1-hour close below the $80,800 floor and higher above the $81,600 ceiling; "
+            "the long setup is cancelled below $80,650") in s["summary"]
     near_top = desk("NEUTRAL", 0.1, None, levels=[lvl("support", 80_200.0), lvl("resistance", 81_300.0)])
     assert ls.lines(near_top, DERIVS, 50, NOON)["bias"].startswith("Range-Bound / Conditional Short on Ceiling Retest")
 
@@ -92,3 +93,8 @@ def test_kill_zones_are_shown_with_their_measured_odds_and_the_dead_ones_said_to
     assert "New York session 18:00–22:00 PKT: 30% of turns, 1.8x chance" in s
     assert "Asian session (05:00–09:00 PKT) and London open (12:00–15:00 PKT): no better than chance" in s
     assert "Kill zones, measured:" in panels.layman_summary_html(desk(), "Live Recon", DERIVS, 50, NOON)
+
+
+def test_the_two_turning_windows_are_said_to_be_one_afternoon():
+    s = ls.lines(desk(), DERIVS, 50, NOON)["kill_zones"]
+    assert "overlaps it by three, so they are one afternoon, not two" in s

@@ -184,3 +184,14 @@ def test_the_bar_names_whose_expiries_it_is_built_from():
     h = panels.gamma_bar_html(g, 100_000.0, "Weekly")
     assert "Weekly: options settling in the next 8 days" in h and "next 8 days" in h
     assert "settling" not in panels.gamma_bar_html(g, 100_000.0)
+
+
+def test_a_one_day_desk_says_24_hours_and_walls_on_the_wrong_side_are_explained():
+    from ui import panels
+    g = {"available": True, "regime": "negative", "horizon_days": 1, "expiries": ["x"], "options_used": 3,
+         "call_wall": 81_000.0, "put_wall": 81_500.0, "zero_gamma_level": 82_025.0}
+    h = panels.gamma_bar_html(g, 81_400.0, "Live Recon")
+    assert "options settling in the next 24 hours" in h and "next 1 day" not in h
+    assert "the call wall ($81,000) is below price" in h and "not as a ceiling or a floor" in h
+    usual = dict(g, call_wall=82_000.0, put_wall=81_000.0)
+    assert "Note:" not in panels.gamma_bar_html(usual, 81_400.0, "Live Recon")

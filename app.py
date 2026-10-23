@@ -654,7 +654,12 @@ def category_tab(key):
             st.info(f"Not enough {CATEGORIES[key].chart_tf} history to analyse this category.")
             return
         panels.render(panels.desk_hero_html(SCREENS.index(key) + 1, PROFILES[key], CATEGORIES[key], now_ms))
-        kpi_strip(panels.kpis_for(a, m))
+        # the desk's own-window derivatives: the strip, the deck and the summary all read this one
+        try:
+            _own = desk_derivs.read(key, m, now_ms)
+        except Exception:  # noqa: BLE001 - the strip falls back to the 24h snapshot, labelled 24h
+            _own = None
+        kpi_strip(panels.kpis_for(a, m, _own))
         # the cascade sits in the quick read: bias above, the anchor, the engine below
         try:
             v_ = verdicts.get(key)
@@ -700,6 +705,11 @@ def category_tab(key):
                                       m.spot.frames.get(a.chart_tf))
         render_forecast_chart(a, fcast, dark, height=340, signal=signal)
         panels.render(panels.forecast_html(fcast, record, a.vol.horizon_label))
+        if fcast.available and fcast.end_low and fcast.end_high and a.price:
+            # one range on the desk: everything below (plain read, volatility card, summary) quotes the
+            # forecast's 68% range - the one with a track record - instead of a second, simpler estimate
+            a = replace(a, vol=replace(a.vol, exp_low=fcast.end_low, exp_high=fcast.end_high,
+                                       sigma_pct=(fcast.end_high - fcast.end_low) / 2 / a.price * 100))
         panels.render(panels.layman_html(a))
         c1, c2 = st.columns(2, gap="large")
         with c1:
@@ -739,10 +749,6 @@ def category_tab(key):
             except Exception as e:  # noqa: BLE001
                 st.warning(f"Exchange flows unavailable: {e}")
         # his Section 6: every desk ends with the same standardized layman summary
-        try:
-            _own = desk_derivs.read(key, m, now_ms)
-        except Exception:  # noqa: BLE001 - the summary still reads without the flow line
-            _own = None
         panels.render(panels.layman_summary_html(a, CATEGORIES[key].label, _own,
                                                  m.sentiment.fear_greed if m.sentiment.available else None, now_ms))
 

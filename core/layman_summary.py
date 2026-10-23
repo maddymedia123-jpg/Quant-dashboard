@@ -141,12 +141,16 @@ def lines(a, derivs: dict | None, fear_greed: int | None, now_ms: int) -> dict:
              "BEARISH": f"Sellers have the edge for {horizon}: BTC is {_money(a.price)}, leaning lower ({_conf(d.confidence)}).",
              }.get(d.direction, f"No side has the edge for {horizon}: BTC is {_money(a.price)}, moving sideways.")
     tfw = TF_WORDS.get(a.chart_tf, a.chart_tf)
+    # A sideways desk names the same floor and ceiling as the plain-English read above it; the setup's
+    # stop is a separate line further out. Naming the stop as "where it turns down" gave the reader two
+    # different down-levels on one screen.
+    level = (f.zone[0] + f.zone[1]) / 2 if f.zone else None
     if f.breakout is not None and f.side == "LONG":
-        flip = (f"It picks a side on a {tfw} close above {_money(f.breakout)} (up) or below "
-                f"{_money(f.invalidation)} (down).")
+        flip = (f"It tilts lower on a {tfw} close below the {_money(level)} floor and higher above the "
+                f"{_money(f.breakout)} ceiling; the long setup is cancelled below {_money(f.invalidation)}.")
     elif f.breakout is not None and f.side == "SHORT":
-        flip = (f"It picks a side on a {tfw} close above {_money(f.invalidation)} (up) or below "
-                f"{_money(f.breakout)} (down).")
+        flip = (f"It tilts higher on a {tfw} close above the {_money(level)} ceiling and lower below the "
+                f"{_money(f.breakout)} floor; the short setup is cancelled above {_money(f.invalidation)}.")
     elif f.side == "SHORT":
         flip = f"A full move up needs a {TF_WORDS.get(a.chart_tf, a.chart_tf)} close above {_money(f.invalidation)}."
     elif f.side == "LONG":
@@ -191,4 +195,6 @@ def _kill_zones(now_ms: int) -> str:
     text = "; ".join(edge)
     if none:
         text += (". " if text else "") + " and ".join(none) + ": no better than chance, not turning times"
-    return text + "."
+    # two windows on one screen invite "which one?": they are the same afternoon, one hour apart
+    return text + (". Window 1 (12:00-16:00 UTC) is the strongest four hours; the New York session "
+                   "(13:00-17:00 UTC) overlaps it by three, so they are one afternoon, not two.")
