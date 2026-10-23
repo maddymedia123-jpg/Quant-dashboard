@@ -2234,3 +2234,40 @@ def layman_summary_html(a: CategoryAnalysis, label: str, derivs: dict | None, fe
             f"<p><strong>❌ Bias Invalidation Condition:</strong><br>{e(s['condition'])}</p>"
             "<p class='muted ti-note'>Levels come from this desk's own analysis; the entry zone is the nearest "
             "level the bias acts from, a quarter ATR either side. Not trading advice.</p></div>")
+
+
+def sine_experimental_html(warning, ny_now: bool, record, history_note: str = "") -> str:
+    """The sine-wave turn warning, labelled EXPERIMENTAL on every line that could be read as a call."""
+    from core.indicators import sine_wave as sw
+    from core.trades import fmt_date, fmt_when
+
+    if warning is not None:
+        way = "a turn UP (cycle bottom)" if warning.side == "bottom" else "a turn DOWN (cycle top)"
+        status = (f"<p><strong>⚠ Signal: {way}</strong> on the 15-minute candle that closed "
+                  f"{html.escape(fmt_when(warning.at_ms))} at {fmt_num(warning.price, 0, '$')}. "
+                  "A big turn may start within 30 minutes. Experimental: do not trade on it alone.</p>")
+        tone = "up" if warning.side == "bottom" else "down"
+    elif ny_now:
+        status = "<p>No signal right now. It is watching the 15-minute candles during New York hours.</p>"
+        tone = "neutral"
+    else:
+        status = ("<p>Off: it only reads New York hours, 18:00–22:00 PKT (13:00–17:00 UTC), the one window where "
+                  "it showed anything.</p>")
+        tone = "neutral"
+
+    since = f"{fmt_date(record.since_ms)}"
+    if record.signals:
+        rec = (f"<p><strong>Live record since {since}:</strong> {record.signals} signals, {record.hits} followed by a "
+               f"big turn within 30 minutes ({record.hit_rate:.0%}), {record.right_way} of them the turn it named. "
+               + (f"Any New York candle: {record.base:.1%}, so {record.lift:.1f}x. " if record.base else "")
+               + ("Too few to judge yet: about 100 signals are needed." if record.signals < 100 else "")
+               + "</p>")
+    else:
+        rec = (f"<p><strong>Live record since {since}:</strong> no settled signals yet. A signal is scored about "
+               "6.5 hours after it, once the turn it predicted can be confirmed.</p>")
+    return card_html("Sine wave turn warning · EXPERIMENTAL, NOT PROVEN", (
+        status + rec
+        + f"<p class='muted ti-note'>Backtest: {html.escape(sw.MEASURED)} On 1h, 4h and daily candles, and outside "
+        "New York hours, it did no better than a random hour. Not used by the agents, the plans or the Discord "
+        "alerts; it stays only if the live record holds."
+        + (f" {html.escape(history_note)}" if history_note else "") + "</p>"), tone)

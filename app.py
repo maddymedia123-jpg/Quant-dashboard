@@ -517,6 +517,20 @@ def _event_reads(data_stamp: str):
     return read_all(m.spot.frames.get("1h"), m.calendar.events if m.calendar.available else [], now_ms)
 
 
+@st.cache_data(ttl=900, show_spinner=False)
+def _sine_read(quarter: int, data_stamp: str):
+    """The experimental sine card: the warning off the regular 15m feed, the live record off a paged history
+    reaching back to the go-live date (the feed keeps three weeks). Recomputed once per 15m candle."""
+    from core.data.gate_candles import fetch_15m_since
+    from core.data.market import _offline
+    from core.indicators import sine_wave as sw
+    feed = m.spot.frames.get("15m")
+    hist = None if _offline() else fetch_15m_since(sw.GO_LIVE_MS - 2 * 86_400_000, now_ms)
+    note = "" if hist is not None else "The full history did not load, so the record covers the last three weeks only."
+    warning, ny_now = sw.current(feed, now_ms)
+    return warning, ny_now, sw.live_record(hist if hist is not None else feed, now_ms), note
+
+
 @st.cache_data(ttl=TTL["spot"], show_spinner=False)
 def _desk_harmonics(category: str, data_stamp: str):
     """Harmonics on the desk's own 1H/4H/1D, with the gamma levels they may sit on."""
@@ -661,6 +675,12 @@ def category_tab(key):
                 panels.render(panels.harmonics_html(_harm))
         except Exception as e:  # noqa: BLE001
             st.warning(f"Harmonic scan unavailable this refresh: {e}")
+        if key == "live":
+            # experimental and labelled so: tracked live from its go-live date, never fed to agents or alerts
+            try:
+                panels.render(panels.sine_experimental_html(*_sine_read(now_ms // 900_000, _data_stamp())))
+            except Exception as e:  # noqa: BLE001
+                st.warning(f"Sine wave card unavailable this refresh: {e}")
         if key in ("weekly", "monthly"):
             last_sig = store.last_signal(key, before_ms=now_ms)
             banner = panels.early_warning_html(early_warnings(a, m.futures, last_sig["squeeze_score"] if last_sig else None))

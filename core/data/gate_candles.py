@@ -108,3 +108,32 @@ async def fetch_gate_candles(client: httpx.AsyncClient) -> SpotSnapshot:
     except Exception as e:  # noqa: BLE001 - provider boundary
         log.error("gate candles unavailable: %s", e)
         return SpotSnapshot.unavailable(SOURCE, str(e))
+
+
+def fetch_15m_since(start_ms: int, now_ms: int, client: httpx.Client | None = None) -> pd.DataFrame | None:
+    """15-minute perp candles from `start_ms` to now, paged (the regular feed keeps only 2,000 - three
+    weeks). For the experimental sine record, which must reach back to its go-live date. Gate serves the
+    newest 10,000 points, about 104 days, so the record can grow for three months before it is capped.
+    None on any failure: the caller falls back to the regular feed and says so."""
+    step = 900
+    own = client is None
+    c = client or httpx.Client(timeout=20, headers={"User-Agent": "trap-intel-dashboard/1.0"})
+    try:
+        frames, to = [], now_ms // 1000 // step * step
+        first = max(start_ms // 1000, to - 9_990 * step)
+        while to > first:
+            frm = max(first, to - 1_999 * step)
+            r = c.get(f"{BASE}/candlesticks", params={"contract": CONTRACT, "interval": "15m", "from": frm, "to": to})
+            r.raise_for_status()
+            frames.append(parse_candles(r.json()))
+            to = frm - step
+        if not frames:
+            return None
+        df = pd.concat(frames)
+        return df.sort_values("timestamp").drop_duplicates("timestamp").reset_index(drop=True)
+    except Exception as e:  # noqa: BLE001 - provider boundary
+        log.error("Gate.io 15m history unavailable: %s", e)
+        return None
+    finally:
+        if own:
+            c.close()
