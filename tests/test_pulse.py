@@ -70,7 +70,21 @@ def test_a_report_with_a_plan_speaks_from_the_plan():
     assert e.dedup_key == "pulse:report:TIR1-1"
     assert "MARKET DIRECTION: BEARISH" in e.headline, "the plan's side, not the desk's lean"
     assert "Target Level: $80,900" in e.headline and "Safety Line): $82,650" in e.headline
-    assert "$81,800–$82,200 zone" in e.headline
+    assert "below the sell zone ($81,800–$82,200)" in e.headline
+    assert "Do not sell here: wait for a rise into the zone, then sell only after a 1-hour candle closes below $81,800." in e.headline
+
+
+def test_the_confirmation_names_the_candle_and_the_level_and_where_price_stands():
+    plan = dict(PLAN, confirm_timeframe="4h", confirm_close=81_750, taker_ratio_limit=0.9)
+    row = {"report_id": "R", "ts_ms": CLOSE, "plan": json.dumps(plan)}
+    inside = pulse.report_event(row, live(), NS(**{**vars(market()), "spot": NS(last=82_000.0)}), CLOSE).headline
+    assert "inside the sell zone" in inside
+    assert "Sell only after a 4-hour candle closes below $81,750, with sellers doing more of the trading." in inside
+    long_plan = {"side": "LONG", "zone_low": 80_000, "zone_high": 80_300, "stop": 79_600, "targets": [81_000]}
+    above = pulse.report_event({"report_id": "L", "ts_ms": CLOSE, "plan": json.dumps(long_plan)}, live(),
+                               market(), CLOSE).headline
+    assert "above the buy zone ($80,000–$80,300)" in above
+    assert "Do not buy here: wait for a dip into the zone, then buy only after a 1-hour candle closes above $80,300." in above
 
 
 def test_a_report_without_a_plan_falls_back_to_the_live_desk_and_a_stale_one_is_skipped():
@@ -83,9 +97,37 @@ def test_a_report_without_a_plan_falls_back_to_the_live_desk_and_a_stale_one_is_
 
 def test_news_lists_us_prints_and_fresh_headlines_or_says_there_are_none():
     ev = [{"title": "CPI m/m", "time_ms": CLOSE + 9 * H}]
-    t = pulse.close_event(live(), market(ev, [{"title": "SEC delays ETF", "published_ms": 1}]), CLOSE).headline
+    t = pulse.close_event(live(), market(ev, [{"title": "SEC delays ETF", "published_ms": 1, "topic": "etf"}]),
+                          CLOSE).headline
     assert "US CPI m/m at" in t and "Headline: SEC delays ETF" in t
-    assert "No major news" in pulse.close_event(live(), market(), CLOSE).headline
+    assert "No US data releases or Bitcoin-moving headlines" in pulse.close_event(live(), market(), CLOSE).headline
+
+
+def test_only_bitcoin_or_market_wide_headlines_and_bitcoin_ones_first():
+    heads = [{"title": "Small chain drained in exploit", "published_ms": 9, "topic": "security", "assets": ["ETH"]},
+             {"title": "Exchange abroad fights regulator in court", "published_ms": 8, "topic": "regulation"},
+             {"title": "Leader eyes blockchain to dodge sanctions", "published_ms": 7, "topic": "geopolitics"},
+             {"title": "Bitcoin holds $81K as crude hits a high", "published_ms": 3, "topic": "geopolitics",
+              "assets": ["BTC"]},
+             {"title": "SEC sues bitcoin miner", "published_ms": 2, "topic": "regulation", "assets": ["BTC"]}]
+    t = pulse.close_event(live(), market(heads=heads), CLOSE).headline
+    news = t.split("EVENT WARNINGS:")[1]
+    assert "Small chain" not in news and "Exchange abroad" not in news
+    assert news.index("Bitcoin holds $81K") < news.index("SEC sues bitcoin miner")
+    assert "Leader eyes" not in news, "two Bitcoin headlines fill the two places"
+    off_topic = pulse._news(market(heads=heads[:2]), CLOSE)
+    assert off_topic.startswith("No US data releases or Bitcoin-moving headlines"), off_topic
+
+
+def test_fed_odds_appear_only_with_a_fed_meeting_this_week():
+    fomc = [{"title": "FOMC Statement", "time_ms": CLOSE + 2 * 86_400_000}]
+    odds = NS(available=True, tradeable=lambda a: [{"question": "Will the Fed hold rates in October?",
+                                                   "probability": 0.92, "volume_24h": 5}])
+    near = NS(**{**vars(market()), "predictions": odds,
+                 "calendar": NS(available=True, upcoming=lambda now, within: fomc)})
+    assert 'markets give 92% to "Will the Fed hold rates in October?"' in pulse._news(near, CLOSE)
+    far = NS(**{**vars(market()), "predictions": odds})
+    assert "Fed meeting" not in pulse._news(far, CLOSE)
 
 
 def test_long_batches_go_out_as_several_messages_under_the_limit():

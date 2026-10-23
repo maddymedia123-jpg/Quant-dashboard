@@ -23,6 +23,9 @@ CLOSE_MS = 4 * HOUR_MS
 SEND_WITHIN_MS = 30 * 60_000
 NEWS_WITHIN_MS = 6 * HOUR_MS             # headlines from the last six hours
 EVENTS_WITHIN_MS = 24 * HOUR_MS          # high-impact US prints in the next day
+MARKET_WIDE = ("macro", "geopolitics", "etf")   # headline topics that move every market, BTC named or not
+FED_WITHIN_MS = 7 * 24 * HOUR_MS
+FED_WORDS = ("fomc", "federal funds rate", "fed chair")
 RULE = "=" * 40
 DIRECTION_WORD = {"BULLISH": "BULLISH", "BEARISH": "BEARISH", "NEUTRAL": "RANGE-BOUND"}
 CONF_WORD = lambda c: ("very strong" if c >= 0.85 else "strong" if c >= 0.60  # noqa: E731
@@ -83,28 +86,84 @@ def plan_read(report_row: dict, price: float | None) -> dict | None:
         return None
     if not plan or plan.get("side") not in ("LONG", "SHORT"):
         return None
+    from core.plan_alerts import TF_WORDS
+
     short = plan["side"] == "SHORT"
     targets = sorted((float(t) for t in plan.get("targets") or []), reverse=short)
-    zone = f"{_money(float(plan['zone_low']))}–{_money(float(plan['zone_high']))}"
+    low, high = float(plan["zone_low"]), float(plan["zone_high"])
+    zone = f"{_money(low)}–{_money(high)}"
     hours = float(plan.get("expires_hours") or 24)
-    happening = (f"BTC is {_money(price)}. The new report expects a move {'down' if short else 'up'}: it looks to "
-                 f"{'sell' if short else 'buy'} in the {zone} zone, and only after a candle confirms it "
-                 f"(the idea is good for {hours:g} hours).")
+    tf = plan.get("confirm_timeframe") or "1h"
+    level = float(plan["confirm_close"]) if plan.get("confirm_close") is not None else (low if short else high)
+    # the confirming close, spelled out from the plan's own numbers (the same rule the WATCH alert sends)
+    confirm = f"a {TF_WORDS.get(tf, tf)} candle closes {'below' if short else 'above'} {_money(level)}"
+    if plan.get("taker_ratio_limit") is not None:
+        confirm += f", with {'sellers' if short else 'buyers'} doing more of the trading"
+    act = "sell" if short else "buy"
+    # where price stands against the zone decides the first words: a short entered above price must say
+    # "wait for the rise", or a reader shorts at the market, the one place the plan says not to
+    if price is not None and low <= price <= high:
+        where = f"BTC is {_money(price)}, inside the {act} zone ({zone})."
+        step = f"{act.capitalize()} only after {confirm}."
+    elif price is not None and (price < low if short else price > high):
+        where = f"BTC is {_money(price)}, {'below' if short else 'above'} the {act} zone ({zone})."
+        step = (f"Do not {act} here: wait for a {'rise' if short else 'dip'} into the zone, then {act} only after "
+                f"{confirm}.")
+    else:
+        where = f"BTC is {_money(price)}; the plan {act}s from the {zone} zone."
+        step = f"{act.capitalize()} only after {confirm}."
+    happening = (f"{where} The new report expects a move {'down' if short else 'up'}. {step} "
+                 f"The idea is good for {hours:g} hours.")
     return {"direction": "BEARISH" if short else "BULLISH", "happening": happening,
             "target": _money(targets[0]) if targets else "—", "safety": _money(float(plan["stop"]))}
 
 
+def _positioning(m, event: dict, now_ms: int) -> str:
+    """The macro engine's read of BTC into a print (core.indicators.event_trap), in plain words, only when
+    BTC has already moved ahead of it - the case a reader can do something about."""
+    try:
+        from core.indicators.event_trap import read_all
+        reads = read_all(m.spot.frames.get("1h"), [event], now_ms)
+    except Exception:  # noqa: BLE001 - the release line stands without it
+        return ""
+    r = reads[0] if reads else None
+    if r is None or r.state != "positioned" or r.runup_pct is None:
+        return ""
+    up = r.runup_pct > 0
+    return (f" BTC has already moved {r.runup_pct:+.1f}% ahead of it, so a release that only matches forecast "
+            f"could reverse that ({'a drop' if up else 'a bounce'}).")
+
+
+def _fed_meeting_soon(cal, now_ms: int) -> bool:
+    return any(any(w in str(e.get("title", "")).lower() for w in FED_WORDS)
+               for e in cal.upcoming(now_ms, FED_WITHIN_MS))
+
+
 def _news(m, now_ms: int) -> str:
+    """From the Macro & News screen's own data, in order: US releases in the next day (with the macro
+    engine's read when BTC has run ahead of one), headlines that name Bitcoin or move every market, and
+    the Fed odds when a Fed meeting is near. A hack on a small chain or a crypto-policy story abroad is not
+    a BTC warning, so headlines are kept only when they name BTC or fall in a market-wide topic."""
     lines = []
     cal = getattr(m, "calendar", None)
     if getattr(cal, "available", False):
         for e in sorted(cal.upcoming(now_ms, EVENTS_WITHIN_MS), key=lambda e: e["time_ms"])[:3]:
-            lines.append(f"US {e.get('title', 'event')} at {_when(e['time_ms'])}: expect sharp moves around it.")
+            lines.append(f"US {e.get('title', 'release')} at {_when(e['time_ms'])}: expect sharp moves around it."
+                         + _positioning(m, e, now_ms))
     news = getattr(m, "news", None)
     if getattr(news, "available", False):
-        heads = sorted(news.recent(now_ms, NEWS_WITHIN_MS, "high"), key=lambda h: -(h.get("published_ms") or 0))
-        lines += [f"Headline: {h.get('title', '').strip()}" for h in heads[:2] if h.get("title")]
-    return "\n".join(lines) or "No major news or US data releases in the next 24 hours."
+        heads = [h for h in news.recent(now_ms, NEWS_WITHIN_MS, "high") if h.get("title")
+                 and ("BTC" in (h.get("assets") or []) or h.get("topic") in MARKET_WIDE)]
+        # Bitcoin named first, then newest: "sanctions" also tags crypto-policy stories as geopolitics
+        heads.sort(key=lambda h: ("BTC" not in (h.get("assets") or []), -(h.get("published_ms") or 0)))
+        lines += [f"Headline: {h['title'].strip()}" for h in heads[:2]]
+    preds = getattr(m, "predictions", None)
+    if getattr(cal, "available", False) and getattr(preds, "available", False) and _fed_meeting_soon(cal, now_ms):
+        odds = [x for x in preds.tradeable("MACRO") if "fed" in x.get("question", "").lower()]
+        if odds:
+            top = max(odds, key=lambda x: x.get("volume_24h") or 0)
+            lines.append(f"Fed meeting this week: markets give {top['probability']:.0%} to \"{top['question'].strip()}\"")
+    return "\n".join(lines) or "No US data releases or Bitcoin-moving headlines in the next 24 hours."
 
 
 def text(read: dict, m, now_ms: int, basis: str) -> str:
