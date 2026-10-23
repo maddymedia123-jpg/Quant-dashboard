@@ -104,46 +104,6 @@ def test_no_jargon_reaches_the_reader():
         assert word not in h, word
 
 
-# ---------- the summary box at the foot of each desk ----------
-NOON = 1_790_035_200_000 - (1_790_035_200_000 % 86_400_000) + 6 * 3_600_000   # 06:00 UTC
-
-
-def summary(a, now=NOON):
-    return dict(panels.summary_lines(a, now))
-
-
-def test_a_bearish_desk_in_four_plain_lines():
-    s = summary(analysis())
-    assert s["What the market is doing"] == "Leaning DOWN (strong). BTC is $81,557."
-    assert s["Where price is headed"] == "Toward $80,985 over the next 4 hours."
-    assert s["Danger level"] == "If price closes above $81,926, this view is wrong."
-    assert s["When it usually turns"].startswith("Next 12:00–16:00 UTC (17:00–21:00 PKT")
-    assert "About a third of BTC's turns" in s["When it usually turns"]
-
-
-def test_bullish_and_sideways_read_the_other_way():
-    up = summary(analysis("BULLISH", 0.47, 80_700.0, horizon="next 24h"))
-    assert up["What the market is doing"].startswith("Leaning UP (moderate)")
-    assert up["Where price is headed"] == "Toward $81,655 over the next 24 hours."
-    assert up["Danger level"] == "If price closes below $80,700, this view is wrong."
-    flat = summary(analysis("NEUTRAL", 0.1, None))
-    assert flat["What the market is doing"].startswith("Going SIDEWAYS")
-    assert flat["Where price is headed"] == "Between $80,985 and $81,655 until one side breaks."
-    assert flat["Danger level"] == "A close below $80,985 or above $81,655 picks a side."
-
-
-def test_inside_the_turning_hours_it_says_now():
-    s = summary(analysis(), now=NOON + 7 * 3_600_000)              # 13:00 UTC
-    assert s["When it usually turns"].startswith("NOW, until 16:00 UTC (21:00 PKT): the busiest turning hours")
-
-
-def test_the_box_has_no_indicator_words():
-    h = panels.summary_box_html(analysis(rsi=28, squeeze=(80, "LONG_SQUEEZE")), "Live Recon", NOON)
-    assert "Summary · Live Recon" in h and "Not trading advice" in h
-    for word in ("EMA", "RSI", "σ", "Fibonacci", "CVD", "squeeze", "moving average"):
-        assert word.lower() not in h.lower(), word
-
-
 def test_an_before_a_vowel():
     pat = NS(name="Inverse Head and Shoulders", status="forming", bias="bullish", breakout=None, target=None)
     assert read(analysis(patterns=[pat]))["Also worth noting"].startswith("An inverse head and shoulders is forming")

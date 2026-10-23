@@ -2207,47 +2207,24 @@ def scorecard_html(cards: dict) -> str:
 
 
 # ---------- the summary box at the foot of every desk ----------
-def summary_lines(a: CategoryAnalysis, now_ms: int) -> list[tuple[str, str]]:
-    """Four lines a non-trader can act on: what the market is doing, when it usually turns, where price is
-    headed, and the level that cancels the view. No indicator names - the cards above carry those."""
-    from core.indicators.turn_window import next_window
+def layman_summary_html(a: CategoryAnalysis, label: str, derivs: dict | None, fear_greed: int | None,
+                        now_ms: int) -> str:
+    """His Section 6, in his exact standardized format, at the foot of every desk."""
+    from core.layman_summary import lines
 
-    d = a.direction
-    money = lambda x: fmt_num(x, 0, "$")  # noqa: E731
-    sups = sorted((lv for lv in a.levels if lv.kind == "support" and lv.price < a.price), key=lambda lv: -lv.price)
-    ceils = sorted((lv for lv in a.levels if lv.kind == "resistance" and lv.price > a.price), key=lambda lv: lv.price)
-    floor, ceiling = (sups[0].price if sups else a.vol.exp_low), (ceils[0].price if ceils else a.vol.exp_high)
-    horizon = FORECAST_HORIZON.get(a.vol.horizon_label, a.vol.horizon_label)
-
-    if d.direction == "BULLISH":
-        doing = f"Leaning UP ({_conf_word(d.confidence).lower()}). BTC is {money(a.price)}."
-        headed = f"Toward {money(ceiling)} over the {horizon}." if ceiling else "No clear target above yet."
-    elif d.direction == "BEARISH":
-        doing = f"Leaning DOWN ({_conf_word(d.confidence).lower()}). BTC is {money(a.price)}."
-        headed = f"Toward {money(floor)} over the {horizon}." if floor else "No clear target below yet."
-    else:
-        doing = f"Going SIDEWAYS. BTC is {money(a.price)}, with no clear side."
-        headed = (f"Between {money(floor)} and {money(ceiling)} until one side breaks."
-                  if floor and ceiling else "No clear range yet.")
-
-    if d.direction in ("BULLISH", "BEARISH") and d.invalidation is not None:
-        wrong = "below" if d.direction == "BULLISH" else "above"
-        danger = f"If price closes {wrong} {money(d.invalidation)}, this view is wrong."
-    elif floor and ceiling:
-        danger = f"A close below {money(floor)} or above {money(ceiling)} picks a side."
-    else:
-        danger = "No clear line yet."
-
-    w = next_window(now_ms)
-    when = (f"NOW, until {w.ends}: the busiest turning hours of the day." if w.active
-            else f"Next {w.label}.") + " About a third of BTC's turns happen in these four hours."
-    return [("What the market is doing", doing), ("When it usually turns", when),
-            ("Where price is headed", headed), ("Danger level", danger)]
-
-
-def summary_box_html(a: CategoryAnalysis, label: str, now_ms: int) -> str:
-    rows = "".join(f"<p><strong>{html.escape(k, quote=False)}:</strong> {html.escape(t, quote=False)}</p>"
-                   for k, t in summary_lines(a, now_ms))
-    return (f"<div class='ti-read'><span class='ti-kicker'>Summary · {html.escape(label)}</span>{rows}"
-            "<p class='muted ti-note'>Measured turning hours, not a prediction of this desk's direction. "
-            "Not trading advice.</p></div>")
+    s = lines(a, derivs, fear_greed, now_ms)
+    e = lambda t: html.escape(t, quote=False)  # noqa: E731
+    return (f"<div class='ti-read ti-layman'><span class='ti-kicker'>Summary · {html.escape(label)}</span>"
+            f"<p><strong>📌 LAYMAN SUMMARY</strong><br>{e(s['summary'])}</p>"
+            "<p><strong>📊 Quantitative Swing Trade Framework</strong></p><ul>"
+            f"<li>Directional Bias: {e(s['bias'])}</li>"
+            f"<li>Exact Entry Zone: {e(s['entry'])}</li>"
+            f"<li>Hard Invalidation Level: {e(s['invalidation'])}</li>"
+            f"<li>Multi-Tier Target Levels:<ul><li>Target 1: {e(s['target1'])}</li>"
+            f"<li>Target 2: {e(s['target2'])}</li></ul></li></ul>"
+            "<p><strong>⏳ Time Reversal Windows &amp; Timeline (PKT)</strong></p><ul>"
+            f"<li>Window 1 (Active Peak Window): {e(s['window1'])}</li>"
+            f"<li>Window 2 (Cycle Confluence): {e(s['window2'])}</li></ul>"
+            f"<p><strong>❌ Bias Invalidation Condition:</strong><br>{e(s['condition'])}</p>"
+            "<p class='muted ti-note'>Levels come from this desk's own analysis; the entry zone is the nearest "
+            "level the bias acts from, a quarter ATR either side. Not trading advice.</p></div>")

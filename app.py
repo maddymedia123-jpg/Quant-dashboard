@@ -718,8 +718,13 @@ def category_tab(key):
                     list(zip(_d1["timestamp"].astype("int64"), _d1["close"].astype(float))) if _d1 is not None else None)))
             except Exception as e:  # noqa: BLE001
                 st.warning(f"Exchange flows unavailable: {e}")
-        # his Section 7: every desk ends with the same four plain lines
-        panels.render(panels.summary_box_html(a, CATEGORIES[key].label, now_ms))
+        # his Section 6: every desk ends with the same standardized layman summary
+        try:
+            _own = desk_derivs.read(key, m, now_ms)
+        except Exception:  # noqa: BLE001 - the summary still reads without the flow line
+            _own = None
+        panels.render(panels.layman_summary_html(a, CATEGORIES[key].label, _own,
+                                                 m.sentiment.fear_greed if m.sentiment.available else None, now_ms))
 
 
 if screen in CATEGORIES:
