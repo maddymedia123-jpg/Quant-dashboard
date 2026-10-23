@@ -23,7 +23,7 @@ def ahead_mask(n, idx, k):
     return m
 
 
-def run(df, label, intraday):
+def run(df, label, intraday, ks=(2, 4)):
     n = len(df)
     sine, lead = ehlers_sine(df.high, df.low)
     sigs = {"Ehlers Sine Wave": sine_signals(sine, lead),
@@ -34,7 +34,7 @@ def run(df, label, intraday):
         conds["NY hours only"] = ny_mask(df)
     for tname, kw in (("normal", NORMAL), ("big", BIG)):
         turns = find_turns(df, **kw)
-        for k in (2, 4):
+        for k in ks:
             ahead = ahead_mask(n, turns["idx"], k)
             same = {"top": ahead_mask(n, turns.loc[turns.kind == "top", "idx"], k),
                     "bottom": ahead_mask(n, turns.loc[turns.kind == "bottom", "idx"], k)}
@@ -55,6 +55,11 @@ def run(df, label, intraday):
                           f"({hit / base:4.2f}x, z {z:4.1f})  right direction {right:5.1%}")
 
 
+if __name__ == "__main__" and sys.argv[1:] == ["15m"]:
+    # 15-minute candles: the next 2, 4 and 8 bars are the next 30 minutes, 1 hour and 2 hours
+    run(load(DATA / "binance_15m.csv"), "BINANCE 15m 2023-2026", True, ks=(2, 4, 8))
+    run(load(DATA / "gate_15m.csv").iloc[:-1].reset_index(drop=True), "GATE 15m (newest 10,000)", True, ks=(2, 4, 8))
+    sys.exit(0)
 run(load(DATA / "binance_1h.csv"), "BINANCE 1h", True)
 run(load(DATA / "btc_1h.csv").iloc[:-1].reset_index(drop=True), "GATE 1h", True)
 run(load(DATA / "binance_4h.csv"), "BINANCE 4h", False)
