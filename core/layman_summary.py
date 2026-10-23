@@ -18,6 +18,7 @@ Retest" (or the short from the ceiling, whichever edge price is nearer)."""
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import SimpleNamespace as NS
 
 ZONE_ATR = 0.25          # the entry zone: a quarter ATR either side of the level
 STOP_ATR = 0.5           # the fallback invalidation: half an ATR past the zone's far edge
@@ -169,4 +170,25 @@ def lines(a, derivs: dict | None, fear_greed: int | None, now_ms: int) -> dict:
         "window1": window1,
         "window2": "None we trust: cycle timing was tested on a year of candles and timed turns no better than chance.",
         "condition": f.condition,
+        "kill_zones": _kill_zones(now_ms),
     }
+
+
+def _kill_zones(now_ms: int) -> str:
+    """His three kill zones with what they measured: the ones near chance are said to be, not dropped."""
+    from core.indicators.turn_window import ZONES, next_zones
+
+    on = {w.zone.key: w.active for w in next_zones(now_ms)}
+    edge, none = [], []
+    for z in ZONES:                                   # the day's order, not soonest-first: it reads the same each time
+        w = NS(active=on.get(z.key, False))
+        pkt = z.hours_label.split("(")[1].rstrip(")")
+        if z.near_chance:
+            none.append(f"{z.name} ({pkt})")
+        else:
+            edge.append(f"{z.name} {pkt}{' (on now)' if w.active else ''}: {z.share_of_turns:.0%} of turns, "
+                        f"{z.times_chance:.1f}x chance")
+    text = "; ".join(edge)
+    if none:
+        text += (". " if text else "") + " and ".join(none) + ": no better than chance, not turning times"
+    return text + "."

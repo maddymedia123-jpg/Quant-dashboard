@@ -85,3 +85,10 @@ def test_the_box_follows_his_format_in_order_with_no_indicator_words():
     assert at == sorted(at)
     for word in ("EMA", "RSI", "σ", "Fibonacci", "CVD", "squeeze", "moving average", "funding"):
         assert word.lower() not in h.lower(), word
+
+
+def test_kill_zones_are_shown_with_their_measured_odds_and_the_dead_ones_said_to_be():
+    s = ls.lines(desk(), DERIVS, 50, NOON)["kill_zones"]
+    assert "New York session 18:00–22:00 PKT: 30% of turns, 1.8x chance" in s
+    assert "Asian session (05:00–09:00 PKT) and London open (12:00–15:00 PKT): no better than chance" in s
+    assert "Kill zones, measured:" in panels.layman_summary_html(desk(), "Live Recon", DERIVS, 50, NOON)

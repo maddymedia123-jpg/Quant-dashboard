@@ -2224,7 +2224,8 @@ def layman_summary_html(a: CategoryAnalysis, label: str, derivs: dict | None, fe
             f"<li>Target 2: {e(s['target2'])}</li></ul></li></ul>"
             "<p><strong>⏳ Time Reversal Windows &amp; Timeline (PKT)</strong></p><ul>"
             f"<li>Window 1 (Active Peak Window): {e(s['window1'])}</li>"
-            f"<li>Window 2 (Cycle Confluence): {e(s['window2'])}</li></ul>"
+            f"<li>Window 2 (Cycle Confluence): {e(s['window2'])}</li>"
+            f"<li>Kill zones, measured: {e(s['kill_zones'])}</li></ul>"
             f"<p><strong>❌ Bias Invalidation Condition:</strong><br>{e(s['condition'])}</p>"
             "<p class='muted ti-note'>Levels come from this desk's own analysis; the entry zone is the nearest "
             "level the bias acts from, a quarter ATR either side. Not trading advice.</p></div>")
