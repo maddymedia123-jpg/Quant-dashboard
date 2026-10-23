@@ -174,7 +174,7 @@ def build_state(m, analyses: dict, now_ms: int | None = None, profile: ReconProf
     if desk is not None:
         try:
             from core.indicators.forecast import desk_forecast, to_state as forecast_state
-            f, tr = desk_forecast(desk, m.options.gamma if m.options.available else None,
+            f, tr = desk_forecast(desk, desk_derivs.gamma_for(profile.category, m),
                                   m.spot.frames.get(desk.chart_tf))
             state["forecast"] = forecast_state(f, tr)
         except Exception as e:  # noqa: BLE001 - the forecast must not take the war room down
@@ -209,7 +209,7 @@ def build_state(m, analyses: dict, now_ms: int | None = None, profile: ReconProf
         if tf in hm.TIMEFRAMES:
             # harmonics, valid only beside a VWAP, value-area or gamma level
             try:
-                found = hm.find(df, tf, getattr(m.options, "gamma", None) if m.options.available else None)
+                found = hm.find(df, tf, desk_derivs.gamma_for(profile.category, m))
                 state["smc"][tf]["harmonics"] = [h.to_state() for h in found]
             except Exception as e:  # noqa: BLE001 - a pattern scan must not take the state down
                 state["smc"][tf]["harmonics"] = {"available": False, "note": f"{type(e).__name__}: {e}"}

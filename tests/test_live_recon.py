@@ -346,3 +346,14 @@ def test_monthly_state_reads_monthly_candles_with_its_own_liquidity_windows(mark
     assert set(st["smc"]) == set(st["liquidity"]) == {"1d", "1w", "1M"}
     assert set(st["liquidity"]["1d"]["open_interest"]) == {"1d", "1w", "1M"}
     assert "1M" in st["categories"] and st["timeframes_read"]["1M"] == "1M"
+
+
+def test_each_war_room_reads_gamma_from_its_own_expiries(market_and_analyses):
+    from core.agents.recon_profiles import PROFILES
+
+    m, analyses = market_and_analyses
+    assert m.options.gamma_by_desk, "the fixture chain gives every desk a profile"
+    for key in PROFILES:
+        d = lr.build_state(m, analyses, profile=PROFILES[key])["derivatives"]
+        assert d["options"]["gamma"] == m.options.gamma_by_desk[key], key
+        assert d["matched_window"]["gamma"] == m.options.gamma_by_desk[key], key

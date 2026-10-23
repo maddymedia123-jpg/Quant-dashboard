@@ -51,7 +51,7 @@ ONE_AGENT_TEXT = """You are the DIVISION HEAD, codename DIRECTOR, working alone:
    - stop beyond the zone (SHORT above zone_high, LONG below zone_low) at a structural level; targets in order of distance, each a level from the data.
    - expires_hours: how long the idea is valid if price never reaches the zone. risk_pct and max_leverage for this volatility regime.
 8. category_summaries: one paragraph each for live, intraday, weekly and monthly, in plain English, quoted levels only. executive_summary is three sentences at most. data_quality_flags: missing, stale or estimated inputs.
-READING THE DATA: cvd_5bars is REAL taker flow on the BTC perpetual (market buys minus market sells, BTC); if it says ESTIMATE it is not CVD. Each desk's forecast carries a track_record: when lean_right is not above price_rose_anyway, its lean has no edge - use its range and level odds, not its lean. COT is weekly context, not intraday timing. WINDOWS: derivatives.futures/liquidations are a 24-hour snapshot; desk_derivatives[desk] holds open interest, taker delta, liquidations, funding and max pain over THAT desk's own window (live 1h/4h, intraday 24h, weekly 7 days, monthly 30 days) - each category_summary and any plan on that horizon uses its own desk's figures, never the 24-hour ones for weekly or monthly. TIMING: use turning_window (measured US-session turning hours); the Fibonacci reversal_window in each category was tested and timed turns no better than chance - never use it for timing."""
+READING THE DATA: cvd_5bars is REAL taker flow on the BTC perpetual (market buys minus market sells, BTC); if it says ESTIMATE it is not CVD. Each desk's forecast carries a track_record: when lean_right is not above price_rose_anyway, its lean has no edge - use its range and level odds, not its lean. COT is weekly context, not intraday timing. WINDOWS: derivatives.futures/liquidations are a 24-hour snapshot; desk_derivatives[desk] holds open interest, taker delta, liquidations, funding, max pain and dealer gamma (regime, flip, call and put walls, from only the options settling in that window) over THAT desk's own window (live 1h/4h, intraday 24h, weekly 7 days, monthly 30 days) - each category_summary and any plan on that horizon uses its own desk's figures, never the 24-hour ones for weekly or monthly. TIMING: use turning_window (measured US-session turning hours); the Fibonacci reversal_window in each category was tested and timed turns no better than chance - never use it for timing."""
 
 ONE_AGENT_RULES = SHARED_RULES.replace(
     "3. Quote the figures you rely on in raw_metrics exactly as given (same units), so the Director can audit you.",
@@ -88,7 +88,6 @@ def director_state(m, analyses: dict) -> dict:
     now_ms = int(m.generated_at.timestamp() * 1000)
     state["desk_derivatives"] = {key: desk_derivs.read(key, m, now_ms) for key in PROFILES}
     state["cascade"], state["forecast"] = {}, {}
-    gamma = m.options.gamma if m.options.available else None
     for key, profile in PROFILES.items():
         try:
             bias_tf, anchor_tf, engine_tfs = profile.cascade
@@ -98,7 +97,7 @@ def director_state(m, analyses: dict) -> dict:
         a = analyses.get(key)
         if a is not None:
             try:
-                f, tr = desk_forecast(a, gamma, m.spot.frames.get(a.chart_tf))
+                f, tr = desk_forecast(a, desk_derivs.gamma_for(key, m), m.spot.frames.get(a.chart_tf))
                 state["forecast"][key] = to_state(f, tr)
             except Exception as e:  # noqa: BLE001
                 state["forecast"][key] = {"available": False, "note": f"{type(e).__name__}: {e}"}

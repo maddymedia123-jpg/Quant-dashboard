@@ -196,6 +196,7 @@ section[data-testid="stSidebar"] * {{ color: {p['text']}; }}
 .ti-gamma-reg {{ font-family: {_HEADING}; font-weight: 600; font-size: 1rem; letter-spacing: 0.05em; }}
 .ti-gamma.up .ti-gamma-reg {{ color: {p['up']}; }} .ti-gamma.down .ti-gamma-reg {{ color: {p['down']}; }}
 .ti-gamma-net {{ color: {p['muted']}; }}
+.ti-gamma-scope {{ color: {p['muted']}; font-size: 0.78rem; }}
 .ti-gamma-lv {{ display: flex; flex-wrap: wrap; gap: 4px 14px; }} .ti-gamma-lv b {{ font-weight: 600; color: {p['muted']}; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.05em; }}
 .ti-gamma-play {{ flex-basis: 100%; color: {p['muted']}; font-size: 0.8rem; }}
 /* hero: the desk title and its candle countdown */

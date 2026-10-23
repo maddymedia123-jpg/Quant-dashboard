@@ -81,6 +81,7 @@ def parse_book_summary(payload: dict) -> OptionsSnapshot:
 
     return OptionsSnapshot(
         gamma=gamma_regime(payload),
+        gamma_by_desk=gamma_by_desk(payload),
         source="deribit",
         underlying_price=underlying,
         max_pain=primary["max_pain"] if primary else None,
@@ -99,15 +100,25 @@ def gamma_regime(payload: dict) -> dict:
     """The dealer gamma regime, timed from the moment Deribit quoted the chain (its own usOut, in
     microseconds) and priced at the index the options settle against. A failure here is reported in the
     result and never takes max pain or the ratios down with it."""
-    from core.indicators.gamma import profile
+    return _gamma(payload, desks=False)
+
+
+def gamma_by_desk(payload: dict) -> dict:
+    """The same regime per desk, each built from only the expiries inside that desk's window."""
+    return _gamma(payload, desks=True)
+
+
+def _gamma(payload: dict, desks: bool) -> dict:
+    from core.indicators.gamma import desk_profiles, profile
     try:
         items = payload["result"]
         spot = next((float(it["estimated_delivery_price"]) for it in items if it.get("estimated_delivery_price")), None)
         now_ms = int(payload["usOut"]) // 1000 if payload.get("usOut") else int(time.time() * 1000)
-        return profile(items, spot, now_ms).to_state()
+        return desk_profiles(items, spot, now_ms) if desks else profile(items, spot, now_ms).to_state()
     except Exception as e:  # noqa: BLE001 - the regime is an addition, the rest of the book must survive it
         log.error("gamma profile failed: %s", e)
-        return {"available": False, "regime": "unknown", "note": f"gamma profile failed: {e}"}
+        failed = {"available": False, "regime": "unknown", "note": f"gamma profile failed: {e}"}
+        return {} if desks else failed
 
 
 async def fetch_options(client: httpx.AsyncClient) -> OptionsSnapshot:

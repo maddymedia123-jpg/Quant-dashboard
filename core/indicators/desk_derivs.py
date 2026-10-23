@@ -12,6 +12,8 @@ change is reading the wrong clock (his v15, Section 2). Each desk now reads:
                           delta and liquidations over 7 days, funding over 7 days, expiries within 8 days
   Monthly (next 30 days)  the same over 30 days, expiries within 100 days (monthly and quarterly)
 
+Dealer gamma (regime, flip, call and put walls) is built per desk from the same expiry windows.
+
 Open interest, taker delta, liquidations and funding come from the Gate.io BTC_USDT perpetual's own period stats
 (one venue: a trend, not the market total). Each window is counted in whole periods ending with the one
 in progress, so a 7-day window on 4h rows is the last 42 rows."""
@@ -145,6 +147,15 @@ def oi_history(m) -> list[tuple[int, float]]:
     return out or list(getattr(m.futures, "oi_history", []) or [])
 
 
+def gamma_for(category: str | None, m) -> dict | None:
+    """The desk's own gamma profile; the 30-day one when the desk has none (an old snapshot) or no desk."""
+    opts = getattr(m, "options", None)
+    if not getattr(opts, "available", False):
+        return None
+    own = (getattr(opts, "gamma_by_desk", None) or {}).get(category) if category else None
+    return own if own else getattr(opts, "gamma", None)
+
+
 def read(category: str, m, now_ms: int | None = None) -> dict:
     """The derivatives for this desk, each figure labelled with the window it covers."""
     w = WINDOWS[category]
@@ -169,6 +180,9 @@ def read(category: str, m, now_ms: int | None = None) -> dict:
         out["funding"] = fund
     else:
         out["unavailable"].append("funding")
+    gamma = gamma_for(category, m)
+    if gamma is not None:
+        out["gamma"] = gamma
     exp = _expiries(m.options, w.expiry_days, now, getattr(m.spot, "last", None))
     if exp:
         out["options_expiries"] = exp
@@ -193,6 +207,8 @@ def match_window(derivatives: dict, category: str, m, now_ms: int) -> None:
     change, liquidations) stay only on the 24-hour desk, and the all-expiries max pain (usually the
     quarterly) only on Monthly: anywhere else they are a different clock from the desk's question."""
     derivatives["matched_window"] = read(category, m, now_ms)
+    if "options" in derivatives and gamma_for(category, m) is not None:
+        derivatives["options"]["gamma"] = gamma_for(category, m)    # walls from this desk's expiries only
     if category != "intraday":
         (derivatives.get("futures") or {}).pop("oi_change_24h_pct", None)
         derivatives.pop("liquidations", None)

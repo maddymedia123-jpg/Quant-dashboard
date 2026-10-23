@@ -61,6 +61,7 @@ from core import live_accuracy, live_anchor
 from core.config import CATEGORIES, MACRO_EVENTS, TTL
 from core.data.market import assemble, load_context, load_spot
 from core.derived import enrich_futures, record_sample
+from core.indicators import desk_derivs
 from core.indicators.category import analyze_category
 from core.indicators.early_warning import early_warnings
 from core.indicators.forecast import desk_forecast
@@ -424,7 +425,11 @@ price_slot.markdown(panels.top_bar_html(
     _live_a.price_change_24h_pct if _live_a else None,
     f"Updated {fmt_when(int(m.generated_at.timestamp() * 1000), seconds=True)}", m.spot.symbol),
     unsafe_allow_html=True)
-gamma_slot.markdown(panels.gamma_bar_html(m.options.gamma if m.options.available else None, m.spot.last),
+# on a desk the bar shows that desk's own gamma (its expiries only); on an engine screen, the 30-day chain
+_bar_desk = st.session_state.get("screen", "live")
+_bar_desk = _bar_desk if _bar_desk in CATEGORIES else None
+gamma_slot.markdown(panels.gamma_bar_html(desk_derivs.gamma_for(_bar_desk, m), m.spot.last,
+                                          CATEGORIES[_bar_desk].label if _bar_desk else ""),
                     unsafe_allow_html=True)
 if not m.spot.available:
     st.error(f"Price data unavailable from {m.spot.source}: {m.spot.error}. Nothing to analyse.")
@@ -516,8 +521,7 @@ def _event_reads(data_stamp: str):
 def _desk_harmonics(category: str, data_stamp: str):
     """Harmonics on the desk's own 1H/4H/1D, with the gamma levels they may sit on."""
     from core.indicators.harmonics import find_all
-    return find_all(m.spot.frames, PROFILES[category].timeframes,
-                    getattr(m.options, "gamma", None) if m.options.available else None)
+    return find_all(m.spot.frames, PROFILES[category].timeframes, desk_derivs.gamma_for(category, m))
 
 
 def render_protocols(profile) -> None:
@@ -672,7 +676,7 @@ def category_tab(key):
             v = verdicts.get(key)
             panels.render(panels.anchored_direction_html(a, v, now_ms) if v else panels.direction_html(a))
         # his Section 8: one clean forecast pane per desk - the median path, its range and its odds
-        fcast, record = desk_forecast(a, m.options.gamma if m.options.available else None,
+        fcast, record = desk_forecast(a, desk_derivs.gamma_for(key, m),
                                       m.spot.frames.get(a.chart_tf))
         render_forecast_chart(a, fcast, dark, height=340, signal=signal)
         panels.render(panels.forecast_html(fcast, record, a.vol.horizon_label))

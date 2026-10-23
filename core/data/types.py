@@ -57,6 +57,7 @@ class OptionsSnapshot(Availability):
     total_put_oi: Optional[float] = None
     expiries: list[dict[str, Any]] = Field(default_factory=list)
     gamma: Optional[dict[str, Any]] = None        # dealer gamma regime (core.indicators.gamma), None if not computed
+    gamma_by_desk: dict[str, dict[str, Any]] = Field(default_factory=dict)   # desk -> its own-window regime
 
 
 class SentimentSnapshot(Availability):

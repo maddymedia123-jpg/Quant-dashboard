@@ -139,3 +139,48 @@ def test_the_judges_receive_the_regime_inside_the_options_data():
     from core.data.offline import fixture_market
     st = build_state(fixture_market(), {}, profile=PROFILES["live"])
     assert st["derivatives"]["options"]["gamma"]["regime"] in ("positive", "negative")
+
+
+# ---------- one profile per desk, from that desk's own expiries (his v15, Section 2) ----------
+def test_each_desk_builds_its_walls_from_only_the_options_settling_in_its_window():
+    tomorrow, next_week, quarterly = "24SEP26", "30SEP26", "25DEC26"
+    now = gx._expiry_ms("24SEP26") - 12 * 3_600_000                       # 20:00 UTC the evening before
+    chain = [_opt(98_000, "P", 400, code=tomorrow), _opt(102_000, "C", 300, code=tomorrow),
+             _opt(95_000, "P", 5_000, code=next_week), _opt(105_000, "C", 4_000, code=next_week),
+             _opt(90_000, "P", 90_000, code=quarterly), _opt(110_000, "C", 80_000, code=quarterly)]
+    by = gx.desk_profiles(chain, 100_000.0, now)
+    assert by["live"]["expiries"] == [tomorrow] and by["live"]["put_wall"] == 98_000
+    assert by["weekly"]["expiries"] == [tomorrow, next_week] and by["weekly"]["put_wall"] == 95_000
+    assert quarterly in by["monthly"]["expiries"], "the monthly desk sees the quarterly a 30-day cut drops"
+    assert quarterly not in gx.profile(chain, 100_000.0, now).to_state()["expiries"]
+    assert [by[k]["horizon_days"] for k in ("live", "intraday", "weekly", "monthly")] == [1, 3, 8, 100]
+
+
+def test_desk_windows_are_the_same_ones_max_pain_is_read_from():
+    from core.indicators.desk_derivs import WINDOWS
+    assert gx.DESK_DAYS == {k: w.expiry_days for k, w in WINDOWS.items()}
+
+
+def test_the_book_carries_a_profile_per_desk_and_a_bad_chain_takes_nothing_down():
+    from core.data.deribit_options import gamma_by_desk
+    snap = parse_book_summary(json.loads((FX / "deribit_book_summary.json").read_text()))
+    assert set(snap.gamma_by_desk) == {"live", "intraday", "weekly", "monthly"}
+    assert gamma_by_desk({"result": None}) == {}
+
+
+def test_a_desk_reads_its_own_gamma_and_falls_back_to_the_30_day_one():
+    from types import SimpleNamespace as NS
+    from core.indicators.desk_derivs import gamma_for
+    own, old = {"regime": "negative", "available": True}, {"regime": "positive", "available": True}
+    m = NS(options=NS(available=True, gamma=old, gamma_by_desk={"weekly": own}))
+    assert gamma_for("weekly", m) is own
+    assert gamma_for("live", m) is old and gamma_for(None, m) is old
+    assert gamma_for("weekly", NS(options=NS(available=False))) is None
+
+
+def test_the_bar_names_whose_expiries_it_is_built_from():
+    from ui import panels
+    g = {"available": True, "regime": "negative", "horizon_days": 8, "expiries": ["x"], "options_used": 3}
+    h = panels.gamma_bar_html(g, 100_000.0, "Weekly")
+    assert "Weekly: options settling in the next 8 days" in h and "next 8 days" in h
+    assert "settling" not in panels.gamma_bar_html(g, 100_000.0)

@@ -1843,7 +1843,7 @@ GAMMA_READ = {
 }
 
 
-def gamma_bar_html(g: dict | None, price: float | None = None) -> str:
+def gamma_bar_html(g: dict | None, price: float | None = None, desk: str = "") -> str:
     """The regime every desk trades inside: dealer gamma from the Deribit chain, with its key levels."""
     if not g or not g.get("available"):
         why = (g or {}).get("note") or "options chain unavailable"
@@ -1860,10 +1860,14 @@ def gamma_bar_html(g: dict | None, price: float | None = None) -> str:
               ("Call wall", g.get("call_wall"))]
     lv = "".join(f"<span><b>{n}</b> {fmt_num(v, 0, '$')}</span>" for n, v in levels)
     n_exp = len(g.get("expiries") or [])
+    days = g.get("horizon_days") or 30
+    scope = (f"{desk}: options settling in the next " + (f"{days:g} day" if days == 1 else f"{days:g} days")) if desk else ""
     tip = (f"Net GEX {net_txt} per 1% move, from {g.get('options_used', 0)} options across {n_exp} expiries in the "
-           "next 30 days. Assumes the naive dealer sign: calls positive, puts negative. Real dealer positioning is not published.")
+           f"next {days:g} day{'' if days == 1 else 's'}. Assumes the naive dealer sign: calls positive, puts negative. "
+           "Real dealer positioning is not published.")
     return (f"<div class='ti-gamma {tone}' title='{html.escape(tip)}'><i class='ti-gamma-mark'></i>"
             f"<span class='ti-gamma-reg'>{label}</span>"
+            + (f"<span class='ti-gamma-scope'>{html.escape(scope)}</span>" if scope else "") +
             f"<span class='ti-gamma-net'>net {net_txt} / 1%{html.escape(side)}</span>"
             f"<span class='ti-gamma-lv'>{lv}</span>"
             f"<span class='ti-gamma-play'>{html.escape(play)}</span></div>")

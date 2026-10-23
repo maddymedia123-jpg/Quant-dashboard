@@ -17,6 +17,10 @@ publishes real dealer positioning; this assumption is how every public GEX figur
 says so. Expiries within the next 30 days are used: gamma concentrates near expiry, and the weekly and
 daily expiries are where his framework looks.
 
+Each desk also gets its own profile, from only the options that settle inside its window (DESK_DAYS):
+a 4-hour desk reading a put wall built from options three weeks out is reading the wrong clock, and the
+monthly desk needs the quarterly that a 30-day cut leaves out (his v15, Section 2).
+
 Deribit expiries settle at 08:00 UTC on the expiry date. Time is measured from the moment the chain was
 quoted (the response's own server time), not from whenever the page happens to render."""
 from __future__ import annotations
@@ -25,11 +29,15 @@ import math
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
+from core.indicators.desk_derivs import WINDOWS
+
 YEAR_MS = 365.0 * 86_400_000
 HORIZON_DAYS = 30
 GRID = 161                 # hypothetical prices from 80% to 120% of spot
 GRID_LO, GRID_HI = 0.80, 1.20
 WALL_RANGE = 0.25          # walls are looked for within +-25% of spot
+# options settling inside each desk's window: the same expiry windows its max pain is read from
+DESK_DAYS = {desk: w.expiry_days for desk, w in WINDOWS.items()}
 MIN_T_YEARS = 1.0 / (365 * 24 * 4)     # 15 minutes: an option this close to settling has no meaningful gamma
 
 
@@ -46,6 +54,7 @@ class GammaProfile:
     expiries: tuple[str, ...] = ()
     options_used: int = 0
     note: str = ""
+    horizon_days: float = HORIZON_DAYS
     profile: tuple[tuple[float, float], ...] = field(default_factory=tuple)
 
     def to_state(self) -> dict:
@@ -54,6 +63,7 @@ class GammaProfile:
                 "net_gex_usd_per_1pct": r(self.net_gex_usd), "zero_gamma_level": r(self.zero_gamma),
                 "call_wall": r(self.call_wall), "put_wall": r(self.put_wall), "max_gamma_strike": r(self.max_gamma),
                 "expiries": list(self.expiries), "options_used": self.options_used, "note": self.note,
+                "horizon_days": self.horizon_days,
                 "assumption": "naive dealer sign: calls positive, puts negative"}
 
 
@@ -73,7 +83,7 @@ def _expiry_ms(code: str) -> int | None:
     return int(datetime(d.year, d.month, d.day, 8, tzinfo=timezone.utc).timestamp() * 1000)
 
 
-def chain_rows(items: list[dict], now_ms: int) -> list[dict]:
+def chain_rows(items: list[dict], now_ms: int, horizon_days: float = HORIZON_DAYS) -> list[dict]:
     """Options within the horizon, with what the gamma needs. Rows missing a strike, an IV or open
     interest are left out rather than given a guessed value."""
     out = []
@@ -88,7 +98,7 @@ def chain_rows(items: list[dict], now_ms: int) -> list[dict]:
         if exp is None or not iv or not oi or kind not in ("C", "P"):
             continue
         t = (exp - now_ms) / YEAR_MS
-        if t < MIN_T_YEARS or t > HORIZON_DAYS / 365.0:
+        if t < MIN_T_YEARS or t > horizon_days / 365.0:
             continue
         out.append({"strike": k, "kind": kind, "oi": float(oi), "vol": float(iv) / 100.0, "t": t, "expiry": code})
     return out
@@ -108,12 +118,12 @@ def _gex(rows: list[dict], s: float) -> tuple[float, dict[float, float], dict[fl
     return net, calls, puts
 
 
-def profile(items: list[dict], spot: float | None, now_ms: int) -> GammaProfile:
+def profile(items: list[dict], spot: float | None, now_ms: int, horizon_days: float = HORIZON_DAYS) -> GammaProfile:
     if not spot or spot <= 0:
         return GammaProfile(False, note="no index price in the options chain")
-    rows = chain_rows(items, now_ms)
+    rows = chain_rows(items, now_ms, horizon_days)
     if not rows:
-        return GammaProfile(False, spot=spot, note=f"no options with IV and open interest in the next {HORIZON_DAYS} days")
+        return GammaProfile(False, spot=spot, note=f"no options with IV and open interest in the next {horizon_days:g} days")
 
     net, calls, puts = _gex(rows, spot)
     near = lambda k: abs(k - spot) <= WALL_RANGE * spot  # noqa: E731
@@ -134,9 +144,14 @@ def profile(items: list[dict], spot: float | None, now_ms: int) -> GammaProfile:
     zero = min(flips, key=lambda s: abs(s - spot)) if flips else None
 
     return GammaProfile(
-        True, spot=spot, net_gex_usd=net, zero_gamma=zero, call_wall=call_wall, put_wall=put_wall,
+        True, horizon_days=horizon_days, spot=spot, net_gex_usd=net, zero_gamma=zero, call_wall=call_wall, put_wall=put_wall,
         max_gamma=max_gamma, regime="positive" if net > 0 else "negative" if net < 0 else "unknown",
         expiries=tuple(sorted({r["expiry"] for r in rows}, key=lambda c: _expiry_ms(c) or 0)),
         options_used=len(rows),
         note="" if zero is not None else "the profile does not cross zero within 20% of spot",
         profile=tuple((round(s, 2), round(g, 2)) for s, g in curve))
+
+
+def desk_profiles(items: list[dict], spot: float | None, now_ms: int) -> dict[str, dict]:
+    """One gamma profile per desk, each from its own expiries."""
+    return {desk: profile(items, spot, now_ms, days).to_state() for desk, days in DESK_DAYS.items()}
