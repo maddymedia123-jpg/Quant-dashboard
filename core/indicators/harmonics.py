@@ -24,6 +24,16 @@ the anchored VWAP, the point of control and value-area edges, and the dealer gam
 walls, max gamma). With one inside the PRZ, or within half an ATR of it, the pattern is "valid"; without,
 it is reported as unconfirmed - a shape in the price, not a trade.
 
+The spec's second check (v15, 4.2): a regular RSI divergence at D. A bullish pattern's D is a low and its
+nearest earlier confirmed low is B (C is a high), so the check is D against B: price makes a lower low at D
+while Wilder RSI(14) makes a higher low; bearish mirrored (higher high at D, lower RSI high). D is the
+confirmed pivot once completed, or the current leg's running extreme while in the zone - both are
+completed candles, so nothing past the latest close is read. RSI at each swing is read on the pivot candle
+and the two before it (see `rsi_divergence`), computed over every completed candle passed in so its
+warm-up does not depend on the pattern window. The shared `rsi.detect_divergences` is not used for this: it pairs its own 3-bar fractal pivots inside the
+last 60 candles, which on 4H/1D often do not reach back to B and would pair minor swings between C and D
+instead of the pattern's own B and D. A pattern that is still forming has no D yet: rsi_divergence None.
+
 Targets are the standard 0.382 and 0.618 retracements of the A-D leg. A close beyond the far edge of the
 PRZ by half an ATR invalidates the pattern."""
 from __future__ import annotations
@@ -33,17 +43,22 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
+from core.indicators.rsi import rsi as rsi_series
 from core.indicators.volatility import atr as atr_series
 
 TIMEFRAMES = ("1h", "4h", "1d")
-TRACK_RECORD = ("Replayed on Binance BTC (1h 2025-26, 4h 2024-26, 1d 2018-26): 47 setups reached their zone. "
-                "Of those next to a VWAP or value-area level, 43% hit the first target before invalidation; of "
-                "those without, 65%. Too few to trust either way, and gamma levels have no history to test.")
+# research/harmonics_rsi_replay.py, run 2026-10-23: bar by bar, no lookahead, setups still open at the end dropped
+TRACK_RECORD = ("Replayed candle by candle on the Gate.io BTC perp (1h Sep 2025-Oct 2026, 4h Apr 2022-Oct 2026, "
+                "1d Nov 2019-Oct 2026): 137 setups reached their zone and 76% hit the first target before "
+                "invalidation. Next to a VWAP or value-area level 63% (46 setups); without one 82% (91). Only 6 "
+                "showed a regular RSI divergence at D; all 6 hit the first target, far too few to trust. Gamma "
+                "levels have no history to test.")
 ZIGZAG_ATR = 2.0
 RATIO_TOL = 0.03
 NEAR_ATR = 0.5
 MIN_BARS = 60
 LOOKBACK = 300
+RSI_SWING = 3            # candles read for RSI at a swing: the pivot and the two before it
 
 # name: (AB of XA, BC of AB, CD of BC, D rule) with ranges as (lo, hi)
 SPECS = {
@@ -82,10 +97,17 @@ class Harmonic:
     invalidation: float
     confluence: tuple[str, ...] = ()
     distance_pct: float | None = None   # price to the nearest PRZ edge, for a forming pattern
+    rsi_divergence: bool | None = None  # regular RSI divergence at D vs B; None before D exists
+    rsi_read: str = ""                  # one plain line on what the RSI check found
 
     @property
     def valid(self) -> bool:
         return bool(self.confluence)
+
+    @property
+    def confirmed_by(self) -> tuple[str, ...]:
+        """Which of the two confirmations the pattern has: a level in the zone, a divergence at D."""
+        return (("level",) if self.valid else ()) + (("rsi_divergence",) if self.rsi_divergence else ())
 
     @property
     def headline(self) -> str:
@@ -93,7 +115,8 @@ class Harmonic:
                  "completed": "completed, reversal under way"}[self.stage]
         verdict = ("valid: " + ", ".join(self.confluence) + " in the zone" if self.valid else
                    "unconfirmed: no VWAP, value-area or gamma level at the zone")
-        return f"{self.side.title()} {self.name}, {where}. {verdict[0].upper() + verdict[1:]}."
+        out = f"{self.side.title()} {self.name}, {where}. {verdict[0].upper() + verdict[1:]}."
+        return out + (f" {self.rsi_read}." if self.rsi_read else "")
 
     def to_state(self) -> dict:
         r = lambda v: round(float(v), 2)  # noqa: E731
@@ -102,7 +125,9 @@ class Harmonic:
                 "targets": [r(t) for t in self.targets], "invalidation": r(self.invalidation),
                 "confluence": list(self.confluence),
                 "points": {k: r(p.price) for k, p in zip("XABCD", self.points)},
-                "distance_pct": None if self.distance_pct is None else round(self.distance_pct, 2)}
+                "distance_pct": None if self.distance_pct is None else round(self.distance_pct, 2),
+                "rsi_divergence": self.rsi_divergence, "rsi_read": self.rsi_read,
+                "confirmed_by": list(self.confirmed_by)}
 
 
 def zigzag(df: pd.DataFrame, atr_value: float, mult: float = ZIGZAG_ATR) -> tuple[list[Pivot], Pivot | None]:
@@ -171,6 +196,32 @@ def _prz(name: str, x: float, a: float, b: float, c: float, bull: bool) -> tuple
     return (lo, hi) if lo <= hi else None
 
 
+def rsi_divergence(pts, d: Pivot, bull: bool, r: np.ndarray) -> tuple[bool | None, str]:
+    """Regular divergence between B and D: price extends past B while RSI does not. (None, why) when RSI
+    is not yet defined at either swing.
+
+    RSI at a swing is its lowest (highest, bearish) over the pivot candle and the RSI_SWING - 1 before it,
+    not the pivot candle alone: the zigzag names the later of two candles with the same low, often the
+    reversal candle that already closed off it. Only candles before the pivot are added - D can be the
+    latest completed candle. The whole leg is not used: a fast drop early in C-to-D that then grinds to a
+    marginal new low is exactly the divergence, and the leg's own trough would hide it."""
+    def at(p: Pivot) -> float:
+        w = r[max(0, p.index - RSI_SWING + 1):p.index + 1]
+        return float("nan") if np.isnan(w).all() else float(np.nanmin(w) if bull else np.nanmax(w))
+    b = pts[2]
+    rb, rd = at(b), at(d)
+    if np.isnan(rb) or np.isnan(rd):
+        return None, "RSI not defined at B or D yet"
+    word, ext = ("bullish", "lower low") if bull else ("bearish", "higher high")
+    extended = d.price < b.price if bull else d.price > b.price
+    rsi_holds = rd > rb if bull else rd < rb
+    if not extended:
+        return False, f"No RSI divergence: D is not a {ext} than B, so a regular one cannot form"
+    if rsi_holds:
+        return True, f"Regular {word} RSI divergence at D: RSI {rd:.1f} against {rb:.1f} at B"
+    return False, f"No RSI divergence: RSI {rd:.1f} at D confirms the {ext} ({rb:.1f} at B)"
+
+
 def levels_for(df: pd.DataFrame, tf: str, gamma: dict | None) -> list[tuple[str, float]]:
     """The levels a harmonic must sit next to: anchored VWAP, value area, dealer gamma."""
     from core.indicators.cascade import anchored_vwap
@@ -207,6 +258,7 @@ def find(df: pd.DataFrame | None, tf: str, gamma: dict | None = None) -> list[Ha
     if tf not in TIMEFRAMES or df is None or len(df) < MIN_BARS + 1:
         return []
     closed = df.iloc[:-1].tail(LOOKBACK).reset_index(drop=True)
+    r = rsi_series(df["close"].iloc[:-1]).tail(LOOKBACK).to_numpy(float)
     a = atr_series(closed)
     atr_value = float(a.iloc[-1]) if len(a) and not np.isnan(a.iloc[-1]) else 0.0
     if atr_value <= 0:
@@ -222,8 +274,10 @@ def find(df: pd.DataFrame | None, tf: str, gamma: dict | None = None) -> list[Ha
         ad = a_ - d_ref
         targets = (d_ref + 0.382 * ad, d_ref + 0.618 * ad)
         invalid = prz[0] - pad if bull else prz[1] + pad
+        d = pts[4] if len(pts) == 5 else current if stage == "in_zone" else None
+        div, why = rsi_divergence(pts, d, bull, r) if d is not None else (None, "")
         return Harmonic(name, "bullish" if bull else "bearish", stage, tuple(pts), prz, targets, invalid,
-                        _confluence(prz, levels, atr_value), dist)
+                        _confluence(prz, levels, atr_value), dist, div, why)
 
     # completed: the last five confirmed pivots, D the newest
     if len(pivots) >= 5:

@@ -170,5 +170,87 @@ def test_the_card_shows_stage_validity_levels_and_track_record():
     found = {"1h": hm.find(df, "1h", {"available": True, "put_wall": 102.0}), "4h": []}
     h = panels.harmonics_html(found)
     assert "Bullish Gartley" in h and "completed" in h and "valid</span>" in h and "put wall" in h
-    assert "47 setups" in h and "ti-card up" in h
+    assert "137 setups" in h and "ti-card up" in h
     assert "No Gartley, Bat" in panels.harmonics_html({"1h": [], "4h": []})
+
+
+# ---------- the spec's RSI-divergence check at D ----------
+def _legs(waypoints, lead=108.0, lead_bars=70):
+    """Like _path, but each leg names its own candle count: (price, candles) pairs."""
+    closes, prev = [lead] * lead_bars, lead
+    for p, n in waypoints:
+        closes += list(np.linspace(prev, p, n + 1)[1:])
+        prev = p
+    closes.append(closes[-1])
+    c = np.array(closes, dtype=float)
+    o = np.r_[c[0], c[:-1]]
+    return pd.DataFrame({"timestamp": [T0 + i * H for i in range(len(c))], "open": o,
+                         "high": np.maximum(o, c) + 0.2, "low": np.minimum(o, c) - 0.2, "close": c,
+                         "volume": 0.0})
+
+
+def _grind_into_d():
+    """The Gartley, but D is reached by a fast drop to 102.6 and then a 30-candle grind of alternating
+    candles to a marginal new low at 102.14: price makes its lower low below B, RSI does not (measured:
+    RSI 44.0 at D against 37.3 at B)."""
+    x, a, b, c, _ = SHAPES["Gartley"]
+    grind = [(p + (0.45 if i % 2 == 0 else 0.0), 1) for i, p in enumerate(np.linspace(102.6, 102.14, 30))]
+    return [(x, 10), (a, 10), (b, 10), (c, 10), (102.6, 4)] + grind
+
+
+def test_a_grind_to_a_marginal_low_in_the_zone_is_a_regular_bullish_divergence():
+    g = _named(hm.find(_legs(_grind_into_d()), "1h"), "Gartley", "in_zone")[0]
+    assert g.points[3].price > g.points[2].price, "B is the earlier low D is compared with, C a high"
+    assert g.rsi_divergence is True and g.confirmed_by == ("rsi_divergence",)
+    assert "Regular bullish RSI divergence at D" in g.rsi_read and g.rsi_read in g.headline
+    st = g.to_state()
+    assert st["rsi_divergence"] is True and st["confirmed_by"] == ["rsi_divergence"] and not st["valid"]
+
+
+def test_the_mirror_grind_is_a_regular_bearish_divergence():
+    df = _legs([(200 - p, n) for p, n in _grind_into_d()], lead=92.0)
+    g = _named(hm.find(df, "1h"), "Gartley", "in_zone")[0]
+    assert g.side == "bearish" and g.rsi_divergence is True and "Regular bearish" in g.rsi_read
+
+
+def test_a_straight_drop_into_the_zone_has_no_divergence():
+    # one steady leg from C to D: RSI makes its lower low with price (measured: 28.4 at D, 37.3 at B)
+    g = _named(hm.find(_path(SHAPES["Gartley"]), "1h"), "Gartley", "in_zone")[0]
+    assert g.rsi_divergence is False and "No RSI divergence" in g.rsi_read
+    assert g.to_state()["confirmed_by"] == []
+    c = _named(hm.find(_path(SHAPES["Gartley"], tail=110.0), "1h"), "Gartley", "completed")[0]
+    assert c.rsi_divergence is False
+
+
+def test_a_d_that_does_not_extend_past_b_cannot_be_a_regular_divergence():
+    pts = (hm.Pivot(0, 95.0, "low"), hm.Pivot(2, 110.0, "high"), hm.Pivot(5, 100.0, "low"),
+           hm.Pivot(7, 105.0, "high"))
+    r = np.array([50.0] * 5 + [20.0] + [50.0] * 3 + [60.0])           # RSI far higher at D than at B
+    ok, why = hm.rsi_divergence(pts, hm.Pivot(9, 101.0, "low"), True, r)
+    assert ok is False and "not a lower low" in why
+    assert hm.rsi_divergence(pts, hm.Pivot(9, 99.0, "low"), True, r)[0] is True
+    ok, why = hm.rsi_divergence(pts, hm.Pivot(9, 99.0, "low"), True, np.full(10, np.nan))
+    assert ok is None and "not defined" in why
+
+
+def test_a_forming_pattern_has_no_d_to_check():
+    x, a, b, c, _ = SHAPES["Gartley"]
+    g = _named(hm.find(_path((x, a, b, c, 105.0)), "1h"), "Gartley", "forming")[0]
+    assert g.rsi_divergence is None and g.rsi_read == "" and g.to_state()["rsi_divergence"] is None
+
+
+def test_both_confirmations_are_named_and_the_level_rule_is_unchanged():
+    g = _named(hm.find(_legs(_grind_into_d()), "1h", {"available": True, "put_wall": 102.2}), "Gartley",
+               "in_zone")[0]
+    assert g.valid and g.confluence == ("put wall",) and g.confirmed_by == ("level", "rsi_divergence")
+
+
+def test_the_deck_and_card_name_the_divergence():
+    from core.agents.deck import _harmonic
+    from ui import panels
+    row = {"side": "bullish", "pattern": "Gartley", "stage": "in_zone", "valid": False, "rsi_divergence": True}
+    assert _harmonic({"harmonics": [row]}) == "bullish Gartley in zone (unconfirmed) + RSI divergence"
+    h = panels.harmonics_html({"1h": hm.find(_legs(_grind_into_d()), "1h")})
+    assert "RSI divergence</span>" in h and "Regular bullish RSI divergence at D" in h
+    plain = panels.harmonics_html({"1h": hm.find(_path(SHAPES["Gartley"]), "1h")})
+    assert "RSI divergence</span>" not in plain and "No RSI divergence" in plain

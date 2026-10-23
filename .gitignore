@@ -6,3 +6,4 @@ __pycache__/
 streamlit.log
 .pytest_cache/
 /data/
+/research/.cache/

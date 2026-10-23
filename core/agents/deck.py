@@ -28,13 +28,15 @@ class DeckAgent:
 
 
 def _harmonic(smc: dict) -> str:
-    """The structure agent's harmonic row: the first valid pattern, else the first unconfirmed one."""
+    """The structure agent's harmonic row: the first valid pattern, else the first unconfirmed one, with
+    the spec's RSI-divergence check at D named when it holds (rows from before the check carry no field)."""
     found = smc.get("harmonics") if isinstance(smc, dict) else None
     if not isinstance(found, list) or not found:
         return "none"
     h = next((x for x in found if x.get("valid")), found[0])
     return (f"{h['side']} {h['pattern']} {h['stage'].replace('_', ' ')}"
-            + ("" if h.get("valid") else " (unconfirmed)"))
+            + ("" if h.get("valid") else " (unconfirmed)")
+            + (" + RSI divergence" if h.get("rsi_divergence") else ""))
 
 
 def _get(d: dict | None, *path, default=None):

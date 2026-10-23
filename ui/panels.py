@@ -1984,11 +1984,14 @@ def harmonics_html(found: dict) -> str:
             rows += (f"<tr><td><strong>{html.escape(tf)}</strong></td>"
                      f"<td class='{cls}'>{html.escape(h.side.title() + ' ' + h.name)}</td>"
                      f"<td>{chip(stage, 'warn' if h.stage == 'in_zone' else 'outline')} "
-                     f"{chip('valid' if h.valid else 'unconfirmed', 'accent' if h.valid else 'outline')}</td>"
+                     f"{chip('valid' if h.valid else 'unconfirmed', 'accent' if h.valid else 'outline')}"
+                     + (f" {chip('RSI divergence', 'accent')}" if h.rsi_divergence else "")
+                     + "</td>"
                      f"<td class='muted'>zone {fmt_num(h.prz[0], 0, '$')}–{fmt_num(h.prz[1], 0, '$')}{extra}"
                      f" · targets {fmt_num(h.targets[0], 0, '$')} / {fmt_num(h.targets[1], 0, '$')}"
                      f" · invalid past {fmt_num(h.invalidation, 0, '$')}"
                      + (f"<br>at the zone: {html.escape(', '.join(h.confluence))}" if h.confluence else "")
+                     + (f"<br>{html.escape(h.rsi_read)}" if h.rsi_read else "")
                      + "</td></tr>")
     if not rows:
         body = ("<p class='muted'>No Gartley, Bat, Butterfly, Crab or Cypher forming, in its zone or just "
@@ -1997,7 +2000,9 @@ def harmonics_html(found: dict) -> str:
         body = f"<table class='ti-cascade'><tbody>{rows}</tbody></table>"
     body += ("<p class='muted ti-note'>Swings from an ATR zigzag on completed candles; ratios to the standard "
              "XABCD tables. A pattern is valid only when its reversal zone sits on a VWAP, value-area or gamma "
-             f"level. {html.escape(TRACK_RECORD)}</p>")
+             "level. The second confirmation is a regular RSI divergence at D: price goes past B, RSI(14) does "
+             "not. "
+             f"{html.escape(TRACK_RECORD)}</p>")
     return card_html("Harmonic patterns", body, tone)
 
 
