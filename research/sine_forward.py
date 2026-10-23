@@ -60,6 +60,7 @@ if __name__ == "__main__" and sys.argv[1:] == ["15m"]:
     run(load(DATA / "binance_15m.csv"), "BINANCE 15m 2023-2026", True, ks=(2, 4, 8))
     run(load(DATA / "gate_15m.csv").iloc[:-1].reset_index(drop=True), "GATE 15m (newest 10,000)", True, ks=(2, 4, 8))
     sys.exit(0)
-run(load(DATA / "binance_1h.csv"), "BINANCE 1h", True)
-run(load(DATA / "btc_1h.csv").iloc[:-1].reset_index(drop=True), "GATE 1h", True)
-run(load(DATA / "binance_4h.csv"), "BINANCE 4h", False)
+if __name__ == "__main__":
+    run(load(DATA / "binance_1h.csv"), "BINANCE 1h", True)
+    run(load(DATA / "btc_1h.csv").iloc[:-1].reset_index(drop=True), "GATE 1h", True)
+    run(load(DATA / "binance_4h.csv"), "BINANCE 4h", False)
