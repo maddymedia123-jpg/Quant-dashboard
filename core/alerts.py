@@ -93,6 +93,7 @@ class Channel:
     reason: str = ""
 
 
+MAX_CHARS = 1900                # Discord refuses a message over 2,000 characters; Telegram caps at 4,096
 URGENT_MARK = "\U0001F6A8 "   # the siren emoji: a stop, a TRAP call or a control shift
 
 
@@ -151,10 +152,20 @@ class Dispatcher:
         as notified and the rest are tried again next pass."""
         if not events:
             return [], []
-        # a blank line between events: a market alert is three lines, and run together they read as one
-        text = "\n\n".join((URGENT_MARK if e.urgent else "") + e.headline for e in events)
-        delivered, problems = False, []
+        delivered, problems = [], []
+        for batch in _batches(events):
+            # a blank line between events: a market alert is three lines, and run together they read as one
+            ok, notes = self._send_text("\n\n".join((URGENT_MARK if e.urgent else "") + e.headline for e in batch))
+            if ok:
+                delivered += batch
+            problems += [n for n in notes if n not in problems]
+        if not self.configured:
+            problems.append("No alert channel is configured, so nothing was sent; the events are kept "
+                            "and will go out once a channel exists.")
+        return delivered, problems
 
+    def _send_text(self, text: str) -> tuple[bool, list[str]]:
+        delivered, problems = False, []
         if self.telegram_token and self.telegram_chat:
             ok = self._post(f"https://api.telegram.org/bot{self.telegram_token}/sendMessage",
                             {"chat_id": self.telegram_chat, "text": text,
@@ -167,8 +178,24 @@ class Dispatcher:
             delivered = delivered or ok
             if not ok:
                 problems.append("Discord did not accept the message")
+        return delivered, problems
 
-        if not self.configured:
-            problems.append("No alert channel is configured, so nothing was sent; the events are kept "
-                            "and will go out once a channel exists.")
-        return (list(events) if delivered else []), problems
+
+def _batches(events: list[Event]) -> list[list[Event]]:
+    """Events grouped into messages under MAX_CHARS, a blank line between events, never split mid-event.
+
+    One message over the limit was refused whole and retried whole on every pass, so nothing in it ever
+    arrived. An event longer than the limit on its own is cut, not dropped."""
+    out: list[list[Event]] = []
+    size = 0
+    for e in events:
+        if len(e.headline) > MAX_CHARS - 10:
+            e = Event(e.kind, e.dedup_key, e.headline[: MAX_CHARS - 12] + " …", e.price)
+        n = len(e.headline) + len(URGENT_MARK) + 2
+        if out and size + n <= MAX_CHARS:
+            out[-1].append(e)
+            size += n
+        else:
+            out.append([e])
+            size = n
+    return out

@@ -914,6 +914,14 @@ def market_alert_pass() -> None:
                        m.taker_flow.frames if m.taker_flow.available else None, now_ms, m.spot.last,
                        context="; ".join(context))
     events += ma.trap_events(store.traps(limit=200), now_ms)
+    # his Market Pulse: once per report run and once per 4h close, each only while fresh
+    from core import pulse
+    latest = store.reports(limit=1)
+    rep_pulse = pulse.report_event(latest[0] if latest else None, analyses.get("live"), m, now_ms)
+    # a fresh report's pulse stands in for the close's: one dispatch, not two back to back
+    p = rep_pulse or pulse.close_event(analyses.get("live"), m, now_ms)
+    if p is not None:
+        events.append(p)
     for e in events:
         store.add_market_alert(now_ms, e.kind, e.dedup_key, e.headline, e.price)
     if not _alerts_may_send():
