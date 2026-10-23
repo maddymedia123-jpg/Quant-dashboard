@@ -147,7 +147,7 @@ DOMAINS: tuple[Domain, ...] = (
             "Locate buyside and sellside liquidity pools and whether either was swept and reclaimed.",
             "Find the nearest unmitigated order block and any unfilled fair value gap, and any harmonic "
             "pattern in smc.harmonics - counting only those marked valid (beside a VWAP, value-area or gamma "
-            "level).",
+            "level); rsi_divergence true adds confirmation, its absence never vetoes (seen in 6 of 137 replays).",
             "Place price in premium or discount of the dealing range.",
         ),
         items=(
