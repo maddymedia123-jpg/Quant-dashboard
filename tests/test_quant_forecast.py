@@ -278,3 +278,67 @@ def test_range_days_are_counted_apart_from_direction_calls():
     words = qa.record_words({"regime": "bullish", "backtest": r}, {"days": 0})
     assert words == ["backtest: direction right 1 of 2 days"], "a range day never props up a direction call"
     assert qa.record_words({"regime": "neutral", "backtest": r}, None) == ["backtest: range held 1 of 1 days"]
+
+
+# ---------- step 5: the AI write-up ----------
+from core import qf_writeup as qw  # noqa: E402
+
+
+def _good_text(p):
+    hi, lo = p["projected_high"], p["projected_low"]
+    return {"summary": f"Today leans {'up' if p['regime'] == 'bullish' else 'down'}. The likely high is "
+                       f"${hi['price']:,.0f} around {qa.at_label(hi['t_ms'])} and the low ${lo['price']:,.0f}; "
+                       f"the main path has a {p['p_scenario_a']:.0%} chance and the plan remains in force.",
+            "scenario_a": "Price works towards the high.", "scenario_b": "The plan is cancelled and replaced."}
+
+
+def test_the_check_catches_invented_numbers_times_odds_direction_and_jargon():
+    p = _plan_fixed()
+    ok = " ".join(_good_text(p).values())
+    assert qw.check(ok, p) == [], "its own numbers, rounded to the dollar, pass; 'remains' is not 'ema'"
+    assert qw.check("Watch $81,000.", p) == ["price $81,000 is not in the plan"]
+    assert qw.check("Watch $80.8k.", p) == [], "80.8k is the projected high"
+    assert qw.check("Moves come at 07:00.", p) == ["time 07:00 is not in the plan"]
+    assert qw.check("A 75% chance.", p) == ["75% is not one of the plan's odds"]
+    assert qw.check("A bearish day.", p) == ["says 'bearish' on a bullish plan"]
+    assert qw.check("Buyers paid up on taker flow and funding.", p) == ["jargon: 'taker'", "jargon: 'funding'"]
+
+
+def test_a_good_reply_is_used_a_bad_or_failed_one_leaves_the_code_text():
+    p = _plan_fixed()
+    w = qw.write(p, ask=lambda s, u: {"data": _good_text(p), "model": "gemini-test"})
+    assert w["summary"].startswith("Today leans up") and w["model"] == "gemini-test"
+    bad = {**_good_text(p), "summary": "BTC will hit $90,000 for sure."}
+    assert "not in the plan" in qw.write(p, ask=lambda s, u: {"data": bad})["rejected"]
+    assert "missing" in qw.write(p, ask=lambda s, u: {"data": {"summary": "x"}})["rejected"]
+
+    def down(s, u):
+        raise TimeoutError("slow")
+    assert "did not answer" in qw.write(p, ask=down)["rejected"]
+    assert qw.write(p) is None, "never called on offline fixture data"
+    assert qw.write(qf.locked_plan(DAY0, DAY0 + qf.DAY_MS, 80_000.0, 2, None, None), ask=down) is None
+
+
+def test_the_model_is_shown_the_numbers_already_written_out():
+    p = _plan_fixed()
+    seen = {}
+    qw.write(p, ask=lambda s, u: seen.update(system=s, user=u) or {"data": _good_text(p)})
+    assert "$80,800 around" in seen["user"] and "a 4-hour candle closes below $79,000" in seen["user"]
+    assert "Never round" in seen["system"]
+
+
+def test_the_plan_carries_the_write_up_into_the_message_and_the_screen(tmp_path, monkeypatch):
+    from ui import panels
+    store = Store(tmp_path / "s.sqlite")
+    monkeypatch.setattr(qw, "write", lambda plan, live=None: {"summary": "A calm day, leaning up.",
+                                                             "scenario_a": "Up.", "scenario_b": "Fails.",
+                                                             "model": "gemini-test"})
+    ev = qa.run(store, _M(hourly(800, DAY0 - 800 * H)), DAY0 + 60_000)
+    assert "Game plan: A calm day, leaning up." in ev[0].headline
+    plan = store.qf_plans(DAY0)[0]["payload"]
+    assert plan["writeup"]["model"] == "gemini-test"
+    shown = panels.qf_gameplan_html(plan, {"days": 0})
+    assert "A calm day, leaning up." in shown and "Written by gemini-test" in shown
+    plan["writeup"] = {"rejected": "price $1 is not in the plan"}
+    assert "was not used (price $1 is not in the plan)" in panels.qf_gameplan_html(plan, {"days": 0})
+    store.close()

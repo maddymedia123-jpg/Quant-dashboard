@@ -2340,7 +2340,6 @@ def qf_status_html(status: str, message: str | None, plans_today: list[dict]) ->
 
 def qf_gameplan_html(plan: dict, live: dict) -> str:
     """Section B: the regime and its odds, the plan in plain words, the time windows, the key levels."""
-    from core import quant_forecast as qf
     from core.qf_alerts import REGIME_WORD, at_label, window_label
     money = lambda x: fmt_num(x, 0, "$")  # noqa: E731
     tone = {"bullish": "up", "bearish": "down"}.get(plan["regime"], "neutral")
@@ -2352,7 +2351,7 @@ def qf_gameplan_html(plan: dict, live: dict) -> str:
     if not live.get("days"):
         odds.append("live record: building (no finished day yet)")
     body = (f"<p><strong>{html.escape(REGIME_WORD[plan['regime']])}</strong> · {html.escape(' · '.join(odds))}</p>"
-            f"<p>{html.escape(qf.directive(plan, at_label))}</p>")
+            + qf_words_html(plan))
     if plan["regime"] != "locked":
         rows = "".join(f"<tr><td>{'Chop / range' if w['phase'] == 'chop' else 'Expansion'}</td>"
                        f"<td>{html.escape(window_label(w['start_ms'], w['end_ms']))}</td>"
@@ -2369,12 +2368,28 @@ def qf_gameplan_html(plan: dict, live: dict) -> str:
                        f"{money(ph['price'])} <span class='muted'>{html.escape(at_label(ph['t_ms']))}</span>")
                  + _kv("Hard invalidation (4h close)", " / ".join(f"{side} {money(v)}" for side, v in inv.items()), "down")
                  + "</div>")
-        body += (f"<p><strong>Scenario A ({plan['p_scenario_a']:.0%}):</strong> {html.escape(plan['scenario_a'])}</p>"
-                 f"<p><strong>Scenario B ({1 - plan['p_scenario_a']:.0%}):</strong> {html.escape(plan['scenario_b'])}</p>")
+        w = plan.get("writeup") or {}
+        a, b = (w["scenario_a"], w["scenario_b"]) if w.get("summary") else (plan["scenario_a"], plan["scenario_b"])
+        body += (f"<p><strong>Scenario A ({plan['p_scenario_a']:.0%}):</strong> {html.escape(a)}</p>"
+                 f"<p><strong>Scenario B ({1 - plan['p_scenario_a']:.0%}):</strong> {html.escape(b)}</p>")
     elif plan.get("day_range"):
         body += (f"<p class='muted'>Today's range so far: {money(plan['day_range'][0])} – "
                  f"{money(plan['day_range'][1])}.</p>")
     return card_html(f"Game plan · plan #{plan['version']} · made {at_label(plan['created_ms'])}", body, tone)
+
+
+def qf_words_html(plan: dict) -> str:
+    """The game plan in words: the AI's, checked against the numbers, or the code's own when there is none
+    or it failed a check - and which one the reader is looking at."""
+    from core import quant_forecast as qf
+    from core.qf_alerts import at_label
+    w = plan.get("writeup") or {}
+    if w.get("summary"):
+        return (f"<p>{html.escape(w['summary'])}</p><p class='muted ti-note'>Written by {html.escape(w.get('model') or 'the AI')} "
+                "from the numbers on this card; every price, time and percentage was checked against them.</p>")
+    note = (f"The AI write-up was not used ({html.escape(w['rejected'])}), so this is the code's own text."
+            if w.get("rejected") else "Written from the numbers by the code.")
+    return f"<p>{html.escape(qf.directive(plan, at_label))}</p><p class='muted ti-note'>{note}</p>"
 
 
 def qf_levels_html(plan: dict) -> str:

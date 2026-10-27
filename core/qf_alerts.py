@@ -201,7 +201,8 @@ def plan_headline(plan: dict, live: dict | None = None, title: str = "QUANT FORE
     if plan["regime"] == "locked":
         lines.append(plan["scenario_a"] + f" Until {at_label(plan['end_ms'])}.")
         return "\n".join(lines)
-    lines.append(f"Plan: {plan['scenario_a']}")
+    w = plan.get("writeup") or {}
+    lines.append(f"Game plan: {w['summary']}" if w.get("summary") else f"Plan: {plan['scenario_a']}")
     for phase, word in (("chop", "Quiet / chop"), ("expansion", "Expansion")):
         ws = [window_label(w["start_ms"], w["end_ms"]) for w in plan.get("windows") or [] if w["phase"] == phase]
         if ws:
@@ -264,6 +265,18 @@ def live_record(store, n: int = 10) -> dict:
     return qf.record([r["outcome"] for r in rows[:n]])
 
 
+def _write_up(plan: dict, store) -> None:
+    """Step 5: the AI's plain-English plan, checked against the numbers; kept on the plan when it passes,
+    the reason kept when it does not (the code's own text is used then)."""
+    from core import qf_writeup
+    try:
+        w = qf_writeup.write(plan, live_record(store))
+    except Exception as e:  # noqa: BLE001 - the plan goes out with the code's text
+        w = {"rejected": f"{type(e).__name__}: {e}"}
+    if w is not None:
+        plan["writeup"] = w
+
+
 def run(store, m, now_ms: int, gamma: dict | None = None) -> list[Event]:
     """Make today's plan if there is none, replace it when invalidated, audit it, score what has ended.
     Returns the alert events this pass found; the caller logs them in the ledger, which keeps them once."""
@@ -288,6 +301,7 @@ def run(store, m, now_ms: int, gamma: dict | None = None) -> list[Event]:
         if not plan.get("available"):
             return events
         plan["backtest"] = qf.backtest(h1, now_ms)
+        _write_up(plan, store)
         if store.put_qf_plan(plan):
             events.append(Event("qf_plan", _key(plan, "plan"), plan_headline(plan, live_record(store)), plan["origin"]))
         plans = store.qf_plans(day)
@@ -314,6 +328,8 @@ def run(store, m, now_ms: int, gamma: dict | None = None) -> list[Event]:
         built = qf.build_plan(h1, now_ms, end, float(price), version=version, flow=flow.get("1h"), gamma=gamma)
         if built.get("available"):
             built["backtest"] = plan.get("backtest")
+            built["replaces"] = {"version": plan["version"], "invalidation": hit}
+            _write_up(built, store)
             new = built
     if new is not None:
         new["replaces"] = {"version": plan["version"], "invalidation": hit}

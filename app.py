@@ -1313,8 +1313,8 @@ if screen == "qf":
             _bt = next((r["payload"].get("backtest") for r in _qf_today if r["payload"].get("backtest")), None)
             panels.render(panels.qf_record_html(_bt, _qf_live, _qf_hist))
         st.caption("Alerts for this plan (Discord): daily plan at 00:00 UTC (05:00 PKT), CAUTION, MODEL HELD, "
-                   "INVALIDATED with the new plan, SYSTEM LOCKED. The AI write-up (step 5) is not on yet: the "
-                   "words above are written from the numbers.")
+                   "INVALIDATED with the new plan, SYSTEM LOCKED. The AI writes the game plan's words once per "
+                   "plan; it never sets a number.")
 
 # ---------- phone footer: the feed list, which lives in the folded-away sidebar on a desktop ----------
 with st.container(key="ti_mobile_foot"):
