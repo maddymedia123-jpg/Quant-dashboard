@@ -125,6 +125,24 @@ def turso_settings() -> tuple[str, str] | None:
     return (url, token) if url and token else None
 
 
+TURSO_KEYS = ("TURSO_DATABASE_URL", "TURSO_AUTH_TOKEN")
+
+
+def find_turso(secrets: dict) -> dict[str, str]:
+    """TURSO_* from a secrets mapping, at the top level or one section down. Lines added at the bottom of
+    a Streamlit secrets box that has a [section] above them belong to that section, so a top-level lookup
+    missed them and the dashboard stayed on its local file (27 Oct). Returns only what was found."""
+    found: dict[str, str] = {}
+    for k in TURSO_KEYS:
+        v = secrets.get(k)
+        if not str(v or "").strip():
+            v = next((sec.get(k) for sec in secrets.values()
+                      if hasattr(sec, "get") and str(sec.get(k) or "").strip()), None)
+        if str(v or "").strip():
+            found[k] = str(v).strip()
+    return found
+
+
 class _TursoCursor:
     """libsql returns tuples; the store reads columns by name, as sqlite3.Row allowed. Rows come back as
     dicts built from the cursor's own column names, so not one query had to change.
@@ -201,16 +219,29 @@ class Store:
             p = pathlib.Path(path) if path else default_path()
             p.parent.mkdir(parents=True, exist_ok=True)
             self.path = str(p)
+        # Why the store is not on Turso, in words the page can show: on Streamlit Cloud nobody can read the
+        # logs but the app's owner, so "it fell back to the local file" has to say why on screen.
+        self.turso_note: str | None = None
         turso = turso_settings() if self.path != ":memory:" else None
+        if self.path != ":memory:" and turso is None:
+            missing = [k for k in ("TURSO_DATABASE_URL", "TURSO_AUTH_TOKEN") if not os.environ.get(k, "").strip()]
+            self.turso_note = "not set: " + ", ".join(missing)
         if turso and libsql is None:
             log.error("store: TURSO_* is set but the libsql package is missing; using the local file")
+            self.turso_note = "TURSO_* is set but the libsql package is not installed"
             turso = None
+        self.backend = "sqlite"
         if turso:
             # the replica lives beside the old file, under its own name: the two formats never mix
-            self.path = str(pathlib.Path(self.path).with_suffix(".turso.db"))
-            self._conn = _TursoConnection(self.path, *turso)
-            self.backend = "turso"
-        else:
+            replica = str(pathlib.Path(self.path).with_suffix(".turso.db"))
+            try:
+                self._conn = _TursoConnection(replica, *turso)
+                self.path, self.backend = replica, "turso"
+            except Exception as e:  # noqa: BLE001 - a bad token or a network failure falls back, said so
+                log.error("store: Turso connection failed (%s: %s); using the local file", type(e).__name__, e)
+                # the message names the URL at most, never the token (libsql does not echo it)
+                self.turso_note = f"could not connect to Turso: {type(e).__name__}: {str(e)[:160]}"
+        if self.backend != "turso":
             self._conn = sqlite3.connect(self.path, check_same_thread=False)
             self._conn.row_factory = sqlite3.Row
             self.backend = "sqlite"

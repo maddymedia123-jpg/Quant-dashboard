@@ -124,3 +124,32 @@ def test_turso_upper_cased_keyword_columns_come_back_lowercase():
             return [(1, "{}")]
     c = store_mod._TursoCursor(Cur())
     assert c.fetchone()["plan"] == "{}" and c.fetchall()[0]["plan"] == "{}"
+
+
+def test_turso_secrets_are_found_even_inside_a_section():
+    url, tok = "libsql://x.turso.io", "t0k"
+    assert store_mod.find_turso({"TURSO_DATABASE_URL": url, "TURSO_AUTH_TOKEN": tok}) == {
+        "TURSO_DATABASE_URL": url, "TURSO_AUTH_TOKEN": tok}
+    pasted_under_a_section = {"GEMINI_API_KEY": "g", "typesafe": {"key": "k", "TURSO_DATABASE_URL": url,
+                                                                  "TURSO_AUTH_TOKEN": tok}}
+    assert store_mod.find_turso(pasted_under_a_section) == {"TURSO_DATABASE_URL": url, "TURSO_AUTH_TOKEN": tok}
+    assert store_mod.find_turso({"TURSO_DATABASE_URL": url, "TURSO_AUTH_TOKEN": "  "}) == {"TURSO_DATABASE_URL": url}
+
+
+def test_the_store_says_why_it_is_not_on_turso(tmp_path, monkeypatch):
+    monkeypatch.delenv("TURSO_DATABASE_URL", raising=False)
+    monkeypatch.delenv("TURSO_AUTH_TOKEN", raising=False)
+    assert Store(tmp_path / "a.sqlite").turso_note == "not set: TURSO_DATABASE_URL, TURSO_AUTH_TOKEN"
+    monkeypatch.setenv("TURSO_DATABASE_URL", "libsql://x")
+    monkeypatch.setenv("TURSO_AUTH_TOKEN", "t")
+    monkeypatch.setattr(store_mod, "libsql", None)
+    assert "not installed" in Store(tmp_path / "b.sqlite").turso_note
+    monkeypatch.setattr(store_mod, "libsql", object())
+
+    def refuse(*a, **k):
+        raise ValueError("Hrana: 401 Unauthorized")
+    monkeypatch.setattr(store_mod, "_TursoConnection", refuse)
+    s = Store(tmp_path / "c.sqlite")
+    assert s.backend == "sqlite" and s.turso_note.startswith("could not connect to Turso: ValueError: Hrana: 401")
+    s.add_market_alert(1, "plan", "k", "h", None)
+    assert s.claim_market_alerts(2), "a failed connection leaves a working local store, not a broken page"

@@ -65,7 +65,7 @@ from core.indicators import desk_derivs
 from core.indicators.category import analyze_category
 from core.indicators.early_warning import early_warnings
 from core.indicators.forecast import desk_forecast
-from core.store import Store
+from core.store import TURSO_KEYS, Store, find_turso
 from core.indicators.trade_map import map_trade
 from ui import panels
 from core.trades import fmt_when
@@ -92,16 +92,23 @@ def _context():
 STORE_VERSION = 9   # bump whenever core.store gains tables or methods, or changes how it matches rows
 
 
+def _turso_secrets() -> dict[str, str]:
+    """The Turso settings from Streamlit's secrets, wherever they were pasted (core.store.find_turso)."""
+    try:
+        return find_turso(dict(st.secrets))
+    except Exception:  # noqa: BLE001 - no secrets file
+        return {}
+
+
+def _export_turso() -> None:
+    """core.store reads Turso's settings from the environment, as the worker gets them from its .env."""
+    for k, v in _turso_secrets().items():
+        os.environ.setdefault(k, v)
+
+
 @st.cache_resource(show_spinner=False)
 def _store(version: int = STORE_VERSION):
-    # Turso's URL and token arrive as Streamlit secrets; core.store reads them from the environment, the
-    # same way the worker gets them from its .env file. Without them the store is the local file.
-    try:
-        for k in ("TURSO_DATABASE_URL", "TURSO_AUTH_TOKEN"):
-            if st.secrets.get(k) and not os.environ.get(k):
-                os.environ[k] = str(st.secrets[k])
-    except Exception:  # noqa: BLE001 - no secrets file: the local store it is
-        pass
+    _export_turso()
     return Store()
 
 
@@ -113,6 +120,12 @@ def _live_store():
     hasattr probe stays as a second line of defence for a revision that forgets to bump."""
     s = _store(STORE_VERSION)
     if not hasattr(s, "claim_trade_events"):   # cached from an older revision
+        _drop_store(s)
+        s = _store(STORE_VERSION)
+    # the store is built once per process: one opened before the Turso secrets were saved stays on the
+    # local file until a reboot. Secrets present now but missing when it opened: open it again, once.
+    if (getattr(s, "backend", "") == "sqlite" and str(getattr(s, "turso_note", "") or "").startswith("not set")
+            and len(_turso_secrets()) == len(TURSO_KEYS)):
         _drop_store(s)
         s = _store(STORE_VERSION)
     try:
@@ -406,9 +419,14 @@ if not (m.spot.last or analyses) and store.traps(status="active", limit=1):
                "The levels below are as of the last successful refresh.")
 
 st.sidebar.markdown(f"<span class='ti-chip'>ledger: {store.path}</span>", unsafe_allow_html=True)
-st.sidebar.caption("Anchors, accuracy and alerts are shared with the 24/7 worker in Turso." if store.backend == "turso"
-                   else "Anchors and accuracy persist in a local SQLite file. On Streamlit Cloud this resets on "
-                        "every deploy until TURSO_DATABASE_URL and TURSO_AUTH_TOKEN are set.")
+if store.backend == "turso":
+    st.sidebar.caption("Anchors, accuracy and alerts are shared with the 24/7 worker in Turso.")
+else:
+    _seen = _turso_secrets()
+    st.sidebar.caption(
+        "Anchors and accuracy persist in a local SQLite file, which resets on every deploy. Turso: "
+        + html.escape(str(getattr(store, "turso_note", "") or "not configured")) + ". Secrets seen: "
+        + ", ".join(f"{k} {'yes' if k in _seen else 'no'}" for k in TURSO_KEYS) + ".")
 
 # ---------- top bar ----------
 _live_a = analyses.get("live")
