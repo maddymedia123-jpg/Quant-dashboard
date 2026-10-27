@@ -89,7 +89,7 @@ def _context():
 # Streamlit Cloud reloads the script on deploy but keeps cached resources, so a Store built from the
 # previous revision survives and is missing whatever that revision did not have. Keying the cache on a
 # version makes a deploy that changes core.store hand back a fresh Store instead of a stale one.
-STORE_VERSION = 9   # bump whenever core.store gains tables or methods, or changes how it matches rows
+STORE_VERSION = 10   # bump whenever core.store gains tables or methods, or changes how it matches rows
 
 
 def _turso_secrets() -> dict[str, str]:
@@ -119,7 +119,7 @@ def _live_store():
     `_store()` produced a cache key that never mentioned STORE_VERSION and a bump changed nothing. The
     hasattr probe stays as a second line of defence for a revision that forgets to bump."""
     s = _store(STORE_VERSION)
-    if not hasattr(s, "claim_trade_events"):   # cached from an older revision
+    if not hasattr(s, "put_qf_plan"):   # cached from an older revision
         _drop_store(s)
         s = _store(STORE_VERSION)
     # the store is built once per process: one opened before the Turso secrets were saved stays on the
@@ -445,13 +445,14 @@ if not m.spot.available:
     st.error(f"Price data unavailable from {m.spot.source}: {m.spot.error}. Nothing to analyse.")
 
 # ---------- the rail: four desks, then four engines; only the open screen renders ----------
-ENGINES = {"trap": "TRAP Intelligence", "trade": "Active Trade", "director": "Director report", "macro": "Macro & News"}
+ENGINES = {"trap": "TRAP Intelligence", "trade": "Active Trade", "director": "Director report", "macro": "Macro & News",
+           "qf": "Quant Forecast"}
 SCREENS = list(CATEGORIES) + list(ENGINES)
 _labels = {**{k: c.label for k, c in CATEGORIES.items()}, **ENGINES}
 _captions = ([panels.rail_read(verdicts.get(k), analyses.get(k)) for k in CATEGORIES]
              + ["Sweep, anchored traps, watch list", "Positions, stops and targets",
                 f"Report {report.report_id}" if report is not None else "Run Analysis to generate",
-                "Headlines, gold, rates, odds"])
+                "Headlines, gold, rates, odds", "Today's 24h plan, audited live"])
 st.session_state.setdefault("screen", SCREENS[0])
 
 
@@ -1271,6 +1272,49 @@ if screen == "macro":
         st.error(f"The odds feed could not be drawn ({type(e).__name__}: {e}).")
     st.caption("Data from Polymarket. Powered by VoxOdds, which scores whether each quote can be filled. A "
                "probability on a market flagged fragile is a printed number, not a forecast.")
+
+# ---------- Quant Forecast: the day's computed plan, made and audited by the pass above ----------
+if screen == "qf":
+    from core import qf_alerts
+    from ui.charts import render_qf_chart
+    panels.render(panels.engine_hero_html(
+        9, "Quant Forecast",
+        "One plan for the day (00:00 UTC / 05:00 PKT, 24 hours): a direction or a range, its odds and track "
+        "record, the quiet and busy windows, the predicted high and low, and the line that cancels it. Every "
+        "number is computed; the plan is checked every minute and replaced if price breaks it."))
+    _qf_day = qf_alerts.qf.day_start(now_ms)
+    _qf_today = store.qf_plans(_qf_day)
+    _qf_active = next((r for r in reversed(_qf_today) if r["status"] == "active"), None)
+    if _qf_active is None:
+        st.info("No plan for today yet: it needs a live price and about three weeks of hourly candles. "
+                "It is made on the next refresh that has both.")
+    else:
+        _qf_plan = _qf_active["payload"]
+        _h1 = m.spot.frames.get("1h")
+        _flow = m.taker_flow.frames if getattr(m.taker_flow, "available", False) else {}
+        try:
+            _qf_audit = qf_alerts.audit(_qf_plan, m.spot.frames, _flow.get("15m"), now_ms)
+        except Exception as e:  # noqa: BLE001 - the plan still shows without its audit
+            _qf_audit = {"status": "on track", "cautions": [], "holds": []}
+            st.caption(f"Audit unavailable this refresh: {e}")
+        _qf_sent = store.market_alerts_keyed(f"qf:{_qf_day}:", limit=1)
+        _qf_live = qf_alerts.live_record(store)
+        panels.render(panels.qf_status_html(_qf_audit["status"], _qf_sent[0]["headline"] if _qf_sent else None,
+                                            _qf_today))
+        panels.render(panels.qf_gameplan_html(_qf_plan, _qf_live))
+        if _h1 is not None and _qf_plan.get("hours"):
+            with st.container(key="ti_chart_qf"):
+                render_qf_chart(_qf_plan, _h1, dark, height=460, signal=signal, now_ms=now_ms)
+        _c1, _c2 = st.columns(2, gap="large")
+        with _c1:
+            panels.render(panels.qf_levels_html(_qf_plan))
+        with _c2:
+            _qf_hist = [{**r, "day": r["day_ms"]} for r in store.qf_plans(limit=30)]
+            _bt = next((r["payload"].get("backtest") for r in _qf_today if r["payload"].get("backtest")), None)
+            panels.render(panels.qf_record_html(_bt, _qf_live, _qf_hist))
+        st.caption("Alerts for this plan (Discord): daily plan at 00:00 UTC (05:00 PKT), CAUTION, MODEL HELD, "
+                   "INVALIDATED with the new plan, SYSTEM LOCKED. The AI write-up (step 5) is not on yet: the "
+                   "words above are written from the numbers.")
 
 # ---------- phone footer: the feed list, which lives in the folded-away sidebar on a desktop ----------
 with st.container(key="ti_mobile_foot"):

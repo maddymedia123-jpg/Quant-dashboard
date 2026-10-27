@@ -94,6 +94,11 @@ CREATE TABLE IF NOT EXISTS market_alerts (
     claimed_ms INTEGER);
 CREATE TABLE IF NOT EXISTS cascade_states (
     category TEXT PRIMARY KEY, state TEXT NOT NULL, ts_ms INTEGER NOT NULL, since_ms INTEGER, prior_state TEXT);
+CREATE TABLE IF NOT EXISTS qf_plans (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, day_ms INTEGER NOT NULL, version INTEGER NOT NULL,
+    created_ms INTEGER NOT NULL, end_ms INTEGER NOT NULL, regime TEXT NOT NULL, payload TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active', closed_ms INTEGER, closed_reason TEXT, scored_ms INTEGER,
+    outcome TEXT, UNIQUE (day_ms, version));
 CREATE INDEX IF NOT EXISTS idx_calls_open ON calls (scored_ms, ts_ms);
 CREATE INDEX IF NOT EXISTS idx_signals_cat ON signals (category, ts_ms);
 """
@@ -756,6 +761,13 @@ class Store:
         with self._lock:
             return _rows(self._conn.execute(sql, (limit,)))
 
+    def market_alerts_keyed(self, prefix: str, limit: int = 20) -> list[dict]:
+        """The alerts whose key starts with `prefix`, newest first (one Quant Forecast day's, say)."""
+        with self._lock:
+            return _rows(self._conn.execute(
+                "SELECT * FROM market_alerts WHERE substr(dedup_key, 1, ?) = ? ORDER BY ts_ms DESC, id DESC LIMIT ?",
+                (len(prefix), prefix, limit)))
+
     # notified: 0 waiting, 2 claimed by a page that is sending it now, 1 delivered.
     CLAIM_TIMEOUT_MS = 10 * 60_000
 
@@ -837,6 +849,62 @@ class Store:
                 % ",".join("?" * len(event_ids)), tuple(event_ids))
             self._conn.commit()
         return cur.rowcount
+
+    # ---- Quant Forecast plans: one row per plan, version 0 the morning plan, each re-forecast the next ----
+    @staticmethod
+    def _qf_row(r: dict) -> dict:
+        out = dict(r)
+        out["payload"] = json.loads(out["payload"]) if out.get("payload") else {}
+        out["outcome"] = json.loads(out["outcome"]) if out.get("outcome") else None
+        return out
+
+    def put_qf_plan(self, plan: dict) -> int | None:
+        """Insert a plan once per (day, version). Returns its id, or None when another process has
+        already written that version - the caller then reads theirs instead of sending a second one."""
+        with self._lock:
+            rows = _rows(self._conn.execute(
+                "INSERT OR IGNORE INTO qf_plans (day_ms, version, created_ms, end_ms, regime, payload) "
+                "VALUES (?,?,?,?,?,?) RETURNING id",
+                (int(plan["day_ms"]), int(plan["version"]), int(plan["created_ms"]), int(plan["end_ms"]),
+                 str(plan["regime"]), json.dumps(plan))))
+            self._conn.commit()
+        return int(rows[0]["id"]) if rows else None
+
+    def qf_plans(self, day_ms: int | None = None, limit: int = 60) -> list[dict]:
+        """One day's plans in version order, or the latest plans across days, newest first."""
+        with self._lock:
+            if day_ms is not None:
+                rows = _rows(self._conn.execute("SELECT * FROM qf_plans WHERE day_ms=? ORDER BY version",
+                                                (int(day_ms),)))
+            else:
+                rows = _rows(self._conn.execute("SELECT * FROM qf_plans ORDER BY day_ms DESC, version DESC LIMIT ?",
+                                                (int(limit),)))
+        return [self._qf_row(r) for r in rows]
+
+    def close_qf_plan(self, plan_id: int, status: str, reason: str, now_ms: int) -> bool:
+        """Mark an active plan invalidated, in one statement: True for the one process that flipped it."""
+        with self._lock:
+            rows = _rows(self._conn.execute(
+                "UPDATE qf_plans SET status=?, closed_ms=?, closed_reason=? WHERE id=? AND status='active' "
+                "RETURNING id", (status, int(now_ms), reason, int(plan_id))))
+            self._conn.commit()
+        return bool(rows)
+
+    def qf_due(self, now_ms: int) -> list[dict]:
+        """Plans whose window has ended and that have not been scored yet."""
+        with self._lock:
+            rows = _rows(self._conn.execute(
+                "SELECT * FROM qf_plans WHERE scored_ms IS NULL AND end_ms <= ? ORDER BY day_ms, version",
+                (int(now_ms),)))
+        return [self._qf_row(r) for r in rows]
+
+    def score_qf_plan(self, plan_id: int, outcome: dict, now_ms: int) -> bool:
+        with self._lock:
+            rows = _rows(self._conn.execute(
+                "UPDATE qf_plans SET scored_ms=?, outcome=? WHERE id=? AND scored_ms IS NULL RETURNING id",
+                (int(now_ms), json.dumps(outcome), int(plan_id))))
+            self._conn.commit()
+        return bool(rows)
 
     def close(self) -> None:
         with self._lock:

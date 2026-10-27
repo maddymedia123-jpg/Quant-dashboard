@@ -190,23 +190,31 @@ def taker_delta(price: pd.DataFrame, flow: pd.DataFrame | None, lookback: int = 
                      acceleration=None if velocity is None or prior is None else velocity - prior, units="BTC")
 
 
-def volume_profile(df: pd.DataFrame, bins: int = 48, lookback: int = 200) -> VolumeProfile:
-    """Point of control and the value area holding 70% of traded volume."""
-    window = df.tail(lookback)
+def _profile_bins(window: pd.DataFrame, bins: int) -> tuple[np.ndarray, np.ndarray] | None:
+    """(bin edges, volume per bin): each candle's volume spread evenly over the bins its range covers."""
     if window.empty or float(window["volume"].sum()) <= 0:
-        return VolumeProfile()
+        return None
     lo, hi = float(window["low"].min()), float(window["high"].max())
     if hi <= lo:
-        return VolumeProfile()
-
+        return None
     edges = np.linspace(lo, hi, bins + 1)
-    centres = (edges[:-1] + edges[1:]) / 2.0
     totals = np.zeros(bins)
     for h, l, v in zip(window["high"].to_numpy(), window["low"].to_numpy(), window["volume"].to_numpy()):
         first, last = np.searchsorted(edges, l, "right") - 1, np.searchsorted(edges, h, "left")
         first, last = max(0, min(bins - 1, first)), max(0, min(bins - 1, last - 1 if last > 0 else 0))
         share = v / (last - first + 1)
         totals[first:last + 1] += share
+    return edges, totals
+
+
+def volume_profile(df: pd.DataFrame, bins: int = 48, lookback: int = 200) -> VolumeProfile:
+    """Point of control and the value area holding 70% of traded volume."""
+    window = df.tail(lookback)
+    binned = _profile_bins(window, bins)
+    if binned is None:
+        return VolumeProfile()
+    edges, totals = binned
+    centres = (edges[:-1] + edges[1:]) / 2.0
 
     total = totals.sum()
     poc_i = int(np.argmax(totals))
@@ -226,6 +234,44 @@ def volume_profile(df: pd.DataFrame, bins: int = 48, lookback: int = 200) -> Vol
     price = float(window["close"].iloc[-1])
     position = "inside value" if va_low <= price <= va_high else "above value" if price > va_high else "below value"
     return VolumeProfile(True, float(centres[poc_i]), va_high, va_low, float(covered / total), position)
+
+
+LVN_SHARE = 0.35                 # a bin under 35% of the profile's average volume is thin
+
+
+@dataclass
+class LowVolumeNode:
+    low: float
+    high: float
+
+    @property
+    def mid(self) -> float:
+        return (self.low + self.high) / 2.0
+
+
+def low_volume_nodes(df: pd.DataFrame, bins: int = 48, lookback: int = 200,
+                     share: float = LVN_SHARE) -> list[LowVolumeNode]:
+    """Air pockets: runs of price the market crossed quickly, with little volume traded inside them.
+
+    A run of thin bins between two thicker ones; the profile's outer edges are thin by construction (price
+    only touched them once), so a run touching either edge is not a node."""
+    binned = _profile_bins(df.tail(lookback), bins)
+    if binned is None:
+        return []
+    edges, totals = binned
+    thin = totals < share * float(totals.mean())
+    out, i = [], 0
+    while i < bins:
+        if not thin[i]:
+            i += 1
+            continue
+        j = i
+        while j + 1 < bins and thin[j + 1]:
+            j += 1
+        if i > 0 and j < bins - 1:
+            out.append(LowVolumeNode(float(edges[i]), float(edges[j + 1])))
+        i = j + 1
+    return out
 
 
 def volume_profile_context(df: pd.DataFrame, lookback: int = 200, window: int = 10,

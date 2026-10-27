@@ -24,7 +24,7 @@ REQUIRED_STORE_METHODS = (
 
 
 DESKS = ("live", "intraday", "weekly", "monthly")
-SCREENS = DESKS + ("trap", "trade", "director", "macro")
+SCREENS = DESKS + ("trap", "trade", "director", "macro", "qf")
 
 
 def visit(at, screen):
@@ -99,10 +99,11 @@ def test_the_page_renders_with_no_exception(app):
     assert "Run Live Recon war room" in [b.label for b in app.button], "the default screen is the Live desk"
 
 
-def test_the_rail_lists_four_desks_then_four_engines_and_opens_on_live(app):
+def test_the_rail_lists_four_desks_then_five_engines_and_opens_on_live(app):
     rail = app.radio(key="screen")
     assert list(rail.options) == ["Live Recon", "Intraday", "Weekly", "Monthly",
-                                  "TRAP Intelligence", "Active Trade", "Director report", "Macro & News"]
+                                  "TRAP Intelligence", "Active Trade", "Director report", "Macro & News",
+                                  "Quant Forecast"]
     assert rail.value == "live"
 
 

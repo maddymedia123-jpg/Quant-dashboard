@@ -2319,3 +2319,129 @@ def sine_experimental_html(warning, ny_now: bool, record, history_note: str = ""
         "New York hours, it did no better than a random hour. Not used by the agents, the plans or the Discord "
         "alerts; it stays only if the live record holds."
         + (f" {html.escape(history_note)}" if history_note else "") + "</p>"), tone)
+
+
+# ---------- Quant Forecast (Hammad's AI Quant Master Agent, steps 1-4) ----------
+QF_STATUS = {"on track": ("ON-TRACK", "up"), "caution": ("TIER-1 CAUTION", "warn"),
+             "model held": ("MODEL HELD", "up"), "invalidated": ("INVALIDATED & RE-MAPPED", "down"),
+             "locked": ("SYSTEM LOCKED", "down")}
+
+
+def qf_status_html(status: str, message: str | None, plans_today: list[dict]) -> str:
+    """Section A: where the plan stands and the last message the bot sent about it."""
+    label, tone = QF_STATUS.get(status, (status.upper(), ""))
+    failed = sum(1 for r in plans_today if r["status"] == "invalidated")
+    body = (f"<p>{chip(label, tone)} plan #{plans_today[-1]['version'] if plans_today else 0} today · "
+            f"{failed} invalidated so far (the 2nd locks the day)</p>")
+    if message:
+        body += f"<p class='muted'>Last message sent about it:</p><p style='white-space:pre-line'>{html.escape(message)}</p>"
+    return card_html("Audit & alert status", body, {"up": "up", "down": "down"}.get(tone, "neutral"))
+
+
+def qf_gameplan_html(plan: dict, live: dict) -> str:
+    """Section B: the regime and its odds, the plan in plain words, the time windows, the key levels."""
+    from core import quant_forecast as qf
+    from core.qf_alerts import REGIME_WORD, at_label, window_label
+    money = lambda x: fmt_num(x, 0, "$")  # noqa: E731
+    tone = {"bullish": "up", "bearish": "down"}.get(plan["regime"], "neutral")
+    odds = []
+    if plan.get("p_scenario_a") is not None:
+        odds.append(f"{plan['p_scenario_a']:.0%} by the model")
+    from core.qf_alerts import record_words
+    odds += record_words(plan, live)
+    if not live.get("days"):
+        odds.append("live record: building (no finished day yet)")
+    body = (f"<p><strong>{html.escape(REGIME_WORD[plan['regime']])}</strong> · {html.escape(' · '.join(odds))}</p>"
+            f"<p>{html.escape(qf.directive(plan, at_label))}</p>")
+    if plan["regime"] != "locked":
+        rows = "".join(f"<tr><td>{'Chop / range' if w['phase'] == 'chop' else 'Expansion'}</td>"
+                       f"<td>{html.escape(window_label(w['start_ms'], w['end_ms']))}</td>"
+                       f"<td class='muted'>{money(w['lower'])} – {money(w['upper'])}</td></tr>"
+                       for w in plan.get("windows") or [])
+        if rows:
+            body += ("<table><thead><tr><th>Phase</th><th>Time (UTC / PKT)</th><th>Box</th></tr></thead>"
+                     f"<tbody>{rows}</tbody></table>")
+        ph, pl, inv = plan["projected_high"], plan["projected_low"], plan["invalidation"]
+        body += ("<div class='ti-grid3'>"
+                 + _kv("Predicted low / pullback floor",
+                       f"{money(pl['price'])} <span class='muted'>{html.escape(at_label(pl['t_ms']))}</span>")
+                 + _kv("Predicted high target",
+                       f"{money(ph['price'])} <span class='muted'>{html.escape(at_label(ph['t_ms']))}</span>")
+                 + _kv("Hard invalidation (4h close)", " / ".join(f"{side} {money(v)}" for side, v in inv.items()), "down")
+                 + "</div>")
+        body += (f"<p><strong>Scenario A ({plan['p_scenario_a']:.0%}):</strong> {html.escape(plan['scenario_a'])}</p>"
+                 f"<p><strong>Scenario B ({1 - plan['p_scenario_a']:.0%}):</strong> {html.escape(plan['scenario_b'])}</p>")
+    elif plan.get("day_range"):
+        body += (f"<p class='muted'>Today's range so far: {money(plan['day_range'][0])} – "
+                 f"{money(plan['day_range'][1])}.</p>")
+    return card_html(f"Game plan · plan #{plan['version']} · made {at_label(plan['created_ms'])}", body, tone)
+
+
+def qf_levels_html(plan: dict) -> str:
+    """The levels with the chance price trades there before the day ends, and why the plan leans as it does."""
+    money = lambda x: fmt_num(x, 0, "$")  # noqa: E731
+    reach = [lv for lv in plan.get("levels") or [] if lv["p_touch"] >= 0.01]
+    body = ""
+    if reach:
+        rows = "".join(f"<tr><td>{html.escape(lv['label'])}</td><td>{money(lv['price'])}</td>"
+                       f"<td><strong>{lv['p_touch']:.0%}</strong></td></tr>" for lv in reach)
+        body += ("<p class='muted'>Chance price trades at each level before the day ends:</p>"
+                 "<table><thead><tr><th>Level</th><th>Price</th><th>Odds</th></tr></thead>"
+                 f"<tbody>{rows}</tbody></table>")
+    zones = plan.get("liquidation_zones") or []
+    if zones:
+        body += "<p class='muted'>" + html.escape(" · ".join(
+            f"{'estimated liquidation zone' if z['oi_surge'] else 'air pocket'} {money(z['low'])}–{money(z['high'])}"
+            for z in zones)) + "</p>"
+        body += ("<p class='muted ti-note'>Estimated from the 1h volume profile's air pockets where Gate.io open "
+                 "interest surged: not exchange liquidation data.</p>")
+    parts = plan.get("parts") or {}
+    if parts:
+        rows = "".join(f"<tr><td>{html.escape(k.replace('_', ' '))}</td><td>{v['value']:+.2f}</td>"
+                       f"<td class='muted'>{html.escape(v['note'])}</td></tr>" for k, v in parts.items())
+        g = plan.get("garch") or {}
+        body += (f"<p class='muted'>Why it leans {plan['score']:+.2f} (-1 bearish … +1 bullish; "
+                 "under ±0.20 is no lean):</p>"
+                 "<table><thead><tr><th>Read</th><th>Score</th><th>What it saw</th></tr></thead>"
+                 f"<tbody>{rows}</tbody></table>")
+        if g:
+            body += (f"<p class='muted'>GARCH(1,1): alpha {g['alpha']:.2f}, beta {g['beta']:.2f}; volatility now "
+                     f"{g['compression']:.0%} of its usual level{' (compressed)' if g.get('compressed') else ''}.</p>")
+    return card_html("Levels and the lean", body or "<p class='muted'>Nothing to show for a locked day.</p>")
+
+
+def _qf_record_line(rec: dict, name: str) -> str:
+    n = rec.get("days") or 0
+    if not n:
+        return f"<p><strong>{name}:</strong> no finished days yet.</p>"
+    return (f"<p><strong>{name}, {n} days:</strong> direction calls right {rec.get('direction_right', 0)} of "
+            f"{rec.get('direction_days', 0)} · range days held {rec.get('range_held', 0)} of {rec.get('range_days', 0)} "
+            f"(a range day is right whenever its box holds, so it is counted apart) · predicted high "
+            f"within tolerance {rec['high_hit']} · low {rec['low_hit']} · high's time within 2h "
+            f"{rec['high_time_hit']} · low's {rec['low_time_hit']} · closed inside the 68% envelope "
+            f"{rec['band_held']} · invalidated {rec['invalidated']}</p>")
+
+
+def qf_record_html(backtest: dict | None, live: dict, history: list[dict]) -> str:
+    """How the morning plans have done: replayed on past days, and live once days finish."""
+    from core.qf_alerts import REGIME_WORD
+    from core.trades import fmt_date
+    body = _qf_record_line(live, "Live")
+    if backtest:
+        body += _qf_record_line(backtest, "Backtest")
+        if backtest.get("days"):
+            body += (f"<p class='muted ti-note'>{html.escape(backtest.get('method', ''))}; "
+                     "a high or low counts as right within a quarter of the projected day's range.</p>")
+    rows = ""
+    for r in history[:14]:
+        o = r.get("outcome") or {}
+        res = ("not finished" if not o else "no forecast" if not o.get("scored") else
+               ("right" if o["scenario_a_right"] else "wrong")
+               + f" · high {fmt_num(o['high'], 0, '$')} · low {fmt_num(o['low'], 0, '$')}")
+        rows += (f"<tr><td>{html.escape(fmt_date(r['day_ms']))} #{r['version']}</td>"
+                 f"<td>{html.escape(REGIME_WORD.get(r['regime'], r['regime']))}</td>"
+                 f"<td>{html.escape(r['status'])}</td><td class='muted'>{html.escape(res)}</td></tr>")
+    if rows:
+        body += ("<table><thead><tr><th>Day · plan</th><th>Regime</th><th>Status</th><th>Result</th></tr></thead>"
+                 f"<tbody>{rows}</tbody></table>")
+    return card_html("Track record", body)

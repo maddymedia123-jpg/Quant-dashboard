@@ -105,6 +105,14 @@ def market_alerts(store, m, analyses: dict, now_ms: int, secrets: dict, may_send
     except Exception as e:  # noqa: BLE001
         r.problems.append(f"market alerts: {type(e).__name__}: {e}")
         return r
+    try:
+        # the Quant Forecast's day plan: made, audited, replaced and scored here, its alerts logged with the rest
+        from core import qf_alerts
+        from core.indicators.desk_derivs import gamma_for
+        for e in qf_alerts.run(store, m, now_ms, gamma_for("intraday", m)):
+            store.add_market_alert(now_ms, e.kind, e.dedup_key, e.headline, e.price)
+    except Exception as e:  # noqa: BLE001 - the forecast failing must not hold back the other alerts
+        r.problems.append(f"quant forecast: {type(e).__name__}: {e}")
     if not may_send:
         return r
     pending = store.claim_market_alerts(now_ms, limit=MAX_PER_PASS)
