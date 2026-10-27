@@ -64,6 +64,7 @@ OI_SURGE_Z = 2.0                 # an hourly open interest rise two standard dev
 HIGH_LOW_TOL = 0.25              # a projected high or low is right within a quarter of the projected range
 TIME_TOL_MS = 2 * HOUR_MS
 BACKTEST_DAYS = 60
+MACRO_SIGMA_X = 1.5              # an hour inside a high-impact release window: a chop box, but a loud one
 
 WEIGHTS = {"momentum": 0.35, "value": 0.20, "flow": 0.25, "open_interest": 0.10, "funding": 0.10}
 PRICE_ONLY = ("momentum", "value")
@@ -183,9 +184,17 @@ def _windows(times: list[int], phases: list[str], sigmas: list[float], path: lis
 
 def build_plan(h1: pd.DataFrame, now_ms: int, end_ms: int, price: float, *, version: int = 0,
                flow: pd.DataFrame | None = None, gamma: dict | None = None, price_only: bool = False,
-               paths: int = PATHS) -> dict:
+               paths: int = PATHS, force_neutral: bool = False, forced_windows: list | None = None) -> dict:
     """The plan from now to end_ms, as a JSON-safe dict. {"available": False, "reason": ...} without
-    enough history."""
+    enough history.
+
+    The pre-flight (core.qf_preflight) can override two things. `force_neutral` (an engineered trap is
+    active on the 4h) keeps the lean's parts for the record but scores the day 0.0: the regime is neutral,
+    there is no drift, and invalidation has both sides. `forced_windows` ([(start_ms, end_ms, title)], a
+    high-impact release inside the day) marks the hours they touch as chop, so no drift is carried through
+    them and the chart draws one grey box with the plan's own chop hours; their sigma is scaled by
+    MACRO_SIGMA_X, because a print is a chop box in direction only - the range it trades is wider, not
+    narrower, than the hour's usual, and the band and invalidation should say so."""
     closed = closed_hours(h1, now_ms)
     need = garch.FIT_HOURS + 50
     if len(closed) < need or not price or end_ms <= now_ms:
@@ -205,9 +214,21 @@ def build_plan(h1: pd.DataFrame, now_ms: int, end_ms: int, price: float, *, vers
     sigmas[0] *= math.sqrt(max((times[0] - now_ms) / HOUR_MS, 1 / 60))     # what is left of this hour
     mults = [profile[int((hour0 + k * HOUR_MS) // HOUR_MS % 24)] for k in range(n)]
     phases = [_phase(x) for x in mults]
+    macro_windows = []
+    for ws, we, title in forced_windows or []:
+        ws, we = max(int(ws), int(now_ms)), min(int(we), int(end_ms))
+        if we <= ws:
+            continue
+        macro_windows.append({"title": str(title), "start_ms": ws, "end_ms": we})
+        for k in range(n):
+            begin = now_ms if k == 0 else times[k - 1]
+            if begin < we and times[k] > ws and phases[k] != "macro":
+                phases[k] = "macro"                     # marked once, scaled once, renamed below
+                sigmas[k] *= MACRO_SIGMA_X
+    phases = ["chop" if ph == "macro" else ph for ph in phases]
 
     parts = lean_parts(closed, price, flow, now_ms, price_only)
-    score = lean_score(parts)
+    score = 0.0 if force_neutral else lean_score(parts)
     compressed = fit.compression < COMPRESSION_X
     neutral = abs(score) < NEUTRAL_SCORE or (compressed and abs(score) < COMPRESSED_SCORE)
     regime = "neutral" if neutral else "bullish" if score > 0 else "bearish"
@@ -289,6 +310,10 @@ def build_plan(h1: pd.DataFrame, now_ms: int, end_ms: int, price: float, *, vers
         "garch": {"alpha": fit.alpha, "beta": fit.beta, "compression": round(fit.compression, 3),
                   "compressed": compressed, "fit_hours": fit.n},
     }
+    if force_neutral:
+        plan["preflight_override"] = "trap"
+    if macro_windows:
+        plan["macro_windows"] = macro_windows
     plan["scenario_a"], plan["scenario_b"] = scenarios(plan)
     return plan
 
