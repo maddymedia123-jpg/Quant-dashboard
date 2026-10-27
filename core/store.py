@@ -870,6 +870,13 @@ class Store:
             self._conn.commit()
         return int(rows[0]["id"]) if rows else None
 
+    def set_qf_payload(self, plan_id: int, plan: dict) -> None:
+        """Rewrite a plan's payload (the AI's write-up is added after the row exists, so a second process
+        finds the row and does not build or write the plan again)."""
+        with self._lock:
+            self._conn.execute("UPDATE qf_plans SET payload=? WHERE id=?", (json.dumps(plan), int(plan_id)))
+            self._conn.commit()
+
     def qf_plans(self, day_ms: int | None = None, limit: int = 60) -> list[dict]:
         """One day's plans in version order, or the latest plans across days, newest first."""
         with self._lock:

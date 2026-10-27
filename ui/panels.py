@@ -2321,25 +2321,59 @@ def sine_experimental_html(warning, ny_now: bool, record, history_note: str = ""
         + (f" {html.escape(history_note)}" if history_note else "") + "</p>"), tone)
 
 
-# ---------- Quant Forecast (Hammad's AI Quant Master Agent, steps 1-4) ----------
+# ---------- Quant Forecast (Hammad's AI Quant Master Agent) ----------
 QF_STATUS = {"on track": ("ON-TRACK", "up"), "caution": ("TIER-1 CAUTION", "warn"),
              "model held": ("MODEL HELD", "up"), "invalidated": ("INVALIDATED & RE-MAPPED", "down"),
              "locked": ("SYSTEM LOCKED", "down")}
+_ORDINAL = {2: "2nd", 3: "3rd", 4: "4th"}
 
 
-def qf_status_html(status: str, message: str | None, plans_today: list[dict]) -> str:
-    """Section A: where the plan stands and the last message the bot sent about it."""
+def qf_wire_html(plan: dict, status: str = "on track", trap: str | None = None) -> str:
+    """Part A, the layman wire plan (Hammad, 28 Oct): the regime and where the plan stands, the one-sentence
+    directive, the low and high with their times in UTC and PKT, the hard invalidation on a 4H close, and
+    the chop / expansion windows. No odds decimals, no record, no model names, no math."""
+    from core import quant_forecast as qf
+    from core.qf_alerts import at_label, regime_line, windows_line
+    money = lambda x: fmt_num(x, 0, "$")  # noqa: E731
+    tone = {"bullish": "up", "bearish": "down", "locked": "down"}.get(plan["regime"], "neutral")
+    label, s_tone = QF_STATUS.get(status, (status.upper(), ""))
+    head = (f"<p class='ti-wire-head'><strong>{html.escape(regime_line(plan, trap))}</strong> "
+            f"{chip(label, s_tone)}</p>")
+    body = head + f"<p class='ti-wire-line'>{html.escape(qf.wire_line(plan))}</p>"
+    if plan["regime"] == "locked":
+        if plan.get("day_range"):
+            body += (f"<p class='muted'>Today's range so far: {money(plan['day_range'][0])} – "
+                     f"{money(plan['day_range'][1])} · next plan at {html.escape(at_label(plan['end_ms']))}</p>")
+        return card_html("Today's plan", body, tone)
+    ph, pl, inv = plan["projected_high"], plan["projected_low"], plan["invalidation"]
+    body += ("<div class='ti-grid3'>"
+             + _kv("Predicted low / pullback", f"{money(pl['price'])} <span class='muted'>{html.escape(at_label(pl['t_ms']))}</span>")
+             + _kv("Predicted high target", f"{money(ph['price'])} <span class='muted'>{html.escape(at_label(ph['t_ms']))}</span>")
+             + _kv("Hard invalidation (4H close)", " / ".join(f"{side} {money(v)}" for side, v in inv.items()), "down")
+             + "</div>")
+    if windows_line(plan):
+        body += f"<p class='muted'>{html.escape(windows_line(plan))}</p>"
+    return card_html(f"Today's plan · #{plan['version']} · made {at_label(plan['created_ms'])}", body, tone)
+
+
+def qf_status_html(status: str, messages: list[str] | str | None, plans_today: list[dict]) -> str:
+    """Drawer: where the plan stands and the messages the bot has sent about today."""
+    from core import quant_forecast as qf
     label, tone = QF_STATUS.get(status, (status.upper(), ""))
     failed = sum(1 for r in plans_today if r["status"] == "invalidated")
+    nth = _ORDINAL.get(qf.LOCK_AFTER_INVALIDATIONS, f"{qf.LOCK_AFTER_INVALIDATIONS}th")
     body = (f"<p>{chip(label, tone)} plan #{plans_today[-1]['version'] if plans_today else 0} today · "
-            f"{failed} invalidated so far (the 2nd locks the day)</p>")
-    if message:
-        body += f"<p class='muted'>Last message sent about it:</p><p style='white-space:pre-line'>{html.escape(message)}</p>"
+            f"{failed} invalidated so far (the {nth} locks the day)</p>")
+    msgs = [messages] if isinstance(messages, str) else list(messages or [])
+    if msgs:
+        body += "<p class='muted'>Sent about today (newest first):</p>" + "".join(
+            f"<p class='ti-note-item' style='white-space:pre-line'>{html.escape(x)}</p>" for x in msgs)
     return card_html("Audit & alert status", body, {"up": "up", "down": "down"}.get(tone, "neutral"))
 
 
 def qf_gameplan_html(plan: dict, live: dict) -> str:
-    """Section B: the regime and its odds, the plan in plain words, the time windows, the key levels."""
+    """Drawer: the regime with its odds and record, the plan in words and who wrote them, the windows, the
+    coordinates, both scenarios. The main view carries only the wire plan (qf_wire_html)."""
     from core.qf_alerts import REGIME_WORD, at_label, window_label
     money = lambda x: fmt_num(x, 0, "$")  # noqa: E731
     tone = {"bullish": "up", "bearish": "down"}.get(plan["regime"], "neutral")
@@ -2375,7 +2409,7 @@ def qf_gameplan_html(plan: dict, live: dict) -> str:
     elif plan.get("day_range"):
         body += (f"<p class='muted'>Today's range so far: {money(plan['day_range'][0])} – "
                  f"{money(plan['day_range'][1])}.</p>")
-    return card_html(f"Game plan · plan #{plan['version']} · made {at_label(plan['created_ms'])}", body, tone)
+    return card_html(f"Plan detail · #{plan['version']} · made {at_label(plan['created_ms'])}", body, tone)
 
 
 def qf_words_html(plan: dict) -> str:

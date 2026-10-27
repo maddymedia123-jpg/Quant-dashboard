@@ -1,11 +1,12 @@
 <!doctype html><html><head><meta charset="utf-8">
 <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
-<style>html,body{margin:0;padding:0;background:__PANEL__;font-family:Barlow,system-ui,sans-serif}#wrap{position:relative}#chart{width:100%;height:__HEIGHT__px}
-#axis{position:absolute;left:10px;top:8px;z-index:5;font-size:11px;color:__TEXT__}</style>
-<script src="__LIB__"></script></head><body><div id="wrap"><div id="axis"></div><div id="chart"></div></div>
+<style>html,body{margin:0;padding:0;background:__PANEL__;font-family:Barlow,system-ui,sans-serif}#chart{width:100%;height:__HEIGHT__px}</style>
+<script src="__LIB__"></script></head><body><div id="chart"></div>
 <script>
 const P = __PAYLOAD__;
 (function(){
+// The pure-forecasting chart: candles to the "now" line, the green path after it, grey chop boxes, green
+// expansion boxes, and the levels as right-axis badges only. Nothing is written over the candles.
 const T = P.theme, LW = LightweightCharts, el = document.getElementById('chart');
 // every time on this chart reads UTC first, PKT (UTC+5, no daylight saving) after it
 const pad = n => String(n).padStart(2, '0');
@@ -14,31 +15,35 @@ const hm = d => pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes());
 const full = t => { const u = new Date(t * 1000), k = new Date(t * 1000 + 5 * 3600 * 1000);
   return hm(u) + ' UTC (' + hm(k) + ' PKT - ' + DAYS[k.getUTCDay()] + ' ' + pad(k.getUTCDate()) + ' ' + MONS[k.getUTCMonth()] + ')'; };
 const tick = t => { const u = new Date(t * 1000), k = new Date(t * 1000 + 5 * 3600 * 1000); return hm(u) + ' · ' + hm(k); };
-document.getElementById('axis').textContent = 'Time axis: UTC · PKT · line = median path, dashed = 68% envelope, boxes = chop / expansion windows';
+const rgba = (hex, a) => { const h = hex.replace('#', ''); const n = parseInt(h.length === 3 ? h.split('').map(c => c + c).join('') : h, 16);
+  return 'rgba(' + (n >> 16 & 255) + ',' + (n >> 8 & 255) + ',' + (n & 255) + ',' + a + ')'; };
 const chart = LW.createChart(el, {
   width: el.clientWidth, height: __HEIGHT__,
-  layout: { background: { type: 'solid', color: T.panel }, textColor: T.text, fontFamily: 'Barlow, system-ui, sans-serif' },
+  layout: { background: { type: 'solid', color: T.panel }, textColor: T.text, fontFamily: 'Barlow, system-ui, sans-serif', attributionLogo: false },
   grid: { vertLines: { visible: false }, horzLines: { color: T.grid } },
-  rightPriceScale: { borderColor: T.border },
-  timeScale: { borderColor: T.border, timeVisible: true, secondsVisible: false, rightOffset: 1, tickMarkFormatter: tick },
+  rightPriceScale: { borderColor: T.border, scaleMargins: { top: 0.08, bottom: 0.08 } },
+  timeScale: { borderColor: T.border, timeVisible: true, secondsVisible: false, rightOffset: 2, tickMarkFormatter: tick },
   localization: { timeFormatter: full },
   crosshair: { mode: 0 }, handleScroll: { vertTouchDrag: false },
 });
-const real = chart.addSeries(LW.CandlestickSeries, { upColor: T.panel, downColor: T.down, borderVisible: true, borderUpColor: T.up, borderDownColor: T.down, wickUpColor: T.up, wickDownColor: T.down, priceLineVisible: false });
+const real = chart.addSeries(LW.CandlestickSeries, { upColor: T.panel, downColor: T.down, borderVisible: true, borderUpColor: T.up, borderDownColor: T.down, wickUpColor: T.up, wickDownColor: T.down, priceLineVisible: false, lastValueVisible: false });
 real.setData(P.candles.concat(P.whitespace));
-const path = chart.addSeries(LW.LineSeries, { color: T.accent, lineWidth: 2, priceLineVisible: false, lastValueVisible: true, title: 'median path' });
-path.setData(P.path);
-if (P.markers.length) LW.createSeriesMarkers(path, P.markers);
-[['bandHigh', '84%'], ['bandLow', '16%']].forEach(([k, label]) => {
-  const s = chart.addSeries(LW.LineSeries, { color: T.muted, lineWidth: 1, lineStyle: LW.LineStyle.Dashed, priceLineVisible: false, lastValueVisible: true, crosshairMarkerVisible: false, title: label });
-  s.setData(P[k]);
-});
+// the path: a soft glow under a solid green line, no label of its own
+if (P.path.length > 1) {
+  const glow = chart.addSeries(LW.LineSeries, { color: rgba(T.up, 0.28), lineWidth: 6, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+  glow.setData(P.path);
+  const path = chart.addSeries(LW.LineSeries, { color: T.up, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+  path.setData(P.path);
+  ['bandHigh', 'bandLow'].forEach(k => {
+    const s = chart.addSeries(LW.LineSeries, { color: rgba(T.up, 0.45), lineWidth: 1, lineStyle: LW.LineStyle.Dashed, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+    s.setData(P[k]);
+  });
+}
+// right-axis badges: the price lines carry no title, only their axis label
 P.lines.forEach(l => real.createPriceLine({ price: l.price, color: l.color, lineWidth: l.style === 'solid' ? 2 : 1,
-  lineStyle: l.style === 'solid' ? LW.LineStyle.Solid : LW.LineStyle.Dotted, axisLabelVisible: true, title: el.clientWidth < 640 ? '' : l.title }));
-// boxes: chop and expansion windows, and the air pockets / estimated liquidation zones across the chart
-const FILL = { chop: [T.muted, 0.14], expansion: [T.accent, 0.12], liq: [T.down, 0.16], lvn: [T.muted, 0.08] };
-const rgba = (hex, a) => { const h = hex.replace('#', ''); const n = parseInt(h.length === 3 ? h.split('').map(c => c + c).join('') : h, 16);
-  return 'rgba(' + (n >> 16 & 255) + ',' + (n >> 8 & 255) + ',' + (n & 255) + ',' + a + ')'; };
+  lineStyle: l.style === 'solid' ? LW.LineStyle.Solid : LW.LineStyle.Dotted, axisLabelVisible: true, title: '' }));
+// boxes: grey chop windows, green expansion windows, the air pockets and estimated liquidation zones as faint bands
+const FILL = { chop: [T.muted, 0.16], expansion: [T.up, 0.13], liq: [T.down, 0.10], lvn: [T.muted, 0.07] };
 class BoxRenderer {
   constructor(b) { this._b = b; }
   draw(target) {
@@ -48,8 +53,7 @@ class BoxRenderer {
       const x = Math.min(b.x1, b.x2) * hr, y = Math.min(b.y1, b.y2) * vr, w = Math.abs(b.x2 - b.x1) * hr, h = Math.abs(b.y2 - b.y1) * vr;
       const [c, a] = FILL[b.kind] || [T.muted, 0.1];
       ctx.save(); ctx.fillStyle = rgba(c, a); ctx.fillRect(x, y, w, h);
-      if (b.kind === 'chop' || b.kind === 'expansion') { ctx.strokeStyle = rgba(c, 0.6); ctx.lineWidth = hr; ctx.strokeRect(x, y, w, h); }
-      ctx.fillStyle = rgba(c, 0.9); ctx.font = (10 * vr) + 'px Barlow, sans-serif'; ctx.fillText(b.label, x + 4 * hr, y + 11 * vr);
+      if (b.kind === 'chop' || b.kind === 'expansion') { ctx.strokeStyle = rgba(c, 0.55); ctx.lineWidth = hr; ctx.strokeRect(x, y, w, h); }
       ctx.restore();
     });
   }
@@ -58,7 +62,7 @@ class BoxView {
   constructor(src) { this._src = src; this._b = {}; }
   update() { const s = this._src, ts = s._chart.timeScale();
     this._b = { x1: ts.timeToCoordinate(s._d.t1), x2: ts.timeToCoordinate(s._d.t2), y1: s._series.priceToCoordinate(s._d.p1),
-                y2: s._series.priceToCoordinate(s._d.p2), kind: s._d.kind, label: s._d.label }; }
+                y2: s._series.priceToCoordinate(s._d.p2), kind: s._d.kind }; }
   renderer() { return new BoxRenderer(this._b); }
   zOrder() { return 'bottom'; }
 }
@@ -68,7 +72,34 @@ class Box {
   updateAllViews() { this._views.forEach(v => v.update()); }
   paneViews() { return this._views; }
 }
-P.boxes.forEach(b => path.attachPrimitive(new Box(b)));
+P.boxes.forEach(b => real.attachPrimitive(new Box(b)));
+// the "now" anchor: one vertical line, labelled at its head, where the candles end and the forecast begins
+class VLineRenderer {
+  constructor(x, color, label) { this._x = x; this._color = color; this._label = label; }
+  draw(target) {
+    target.useBitmapCoordinateSpace(s => {
+      if (this._x === null || this._x === undefined) return;
+      const ctx = s.context, hr = s.horizontalPixelRatio, vr = s.verticalPixelRatio;
+      const x = Math.round(this._x * hr);
+      ctx.save(); ctx.strokeStyle = this._color; ctx.lineWidth = Math.max(1, Math.floor(hr)); ctx.setLineDash([3 * hr, 3 * hr]);
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, s.bitmapSize.height); ctx.stroke();
+      ctx.setLineDash([]); ctx.fillStyle = this._color; ctx.font = (10 * vr) + 'px Barlow, sans-serif'; ctx.fillText(this._label, x + 4 * hr, 11 * vr);
+      ctx.restore();
+    });
+  }
+}
+class VLineView {
+  constructor(src) { this._src = src; this._x = null; }
+  update() { this._x = this._src._chart.timeScale().timeToCoordinate(this._src._time); }
+  renderer() { return new VLineRenderer(this._x, this._src._color, this._src._label); }
+}
+class VLine {
+  constructor(time, color, label) { this._time = time; this._color = color; this._label = label; this._views = [new VLineView(this)]; }
+  attached(p) { this._chart = p.chart; }
+  updateAllViews() { this._views.forEach(v => v.update()); }
+  paneViews() { return this._views; }
+}
+real.attachPrimitive(new VLine(P.now, T.text, 'NOW'));
 chart.timeScale().fitContent();
 new ResizeObserver(() => { chart.applyOptions({ width: el.clientWidth }); chart.timeScale().fitContent(); }).observe(el);
 })();

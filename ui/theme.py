@@ -246,6 +246,8 @@ section[data-testid="stSidebar"] * {{ color: {p['text']}; }}
 .ti-split {{ display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }}
 .ti-foot {{ border-top: 1px solid {p['border']}; margin-top: 10px; }}
 .ti-note {{ font-size: 0.8rem; margin-top: 8px !important; }}
+.ti-wire-head {{ font-family: {_HEADING}; font-size: 1.35rem; letter-spacing: 0.03em; text-transform: uppercase; margin: 0 0 4px 0 !important; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }}
+.ti-wire-line {{ font-size: 1.125rem !important; line-height: 1.6rem !important; margin: 0 0 10px 0 !important; max-width: 820px; }}
 .ti-section {{ display: flex; align-items: center; gap: 14px; margin: 34px 0 4px 0; }}
 .ti-rule {{ flex: 1; height: 1px; background: {p['border']}; }}
 .ti-head-summary {{ display: flex; flex-direction: column; gap: 8px; max-width: 900px; margin: 30px 0 10px 0; }}
