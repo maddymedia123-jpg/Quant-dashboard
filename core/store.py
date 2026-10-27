@@ -127,19 +127,27 @@ def turso_settings() -> tuple[str, str] | None:
 
 class _TursoCursor:
     """libsql returns tuples; the store reads columns by name, as sqlite3.Row allowed. Rows come back as
-    dicts built from the cursor's own column names, so not one query had to change."""
+    dicts built from the cursor's own column names, so not one query had to change.
+
+    Names are lower-cased. Turso's server rewrites a column whose name is an SQL keyword: `plan` was
+    stored and returned as `PLAN` (reports.plan and trades.plan, 27 Oct), so row["plan"] - every plan
+    alert and every pinned trade - would have raised. Every column in SCHEMA is lowercase, so
+    lower-casing restores the names exactly."""
 
     def __init__(self, cur):
         self._cur = cur
 
+    def _names(self) -> list[str]:
+        return [str(d[0]).lower() for d in self._cur.description] if self._cur.description else []
+
     def _row(self, values):
-        return None if values is None else dict(zip((d[0] for d in self._cur.description), values))
+        return None if values is None else dict(zip(self._names(), values))
 
     def fetchone(self):
         return self._row(self._cur.fetchone())
 
     def fetchall(self):
-        names = [d[0] for d in self._cur.description] if self._cur.description else []
+        names = self._names()
         return [dict(zip(names, v)) for v in self._cur.fetchall()]
 
     def __iter__(self):
@@ -168,6 +176,9 @@ class _TursoConnection:
 
     def executescript(self, script):
         self._conn.executescript(script)
+        # the script ran on Turso; until a sync the local copy has not seen the tables it created, and the
+        # column check right after it would read an empty or older table
+        self._conn.sync()
 
     def commit(self):
         self._conn.commit()
@@ -232,7 +243,8 @@ class Store:
         """Bring an older file's columns up to what the code expects. Caller holds the lock."""
         for table, columns in self.EXPECTED_COLUMNS.items():
             try:
-                have = {r["name"] for r in self._conn.execute(f"PRAGMA table_info({table})")}
+                # SQLite column names are case-insensitive, and Turso stores some upper-cased (PLAN)
+                have = {str(r["name"]).lower() for r in self._conn.execute(f"PRAGMA table_info({table})")}
             except DB_ERRORS:
                 continue
             if not have:
@@ -243,7 +255,7 @@ class Store:
                 try:
                     self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
                     log.warning("store: added missing column %s.%s", table, name)
-                except DB_ERRORS as e:  # noqa: PERF203 - one per column, and rare
+                except (*DB_ERRORS, ValueError) as e:  # noqa: PERF203 - one per column, and rare; Turso raises ValueError
                     log.error("store: could not add %s.%s (%s)", table, name, e)
         self._conn.commit()
 

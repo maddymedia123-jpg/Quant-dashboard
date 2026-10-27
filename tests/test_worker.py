@@ -109,3 +109,18 @@ def test_without_turso_settings_or_the_client_it_is_the_local_file(tmp_path, mon
     monkeypatch.setattr(store_mod, "libsql", None)
     assert Store(tmp_path / "b.sqlite").backend == "sqlite", "settings without the client fall back, logged"
     assert Store(":memory:").backend == "sqlite", "tests never reach the network"
+
+
+def test_turso_upper_cased_keyword_columns_come_back_lowercase():
+    """Turso stored reports.plan and trades.plan as PLAN; the code reads row["plan"]."""
+    class Cur:
+        description = (("id", None), ("PLAN", None))
+        rowcount = lastrowid = 0
+
+        def fetchone(self):
+            return (1, "{}")
+
+        def fetchall(self):
+            return [(1, "{}")]
+    c = store_mod._TursoCursor(Cur())
+    assert c.fetchone()["plan"] == "{}" and c.fetchall()[0]["plan"] == "{}"
