@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import replace
 import html
+import os
 import time
 from datetime import datetime, timezone
 
@@ -38,7 +39,7 @@ def _drop_stale_modules() -> None:
 _drop_stale_modules()
 
 from core.accuracy import (  # noqa: E402
-    majority_direction, mode_scorecard, record_report, score_due_calls, score_plans, score_reports, summary,
+    majority_direction, mode_scorecard, record_report, summary,
 )
 from core.agents.one_agent import client_for as one_agent_client, run_one_agent_sync  # noqa: E402
 from core.agents.llm import LLMClient
@@ -47,17 +48,16 @@ from core.agents.runner import run_pipeline_sync
 from core.agents.settings import load_settings
 from core.agents.judge import Judge
 from core.agents.deck import sub_agent_deck
-from core.agents.trap_desk import judge_candidate, record, settle
+from core.agents.trap_desk import judge_candidate, record
 from core.agents.trade_desk import judge_trade
-from core.alerts import MAX_PER_PASS, Dispatcher, Event, detect_events
+from core.alerts import Dispatcher
 from core.indicators.fib_time import fib_time_zones
 from core import trades
 from core.traps import find_candidates
 from core.agents.live_recon import build_state, run_live_recon
 from core.agents import handshake
 from core.agents.recon_profiles import LIVE, PROFILES
-from core.anchors import anchor_step
-from core import live_accuracy, live_anchor
+from core import live_accuracy, live_anchor, pipeline
 from core.config import CATEGORIES, MACRO_EVENTS, TTL
 from core.data.market import assemble, load_context, load_spot
 from core.derived import enrich_futures, record_sample
@@ -89,11 +89,19 @@ def _context():
 # Streamlit Cloud reloads the script on deploy but keeps cached resources, so a Store built from the
 # previous revision survives and is missing whatever that revision did not have. Keying the cache on a
 # version makes a deploy that changes core.store hand back a fresh Store instead of a stale one.
-STORE_VERSION = 8   # bump whenever core.store gains tables or methods, or changes how it matches rows
+STORE_VERSION = 9   # bump whenever core.store gains tables or methods, or changes how it matches rows
 
 
 @st.cache_resource(show_spinner=False)
 def _store(version: int = STORE_VERSION):
+    # Turso's URL and token arrive as Streamlit secrets; core.store reads them from the environment, the
+    # same way the worker gets them from its .env file. Without them the store is the local file.
+    try:
+        for k in ("TURSO_DATABASE_URL", "TURSO_AUTH_TOKEN"):
+            if st.secrets.get(k) and not os.environ.get(k):
+                os.environ[k] = str(st.secrets[k])
+    except Exception:  # noqa: BLE001 - no secrets file: the local store it is
+        pass
     return Store()
 
 
@@ -104,9 +112,13 @@ def _live_store():
     `_store()` produced a cache key that never mentioned STORE_VERSION and a bump changed nothing. The
     hasattr probe stays as a second line of defence for a revision that forgets to bump."""
     s = _store(STORE_VERSION)
-    if not hasattr(s, "open_trade"):           # cached from an older revision
+    if not hasattr(s, "claim_trade_events"):   # cached from an older revision
         _drop_store(s)
         s = _store(STORE_VERSION)
+    try:
+        s.sync()                               # what the worker wrote since the last page load
+    except Exception as e:  # noqa: BLE001 - a missed sync shows slightly older rows, never a blank page
+        st.sidebar.caption(f"Store sync skipped this refresh: {e}")
     return s
 
 
@@ -377,46 +389,26 @@ if not isinstance(st.session_state.get("recon"), dict):
 report = st.session_state.get("trap_report")
 
 # ---------- anchoring + accuracy ----------
-verdicts = {}
+# The same pass the 24/7 worker runs each minute (core.pipeline): anchor each desk, score what is due,
+# settle the traps price has answered, score the war-room windows whose candle closed.
 classification = report.director.trap_classification if (report is not None and report.director is not None) else None
-try:
-    for key, a in analyses.items():
-        verdicts[key] = anchor_step(store, key, a, m, classification, now_ms)
-    if analyses:
-        _px = m.spot.last or next(iter(analyses.values())).price
-        score_due_calls(store, now_ms, _px)
-        score_reports(store, now_ms, _px)
-        score_plans(store, m.spot.frames, now_ms)
-except Exception as e:  # noqa: BLE001 - ledger problems must never blank the page
-    st.warning(f"Ledger unavailable this refresh: {e}")
-
-# settle anchored traps the price has now answered, before anything is rendered
 st.session_state.setdefault("trap_sweep", None)
-try:
-    _px = m.spot.last or (next(iter(analyses.values())).price if analyses else None)
-    if _px:
-        _settled = settle(store, float(_px), now_ms)
-        for _t in _settled:
-            log_line = f"{_t['side']} {_t['timeframe']} {_t['status'].replace('_', ' ')}"
-            st.sidebar.caption(f"TRAP: {log_line}")
-    elif store.traps(status="active", limit=1):
-        # silence here would leave anchored traps rendering as live with no hint that nothing is
-        # checking them against price any more
-        st.warning("No price this refresh, so anchored traps were not checked for settlement. "
-                   "The levels below are as of the last successful refresh.")
-except Exception as e:  # noqa: BLE001 - trap bookkeeping must never blank the page
-    st.warning(f"Anchored traps could not be checked against price this refresh ({e}); "
-               "they may already have been invalidated or paid off.")
-
-# score every war-room window whose candle has closed, once, against the price at that close
-try:
-    for _profile in PROFILES.values():
-        live_accuracy.score_due(store, m.spot.frames, now_ms, _profile)
-except Exception as e:  # noqa: BLE001 - scoring problems must never blank the page
-    st.warning(f"Accuracy audit unavailable this refresh: {e}")
+_ledger = pipeline.ledger(store, m, analyses, now_ms, classification)
+verdicts = _ledger.verdicts
+for _t in _ledger.settled:
+    st.sidebar.caption(f"TRAP: {_t['side']} {_t['timeframe']} {_t['status'].replace('_', ' ')}")
+for _p in _ledger.problems:
+    st.warning(f"Ledger step unavailable this refresh ({_p}).")
+if not (m.spot.last or analyses) and store.traps(status="active", limit=1):
+    # silence here would leave anchored traps rendering as live with no hint that nothing is
+    # checking them against price any more
+    st.warning("No price this refresh, so anchored traps were not checked for settlement. "
+               "The levels below are as of the last successful refresh.")
 
 st.sidebar.markdown(f"<span class='ti-chip'>ledger: {store.path}</span>", unsafe_allow_html=True)
-st.sidebar.caption("Anchors and accuracy persist in SQLite. On Streamlit Cloud this resets on reboot until a hosted database is configured.")
+st.sidebar.caption("Anchors, accuracy and alerts are shared with the 24/7 worker in Turso." if store.backend == "turso"
+                   else "Anchors and accuracy persist in a local SQLite file. On Streamlit Cloud this resets on "
+                        "every deploy until TURSO_DATABASE_URL and TURSO_AUTH_TOKEN are set.")
 
 # ---------- top bar ----------
 _live_a = analyses.get("live")
@@ -921,53 +913,11 @@ def _alerts_may_send() -> bool:
 
 
 def market_alert_pass() -> None:
-    """The latest 1-agent plan, watched against candles, and TRAP calls: detect, log once, push.
-
-    Alerts tell a trader what to do and when (WATCH / CONFIRMED / NO SETUP / TARGET / STOPPED / EXPIRED,
-    from core.plan_alerts). A desk's cascade change is a message of its own only into a strong setup (A)
-    or a trend losing control (C), once it has held (core.market_alerts.HOLD_MS); "pause" moves ride along
-    as the Context line of a WATCH instead.
-    Runs on every page load whatever screen is open. Nothing is sent while no page is open."""
-    from core import market_alerts as ma
-    from core import plan_alerts as pa
-    context, events = [], []
-    for key in CATEGORIES:
-        c = _desk_cascade(key, _data_stamp())
-        track = store.track_cascade(key, c.state, now_ms)
-        # alone only when it matters and has held: a strong setup (A) or a trend losing control (C)
-        e = ma.important_cascade_event(key, PROFILES[key].label, track, c, now_ms, m.spot.last)
-        if e is not None:
-            events.append(e)
-        if key in ("live", "intraday") and c.state not in ma.SILENT_STATES:
-            trend = c.bias.direction if c.bias is not None else None
-            context.append(f"{PROFILES[key].label} {ma.state_name(c.state, trend).lower()}")
-    events += pa.events(pa.latest_plan_report(store), m.spot.frames,
-                       m.taker_flow.frames if m.taker_flow.available else None, now_ms, m.spot.last,
-                       context="; ".join(context))
-    events += ma.trap_events(store.traps(limit=200), now_ms)
-    # his Market Pulse: once per report run and once per 4h close, each only while fresh
-    from core import pulse
-    latest = store.reports(limit=1)
-    rep_pulse = pulse.report_event(latest[0] if latest else None, analyses.get("live"), m, now_ms)
-    # a fresh report's pulse stands in for the close's: one dispatch, not two back to back
-    p = rep_pulse or pulse.close_event(analyses.get("live"), m, now_ms)
-    if p is not None:
-        events.append(p)
-    for e in events:
-        store.add_market_alert(now_ms, e.kind, e.dedup_key, e.headline, e.price)
-    if not _alerts_may_send():
-        return
-    # claimed under the store's lock: a second open page finds these taken and sends nothing
-    pending = store.claim_market_alerts(now_ms, limit=MAX_PER_PASS)
-    if not pending:
-        return
-    delivered, problems = Dispatcher(_secrets()).send(
-        [Event(p["kind"], p["dedup_key"], p["headline"], p.get("price")) for p in pending])
-    keys = {e.dedup_key for e in delivered}
-    store.mark_market_notified([p["id"] for p in pending if p["dedup_key"] in keys])
-    store.release_market_alerts([p["id"] for p in pending if p["dedup_key"] not in keys])
-    if problems:
-        st.session_state["market_alert_problem"] = problems[0]
+    """Plan alerts, held cascade alerts, TRAP calls and the Market Pulse: the same pass the 24/7 worker
+    runs (core.pipeline). With both running, the store's one-statement claim decides who sends."""
+    r = pipeline.market_alerts(store, m, analyses, now_ms, _secrets(), _alerts_may_send())
+    if r.problems:
+        st.session_state["market_alert_problem"] = r.problems[0]
 
 
 if m.spot.available:
@@ -981,30 +931,8 @@ if m.spot.available:
 
 def trade_alert_pass(row: dict, prog) -> None:
     """Detect what has happened to a pinned trade, log it once, and push whatever a channel accepts."""
-    plan = row.get("plan") or {}
-    checkpoints = [trades.Checkpoint(c.get("timeframe", ""), int(c.get("at_ms") or 0),
-                                     str(c.get("reason") or "")) for c in plan.get("schedule") or []]
-    traps = [type("T", (), {"trap_id": t.get("trap_id"), "side": t.get("side", ""),
-                            "timeframe": t.get("timeframe", ""), "near": t.get("near", ""),
-                            "distance": t.get("distance", 0.0)})() for t in plan.get("traps") or []]
-    events = detect_events(row, prog.price if prog else None, prog, traps, checkpoints, now_ms)
-    for e in events:
-        # the unique index decides what is new: the same target reached is one event, not one per refresh
-        store.add_trade_event(row["id"], now_ms, e.kind, e.dedup_key, e.headline, e.price)
-    # oldest first, with a limit well above one pass: the default hid the oldest pending alert once a
-    # backlog passed it, and the oldest is the one most likely to be a stop
-    pending = store.trade_events(row["id"], unnotified_only=True, limit=500)
-    if not pending:
-        return
-    if not _alerts_may_send():
-        return
-    dispatcher = Dispatcher(_secrets())
-    to_send = [Event(p["kind"], p["dedup_key"], p["headline"], p.get("price")) for p in pending]
-    delivered, problems = dispatcher.send(to_send)
-    if delivered:
-        keys = {e.dedup_key for e in delivered}
-        store.mark_notified([p["id"] for p in pending if p["dedup_key"] in keys])
-    for note in problems[:1]:
+    r = pipeline.trade_alerts(store, row, prog, now_ms, _secrets(), _alerts_may_send())
+    for note in r.problems[:1]:
         st.caption(f"Alerts: {note}")
 
 

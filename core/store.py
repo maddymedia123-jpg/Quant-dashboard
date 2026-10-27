@@ -80,7 +80,7 @@ CREATE INDEX IF NOT EXISTS idx_trades_open ON trades (status, opened_ms);
 CREATE TABLE IF NOT EXISTS trade_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT, trade_id INTEGER NOT NULL, ts_ms INTEGER NOT NULL,
     kind TEXT NOT NULL, dedup_key TEXT NOT NULL, headline TEXT NOT NULL, price REAL,
-    notified INTEGER NOT NULL DEFAULT 0);
+    notified INTEGER NOT NULL DEFAULT 0, claimed_ms INTEGER);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_trade_events_once ON trade_events (trade_id, dedup_key);
 CREATE TABLE IF NOT EXISTS signals (
     id INTEGER PRIMARY KEY AUTOINCREMENT, ts_ms INTEGER NOT NULL, category TEXT NOT NULL,
@@ -109,6 +109,78 @@ def _rows(cur) -> list[dict]:
 
 log = logging.getLogger(__name__)
 
+try:                                # Turso's client; absent on a machine that only ever uses a local file
+    import libsql
+except ImportError:                 # pragma: no cover - depends on the environment
+    libsql = None
+
+DB_ERRORS: tuple[type[BaseException], ...] = (sqlite3.Error,) + ((libsql.Error,) if libsql else ())
+
+
+def turso_settings() -> tuple[str, str] | None:
+    """(url, token) when both are set in the environment: the dashboard and the worker then share one
+    hosted database. Streamlit Cloud wipes a local file on every deploy, which is why the accuracy
+    report never reached ten scored windows."""
+    url, token = os.environ.get("TURSO_DATABASE_URL", "").strip(), os.environ.get("TURSO_AUTH_TOKEN", "").strip()
+    return (url, token) if url and token else None
+
+
+class _TursoCursor:
+    """libsql returns tuples; the store reads columns by name, as sqlite3.Row allowed. Rows come back as
+    dicts built from the cursor's own column names, so not one query had to change."""
+
+    def __init__(self, cur):
+        self._cur = cur
+
+    def _row(self, values):
+        return None if values is None else dict(zip((d[0] for d in self._cur.description), values))
+
+    def fetchone(self):
+        return self._row(self._cur.fetchone())
+
+    def fetchall(self):
+        names = [d[0] for d in self._cur.description] if self._cur.description else []
+        return [dict(zip(names, v)) for v in self._cur.fetchall()]
+
+    def __iter__(self):
+        return iter(self.fetchall())
+
+    @property
+    def rowcount(self):
+        return self._cur.rowcount
+
+    @property
+    def lastrowid(self):
+        return self._cur.lastrowid
+
+
+class _TursoConnection:
+    """An embedded replica: a local copy synced with Turso. Reads are local (well under a millisecond);
+    writes go to Turso and are visible to this connection at once; another process's writes arrive on
+    sync(). Measured from the worker VM 27 Oct: connect + sync 1.0 s, write 0.9 s cold, read 0.4 ms."""
+
+    def __init__(self, path: str, url: str, token: str):
+        self._conn = libsql.connect(path, sync_url=url, auth_token=token)
+        self._conn.sync()
+
+    def execute(self, sql, params=()):
+        return _TursoCursor(self._conn.execute(sql, params))
+
+    def executescript(self, script):
+        self._conn.executescript(script)
+
+    def commit(self):
+        self._conn.commit()
+
+    def rollback(self):
+        self._conn.rollback()
+
+    def sync(self):
+        self._conn.sync()
+
+    def close(self):
+        self._conn.close()
+
 
 class Store:
     def __init__(self, path: str | os.PathLike | None = None):
@@ -118,8 +190,19 @@ class Store:
             p = pathlib.Path(path) if path else default_path()
             p.parent.mkdir(parents=True, exist_ok=True)
             self.path = str(p)
-        self._conn = sqlite3.connect(self.path, check_same_thread=False)
-        self._conn.row_factory = sqlite3.Row
+        turso = turso_settings() if self.path != ":memory:" else None
+        if turso and libsql is None:
+            log.error("store: TURSO_* is set but the libsql package is missing; using the local file")
+            turso = None
+        if turso:
+            # the replica lives beside the old file, under its own name: the two formats never mix
+            self.path = str(pathlib.Path(self.path).with_suffix(".turso.db"))
+            self._conn = _TursoConnection(self.path, *turso)
+            self.backend = "turso"
+        else:
+            self._conn = sqlite3.connect(self.path, check_same_thread=False)
+            self._conn.row_factory = sqlite3.Row
+            self.backend = "sqlite"
         self._lock = threading.Lock()
         with self._lock:
             self._conn.executescript(SCHEMA)
@@ -135,7 +218,7 @@ class Store:
     EXPECTED_COLUMNS: ClassVar[dict[str, dict[str, str]]] = {
         "trades": {"refreshed_ms": "INTEGER", "closed_ms": "INTEGER", "closed_reason": "TEXT",
                    "closed_price": "REAL", "given_stop": "REAL"},
-        "trade_events": {"notified": "INTEGER NOT NULL DEFAULT 0", "price": "REAL"},
+        "trade_events": {"notified": "INTEGER NOT NULL DEFAULT 0", "price": "REAL", "claimed_ms": "INTEGER"},
         "traps": {"resolved_ms": "INTEGER", "resolved_price": "REAL", "notes": "TEXT", "score": "REAL",
                   "head_call": "TEXT", "detail": "TEXT"},
         # which pipeline wrote a report, the snapshot it read, and its plan as numbers with how it ended
@@ -150,7 +233,7 @@ class Store:
         for table, columns in self.EXPECTED_COLUMNS.items():
             try:
                 have = {r["name"] for r in self._conn.execute(f"PRAGMA table_info({table})")}
-            except sqlite3.Error:
+            except DB_ERRORS:
                 continue
             if not have:
                 continue                 # the table does not exist; SCHEMA has just created it
@@ -160,7 +243,7 @@ class Store:
                 try:
                     self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
                     log.warning("store: added missing column %s.%s", table, name)
-                except sqlite3.Error as e:  # noqa: PERF203 - one per column, and rare
+                except DB_ERRORS as e:  # noqa: PERF203 - one per column, and rare
                     log.error("store: could not add %s.%s (%s)", table, name, e)
         self._conn.commit()
 
@@ -639,17 +722,49 @@ class Store:
         Two pages open at once used to read the same waiting alerts before either marked them sent, so
         both posted them - the doubled Discord messages of 20 Oct. A claim is taken under the lock, so the
         second page finds nothing to send. A claim older than CLAIM_TIMEOUT_MS (the page died mid-send) is
-        released for the next pass."""
+        released for the next pass.
+
+        The claim is ONE statement that returns exactly the rows it flipped. The lock only covers this
+        process; with the dashboard and the 24/7 worker sharing Turso, a read-then-mark claim let both
+        read the same waiting alerts from their own copies. UPDATE ... RETURNING runs on the database
+        itself, so a second claimer gets nothing (measured on Turso 27 Oct: a stale replica claimed 0 of
+        the 5 rows the first had taken)."""
         with self._lock:
             self._conn.execute("UPDATE market_alerts SET notified=0 WHERE notified=2 AND claimed_ms < ?",
                                (int(now_ms) - self.CLAIM_TIMEOUT_MS,))
             rows = _rows(self._conn.execute(
-                "SELECT * FROM market_alerts WHERE notified=0 ORDER BY ts_ms, id LIMIT ?", (int(limit),)))
-            if rows:
-                self._conn.execute("UPDATE market_alerts SET notified=2, claimed_ms=? WHERE notified=0 AND id IN (%s)"
-                                   % ",".join("?" * len(rows)), (int(now_ms), *[r["id"] for r in rows]))
+                "UPDATE market_alerts SET notified=2, claimed_ms=? WHERE notified=0 AND id IN "
+                "(SELECT id FROM market_alerts WHERE notified=0 ORDER BY ts_ms, id LIMIT ?) RETURNING *",
+                (int(now_ms), int(limit))))
             self._conn.commit()
-        return rows
+        return sorted(rows, key=lambda r: (r["ts_ms"], r["id"]))
+
+    def claim_trade_events(self, trade_id: int, now_ms: int, limit: int = 500) -> list[dict]:
+        """The same one-statement claim for a pinned trade's waiting alerts (a stop, a target). Reading
+        the pending events and marking them after the send let two senders both post a stop."""
+        with self._lock:
+            self._conn.execute("UPDATE trade_events SET notified=0 WHERE notified=2 AND claimed_ms < ?",
+                               (int(now_ms) - self.CLAIM_TIMEOUT_MS,))
+            rows = _rows(self._conn.execute(
+                "UPDATE trade_events SET notified=2, claimed_ms=? WHERE notified=0 AND trade_id=? AND id IN "
+                "(SELECT id FROM trade_events WHERE notified=0 AND trade_id=? ORDER BY ts_ms, id LIMIT ?) "
+                "RETURNING *", (int(now_ms), int(trade_id), int(trade_id), int(limit))))
+            self._conn.commit()
+        return sorted(rows, key=lambda r: (r["ts_ms"], r["id"]))
+
+    def release_trade_events(self, ids: list[int]) -> None:
+        if not ids:
+            return
+        with self._lock:
+            self._conn.execute("UPDATE trade_events SET notified=0 WHERE notified=2 AND id IN (%s)"
+                               % ",".join("?" * len(ids)), tuple(ids))
+            self._conn.commit()
+
+    def sync(self) -> None:
+        """Pull what the other process wrote (the worker, or the dashboard). A no-op on a local file."""
+        if self.backend == "turso":
+            with self._lock:
+                self._conn.sync()
 
     def release_market_alerts(self, ids: list[int]) -> None:
         """Hand back what a channel refused, so the next pass tries it again."""
@@ -675,7 +790,7 @@ class Store:
             return 0
         with self._lock:
             cur = self._conn.execute(
-                "UPDATE trade_events SET notified=1 WHERE notified=0 AND id IN (%s)"
+                "UPDATE trade_events SET notified=1 WHERE notified IN (0, 2) AND id IN (%s)"
                 % ",".join("?" * len(event_ids)), tuple(event_ids))
             self._conn.commit()
         return cur.rowcount
