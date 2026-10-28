@@ -379,9 +379,12 @@ def test_the_chart_and_panels_build_from_a_plan():
     assert "ti-tl-done" in tl and "ti-tl-active" in tl and "ti-tl-pending" in tl and "🔥 Active Focus" in tl
     assert "<em>Why:</em>" in tl and "GARCH volatility" in tl
     box = panels.qf_directive_html(p)
-    assert "INTRADAY TRADE DIRECTIVE" in box and "Stop Loss (Whole-Day Invalidation)" in box
-    assert ("Direction: LONG" in box or "Direction: SHORT" in box or "Direction: NONE" in box)
-    assert "Direction: NONE" in panels.qf_directive_html(qf.locked_plan(DAY0, DAY0 + qf.DAY_MS, 1.0, 2, None, None))
+    assert "Intraday trade directive" in box and "Stop loss (whole-day invalidation)" in box and "TP3" in box
+    assert any(f">{w}<" in box for w in ("LONG", "SHORT", "NONE"))
+    assert ">NONE<" in panels.qf_directive_html(qf.locked_plan(DAY0, DAY0 + qf.DAY_MS, 1.0, 2, None, None))
+    # every panel is one Markdown HTML block: a blank line or a <pre> would hand the rest to the Markdown parser
+    for markup in (box, tl, panels.qf_wire_html(p, "on track"), panels.qf_gameplan_html(p, live)):
+        assert "\n\n" not in markup and "<pre" not in markup
     locked = qf.locked_plan(DAY0, DAY0 + qf.DAY_MS, 80_000.0, 3, 81_000.0, 79_000.0)
     assert "Stand aside" in panels.qf_gameplan_html(locked, live) and "Stand aside" in panels.qf_wire_html(locked, "locked")
     lp = qf_chart_payload(locked, df, now_ms=DAY0 + 12 * H)

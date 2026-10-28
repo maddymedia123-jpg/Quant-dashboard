@@ -2421,18 +2421,25 @@ def qf_directive_html(plan: dict) -> str:
     from core.qf_alerts import window_label
     money = lambda x: fmt_num(x, 0, "$")  # noqa: E731
     d = trade_directive(plan)
+    # one HTML block with no blank lines: Streamlit renders panels as Markdown, and a blank line would end the
+    # block and hand the rest to the Markdown parser (collapsed lines, "$…$" read as LaTeX)
     if d["direction"] == "NONE":
-        text = f" ── INTRADAY TRADE DIRECTIVE ──\n• Asset: {d['asset']}\n• Direction: NONE\n• {d['setup_type']}"
-        return card_html("Trade directive", f"<pre class='ti-directive'>{html.escape(text)}</pre>", "neutral")
+        body = (f"<p class='ti-wire-head'>{chip('NONE', 'neutral')} <strong>{html.escape(d['asset'])}</strong></p>"
+                f"<p>{html.escape(d['setup_type'])}</p>")
+        return card_html("Intraday trade directive", body, "neutral")
     lo, hi = d["entry_zone"]
-    text = (f" ── INTRADAY TRADE DIRECTIVE ──\n• Asset: {d['asset']}\n• Direction: {d['direction']}\n"
-            f"• Setup Type: {d['setup_type']}\n\n📍 KEY PRICE LEVELS & TARGETS:\n"
-            f"• Stop Loss (Whole-Day Invalidation): {money(d['stop_loss_invalidation'])}\n"
-            f"• Entry Zone: {money(lo)} – {money(hi)}\n• TP1: {money(d['tp1'])}\n• TP2: {money(d['tp2'])}\n"
-            f"• TP3: {money(d['tp3'])}" + (f"\n• R:R to TP3: {d['risk_reward']}" if d["risk_reward"] else "")
-            + f"\n\n⏰ EXECUTION TIMELINE (UTC & PKT):\n• Active Window: {window_label(d['active_start_ms'], d['active_end_ms'])}")
     tone = "up" if d["direction"] == "LONG" else "down"
-    return card_html("Trade directive", f"<pre class='ti-directive'>{html.escape(text)}</pre>", tone)
+    body = (f"<p class='ti-wire-head'>{chip(d['direction'], tone)} <strong>{html.escape(d['asset'])}</strong> "
+            f"<span class='muted'>{html.escape(d['setup_type'])}</span></p>"
+            "<div class='ti-grid3'>"
+            + _kv("Stop loss (whole-day invalidation)", money(d["stop_loss_invalidation"]), "down")
+            + _kv("Entry zone", f"{money(lo)} – {money(hi)}")
+            + _kv("R:R to TP3", f"{d['risk_reward']}" if d["risk_reward"] else "—")
+            + "</div><div class='ti-grid3'>"
+            + _kv("TP1", money(d["tp1"]), tone) + _kv("TP2", money(d["tp2"]), tone) + _kv("TP3", money(d["tp3"]), tone)
+            + "</div>"
+            f"<p class='muted'>Active window: {html.escape(window_label(d['active_start_ms'], d['active_end_ms']))}</p>")
+    return card_html("Intraday trade directive", body, tone)
 
 
 def qf_status_html(status: str, messages: list[str] | str | None, plans_today: list[dict]) -> str:
