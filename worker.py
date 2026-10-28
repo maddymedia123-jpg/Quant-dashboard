@@ -76,6 +76,9 @@ def book_report(store: Store, now_ms: int, r: pipeline.PassResult) -> None:
         return
     if rep.get("available"):
         store.put_book_report(now_ms, rep)
+        log.info("order book: report written (%d min of book, %d sweeps, %d scoops, %.1f/%.1f BTC within 25 bps)",
+                 rep.get("minutes_in_window", 0), len(rep.get("sweeps") or []), len(rep.get("scoops") or []),
+                 (rep.get("depth") or {}).get("bid_025", 0.0), (rep.get("depth") or {}).get("ask_025", 0.0))
     elif rep.get("recorder") == "stale":
         r.problems.append(f"order book: {rep.get('reason')}")
 
