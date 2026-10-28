@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import replace
 import html
+import json
 import os
 import time
 from datetime import datetime, timezone
@@ -1298,18 +1299,23 @@ if screen == "qf":
         except Exception as e:  # noqa: BLE001 - the plan still shows without its audit
             _qf_audit = {"status": "on track", "cautions": [], "holds": []}
             _qf_problem = f"Audit unavailable this refresh: {e}"
-        # Part A: the layman wire plan
-        panels.render(panels.qf_wire_html(_qf_plan, _qf_audit["status"]))
-        # Part B: the pure-forecasting chart (always the dark terminal)
-        if _h1 is not None:
-            with st.container(key="ti_chart_qf"):
-                render_qf_chart(_qf_plan, _h1, dark, height=520, signal=signal, now_ms=now_ms)
-        # Part C: the raw data and audit drawer, closed by default
-        with st.expander("Raw data & audit (odds, record, levels, the lean, the bot's messages)", expanded=False):
+        _qf_live = qf_alerts.live_record(store)
+        _qf_sent = store.market_alerts_keyed(f"qf:{_qf_day}:", limit=6)
+        # the main screen: the pure-forecasting chart, with the layman summary and the volatility schedule
+        # on side panels (Hammad, message 5); on a phone the panels follow the chart
+        _qf_main, _qf_side = st.columns([5, 3], gap="large")
+        with _qf_main:
+            if _h1 is not None:
+                with st.container(key="ti_chart_qf"):
+                    render_qf_chart(_qf_plan, _h1, dark, height=560, signal=signal, now_ms=now_ms)
+        with _qf_side:
+            panels.render(panels.qf_wire_html(_qf_plan, _qf_audit["status"], live=_qf_live))
+            panels.render(panels.qf_schedule_html(_qf_plan, now_ms))
+        # the raw data and audit drawer, closed by default
+        with st.expander("Raw data & audit (odds, record, levels, the lean, the bot's messages, JSON payload)",
+                         expanded=False):
             if _qf_problem:
                 st.caption(_qf_problem)
-            _qf_live = qf_alerts.live_record(store)
-            _qf_sent = store.market_alerts_keyed(f"qf:{_qf_day}:", limit=6)
             panels.render(panels.qf_gameplan_html(_qf_plan, _qf_live))
             _c1, _c2 = st.columns(2, gap="large")
             with _c1:
@@ -1319,11 +1325,19 @@ if screen == "qf":
                 _bt = next((r["payload"].get("backtest") for r in _qf_today if r["payload"].get("backtest")), None)
                 panels.render(panels.qf_record_html(_bt, _qf_live, _qf_hist))
             panels.render(panels.qf_status_html(_qf_audit["status"], [r["headline"] for r in _qf_sent], _qf_today))
-            st.caption("Alerts (Discord): the daily plan at 00:00 UTC (05:00 PKT); CAUTION when a 15-minute candle "
-                       "moves 2x its usual size against the plan or buyer/seller flow flips against it; MODEL HELD "
-                       "when half of a shock is taken back within the hour; INVALIDATED strictly on a 4-hour close, "
-                       "with the new plan; SYSTEM LOCKED after the third failed plan. The AI writes the words once "
-                       "per plan and never sets a number.")
+            from core import qf_payload
+            st.download_button("Download today's JSON payload (the agent's output schema)",
+                               data=json.dumps(qf_payload.payload(_qf_plan, _qf_audit["status"], _qf_today,
+                                                                  _qf_sent[0]["headline"] if _qf_sent else "",
+                                                                  _qf_live, now_ms), indent=1, ensure_ascii=False),
+                               file_name=f"quant-forecast-{_qf_day}-plan{_qf_plan['version']}.json",
+                               mime="application/json", key="qf_payload_dl")
+            st.caption("Alerts (Discord): the daily plan at 00:00 UTC (05:00 PKT); TIER 1 CAUTION when a 15-minute "
+                       "candle moves 2x its usual size against the plan or buyer/seller flow flips against it; TIER 2 "
+                       "MODEL HELD when half of a shock is taken back within the hour; TIER 3 INVALIDATED when the "
+                       "whole-day level is decisively breached (a 4-hour close, two hourly closes in a row, or one "
+                       "violent hourly close), with the new plan; LOCKOUT MODE after the second failed plan. The AI "
+                       "writes the words once per plan and never sets a number.")
 
 # ---------- phone footer: the feed list, which lives in the folded-away sidebar on a desktop ----------
 with st.container(key="ti_mobile_foot"):

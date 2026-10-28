@@ -46,7 +46,9 @@ HOUR_MS = 3_600_000
 DAY_MS = 24 * HOUR_MS
 FOUR_H_MS = 4 * HOUR_MS
 DAY_START_HOUR_UTC = 0
-LOCK_AFTER_INVALIDATIONS = 3     # two re-forecasts a day; the third failed plan locks the rest of it (Hammad, 28 Oct)
+LOCK_AFTER_INVALIDATIONS = 2     # one re-forecast a day; the second failed plan locks the rest of it (Hammad, message 5)
+SUSTAINED_CLOSES = 2             # ...or this many hourly closes in a row beyond the level ("sustained price action")
+CASCADE_ATR = 1.0                # ...or one hourly close this many 1h ATRs beyond it ("a violent cascade")
 MISSING_HOURS_TOLERATED = 2      # a day is still scored with this many hourly candles missing from the feed
 
 CHOP_X, EXPAND_X = 0.85, 1.15
@@ -99,7 +101,8 @@ def lean_parts(closed: pd.DataFrame, price: float, flow: pd.DataFrame | None, no
         carry = _clip(0.5 + ((h or 0.5) - 0.5) * 5)
         out["momentum"] = {"value": round(math.tanh(z) * max(carry, 0.0), 3),
                            "note": f"24h move {r24 * 100:+.2f}% ({z:+.1f} sigma), Hurst "
-                                   f"{'n/a' if h is None else f'{h:.2f}'}"}
+                                   f"{'n/a' if h is None else f'{h:.2f}'}",
+                           "move_pct": round(r24 * 100, 3), "hurst": None if h is None else round(h, 3)}
     vp = volume_profile(closed.tail(VALUE_HOURS), lookback=VALUE_HOURS)
     if vp.available and vp.value_area_high > vp.value_area_low:
         pos = (price - vp.poc) / (vp.value_area_high - vp.value_area_low)
@@ -116,19 +119,21 @@ def lean_parts(closed: pd.DataFrame, price: float, flow: pd.DataFrame | None, no
             imb = float(d.sum()) / gross
             out["flow"] = {"value": round(_clip(imb * 2), 3),
                            "note": f"24h taker delta {float(d.sum()):+,.0f} BTC "
-                                   f"({'buyers' if imb > 0 else 'sellers'} paying)"}
+                                   f"({'buyers' if imb > 0 else 'sellers'} paying)",
+                           "delta_btc": round(float(d.sum()), 1)}
         oi = f["oi_btc"].astype(float).dropna() if "oi_btc" in f else pd.Series(dtype=float)
         if len(oi) >= 12 and float(oi.iloc[0]) > 0 and "momentum" in out:
             oi_pct = (float(oi.iloc[-1]) / float(oi.iloc[0]) - 1) * 100
             move = math.log(price / c[-25]) if len(c) >= 25 else 0.0
             out["open_interest"] = {"value": round(float(np.sign(move)) * math.tanh(oi_pct / 3), 3),
                                     "note": f"open interest {oi_pct:+.1f}% over 24h "
-                                            f"{'with' if (oi_pct > 0) else 'against'} the move"}
+                                            f"{'with' if (oi_pct > 0) else 'against'} the move",
+                                    "pct": round(oi_pct, 3)}
         fr = f["funding_rate"].astype(float).dropna() if "funding_rate" in f else pd.Series(dtype=float)
         if len(fr):
             rate = float(fr.iloc[-1])
             out["funding"] = {"value": round(-math.tanh((rate - NORMAL_FUNDING) / FUNDING_SCALE), 3),
-                              "note": f"funding {rate * 100:.4f}% per 8h (read against the crowd)"}
+                              "note": f"funding {rate * 100:.4f}% per 8h (read against the crowd)", "rate": rate}
     return out
 
 
@@ -330,7 +335,7 @@ def locked_plan(now_ms: int, end_ms: int, price: float, version: int, high: floa
             "liquidation_zones": [], "invalidation": {},
             "day_range": None if high is None or low is None else [round(low, 2), round(high, 2)],
             "scenario_a": f"Stand aside. {_COUNT_WORD.get(LOCK_AFTER_INVALIDATIONS, LOCK_AFTER_INVALIDATIONS)} "
-                          "plans failed today: the market is chopping both ways.",
+                          "plans failed today: the market is chopping both ways. Nothing new until the next session.",
             "scenario_b": ""}
 
 
@@ -360,13 +365,13 @@ def scenarios(plan: dict) -> tuple[str, str]:
     inv = plan["invalidation"]
     if plan["regime"] == "bullish":
         return (f"Higher: dips hold above {_money(lo)} and price works up towards {_money(hi)}.",
-                f"The rise fails: price loses {_money(inv['below'])} on a 4-hour close and the plan is replaced.")
+                f"The rise fails: price holds below {_money(inv['below'])} and the plan is replaced.")
     if plan["regime"] == "bearish":
         return (f"Lower: bounces stall under {_money(hi)} and price works down towards {_money(lo)}.",
-                f"The fall fails: price closes a 4-hour candle above {_money(inv['above'])} and the plan is replaced.")
+                f"The fall fails: price holds above {_money(inv['above'])} and the plan is replaced.")
     return (f"Range: price stays between {_money(inv['below'])} and {_money(inv['above'])}, "
             f"most likely {_money(lo)} to {_money(hi)}.",
-            "A breakout: a 4-hour close outside the range starts a new plan in that direction.")
+            "A breakout: price holds outside the range and a new plan starts in that direction.")
 
 
 def directive(plan: dict, at) -> str:
@@ -388,35 +393,43 @@ def directive(plan: dict, at) -> str:
                f"{_money(pl['price'])} around {at(pl['t_ms'])}.")
     inv = plan["invalidation"]
     if plan["regime"] == "neutral":
-        out.append(f"The range breaks if a 4-hour candle closes above {_money(inv['above'])} or below "
-                   f"{_money(inv['below'])}.")
+        out.append(f"The range breaks if price holds above {_money(inv['above'])} or below {_money(inv['below'])}: "
+                   "a 4-hour close, two hourly closes in a row, or one violent hourly close.")
     else:
         side, level = next(iter(inv.items()))
-        out.append(f"The plan is wrong if a 4-hour candle closes {side} {_money(level)}.")
+        out.append(f"The plan is wrong if price holds {side} {_money(level)}: a 4-hour close, two hourly closes "
+                   "in a row, or one violent hourly close.")
     return " ".join(out)
 
 
 # ---------- invalidation, read from the candles ----------
 
 def invalidation_hit(plan: dict, h1: pd.DataFrame, now_ms: int) -> dict | None:
-    """The first 4-hour candle close beyond the plan's invalidation since it was made; None while it holds.
-
-    Strictly the 4h close (Hammad, 28 Oct): an hourly close beyond the line, however far, is a wick on the
-    4h candle until that candle closes. The CAUTION tier covers the hours in between."""
+    """The first decisive breach of the plan's whole-day invalidation level since it was made; None while it
+    holds. The level is the day's (fixed at session open); what counts as "decisively breached by sustained
+    price action, or a violent cascade" (Hammad, message 5) is made exact here, in three tests on closed
+    hourly candles: a 4-hour candle close beyond the level, SUSTAINED_CLOSES hourly closes in a row beyond
+    it, or one hourly close CASCADE_ATR 1h ATRs beyond it. A single hourly close just past the line is a
+    wick on the day, and the CAUTION tier covers it."""
     inv = plan.get("invalidation") or {}
     if not inv:
         return None
     rows = h1[(h1["timestamp"].astype("int64") >= plan["created_ms"] - plan["created_ms"] % HOUR_MS)
               & (h1["timestamp"].astype("int64") + HOUR_MS <= min(now_ms, plan["end_ms"]))]
+    cascade = CASCADE_ATR * float(plan.get("atr_1h") or 0.0)
+    run: dict[str, int] = {side: 0 for side in inv}
     for t, close in zip(rows["timestamp"].astype("int64"), rows["close"].astype(float)):
         close_ms = int(t) + HOUR_MS
-        if close_ms <= plan["created_ms"] or close_ms % FOUR_H_MS != 0:
+        if close_ms <= plan["created_ms"]:
             continue
         for side, level in inv.items():
             beyond = close - level if side == "above" else level - close
-            if beyond > 0:
-                return {"side": side, "level": level, "close": round(close, 2), "close_ms": close_ms,
-                        "basis": "4-hour close"}
+            run[side] = run[side] + 1 if beyond > 0 else 0
+            basis = ("4-hour close" if beyond > 0 and close_ms % FOUR_H_MS == 0 else
+                     f"{SUSTAINED_CLOSES} hourly closes in a row" if run[side] >= SUSTAINED_CLOSES else
+                     f"hourly close more than {_money(cascade)} beyond" if cascade > 0 and beyond >= cascade else None)
+            if basis:
+                return {"side": side, "level": level, "close": round(close, 2), "close_ms": close_ms, "basis": basis}
     return None
 
 
@@ -500,5 +513,64 @@ def backtest(h1: pd.DataFrame, now_ms: int, days: int = BACKTEST_DAYS, paths: in
                 outcomes.append(o)
         d -= DAY_MS
     out = record(outcomes)
+    out["recent"] = record(outcomes[:RECENT_DAYS])
     out["method"] = "the morning plan replayed on past days with price only (no taker flow, open interest or gamma)"
     return out
+
+
+def hit_rate(plan: dict, live: dict | None) -> str | None:
+    """'live: 7 of last 10 days' for the headline (Hammad, message 5): the live morning plans once any day
+    has finished, else the backtest's last RECENT_DAYS. Direction calls for a directional plan, range days
+    for a neutral one, so a range day never props up a direction call. None with no finished day of either."""
+    key = ("range_held", "range_days") if plan.get("regime") == "neutral" else ("direction_right", "direction_days")
+    for rec, word in ((live or {}, "live"), ((plan.get("backtest") or {}).get("recent") or {}, "backtest")):
+        if rec.get(key[1]):
+            return f"{word}: {rec[key[0]]} of last {rec[key[1]]} days"
+    return None
+
+
+# ---------- the volatility schedule (Hammad, message 5, panel C) ----------
+
+def _bps(sigma_pct: float) -> int:
+    return int(round(sigma_pct * 100))
+
+
+def _character(mult: float) -> str:
+    return "COMPRESSED" if mult < CHOP_X else "HIGH VOLATILITY SPIKE" if mult > EXPAND_X else "NORMAL"
+
+
+def volatility_schedule(plan: dict, now_ms: int) -> dict:
+    """The day in numbers, no prose: the next NEXT_HOURS hours one by one, then the day in 4-hour blocks.
+    Each hour: its expected move in basis points (one GARCH sigma), the range that sigma spans around the
+    median path, its character. Each block: the block's expected move (its hours' sigmas added in variance),
+    its character from its hours' usual volatility, the lowest and highest 68% band inside it, and the plan's
+    levels that fall inside that band - the prices the block may react at."""
+    hours = plan.get("hours") or []
+    if not hours:
+        return {"next": [], "blocks": []}
+    nxt = []
+    for h in [x for x in hours if x["t_ms"] > now_ms][:NEXT_HOURS]:
+        s = h.get("sigma_full_pct", h["sigma_pct"]) / 100
+        nxt.append({"t_ms": h["t_ms"], "bps": _bps(h.get("sigma_full_pct", h["sigma_pct"])), "phase": h["phase"],
+                    "low": round(h["median"] * math.exp(-s), 2), "high": round(h["median"] * math.exp(s), 2),
+                    "character": _character(h["mult"])})
+    blocks = []
+    levels = plan.get("levels") or []
+    start = plan["created_ms"]
+    for b0 in range(plan["day_ms"], plan["end_ms"], FOUR_H_MS):
+        b1 = b0 + FOUR_H_MS
+        hs = [h for h in hours if b0 < h["t_ms"] <= b1]
+        if not hs:
+            continue
+        var = sum((h.get("sigma_full_pct", h["sigma_pct"]) / 100) ** 2 for h in hs)
+        lo, hi = min(h["band_low"] for h in hs), max(h["band_high"] for h in hs)
+        blocks.append({"start_ms": max(b0, start), "end_ms": b1, "bps": _bps(math.sqrt(var) * 100),
+                       "character": _character(sum(h["mult"] for h in hs) / len(hs)),
+                       "phases": sorted({h["phase"] for h in hs}), "low": round(lo, 2), "high": round(hi, 2),
+                       "levels": [lv for lv in levels if lo <= lv["price"] <= hi][:4],
+                       "done": b1 <= now_ms})
+    return {"next": nxt, "blocks": blocks}
+
+
+NEXT_HOURS = 3
+RECENT_DAYS = 10

@@ -40,7 +40,7 @@ CVD_FLIP_X = 1.5
 HOLD_WINDOW_MS = HOUR_MS
 SEND_WITHIN_MS = 30 * 60_000
 REGIME_WORD = {"bullish": "BULLISH EXPANSION", "bearish": "BEARISH EXPANSION",
-               "neutral": "NEUTRAL / RANGE-BOUND", "locked": "SYSTEM LOCKED: HIGH-CHOP / STAND ASIDE"}
+               "neutral": "NEUTRAL / RANGE-BOUND", "locked": "LOCKOUT MODE: HIGH CHOP / STAND ASIDE"}
 
 
 def _money(x) -> str:
@@ -198,12 +198,20 @@ def trap_label(plan: dict) -> str | None:
     return ((plan.get("preflight") or {}).get("trap") or {}).get("label")
 
 
-def regime_line(plan: dict, trap: str | None = None) -> str:
-    """'BULLISH EXPANSION (62%) | Trap Agent: Clear' - the top line of the wire plan. No record, no decimals."""
+def regime_line(plan: dict, trap: str | None = None, live: dict | None = None) -> str:
+    """'BULLISH EXPANSION | 62% Confidence | live: 7 of last 10 days | Trap Agent: Clear' - the top line of
+    the wire plan (Hammad, message 5). The hit rate is the last RECENT_DAYS, live once a day has finished."""
     p = plan.get("p_scenario_a")
-    out = REGIME_WORD[plan["regime"]] + ("" if p is None else f" ({p:.0%})")
+    bits = [REGIME_WORD[plan["regime"]]]
+    if p is not None:
+        bits.append(f"{p:.0%} Confidence")
+    rate = qf.hit_rate(plan, live)
+    if rate:
+        bits.append(rate)
     trap = trap or trap_label(plan)
-    return out + (f" | {trap}" if trap else "")
+    if trap:
+        bits.append(trap)
+    return " | ".join(bits)
 
 
 def windows_line(plan: dict) -> str:
@@ -227,7 +235,7 @@ def plan_headline(plan: dict, live: dict | None = None, title: str = "QUANT FORE
     """The day's plan as the bot sends it: the layman wire plan - regime, the one-sentence directive, the
     coordinates, the windows, the hard invalidation. The record stays on the dashboard's drawer."""
     d = datetime.fromtimestamp(plan["day_ms"] / 1000, timezone.utc)
-    lines = [f"📊 {title} · {d:%a %d %b} · BTC {_money(plan['origin'])}", f"Regime: {regime_line(plan, trap)}"]
+    lines = [f"📊 {title} · {d:%a %d %b} · BTC {_money(plan['origin'])}", f"Regime: {regime_line(plan, trap, live)}"]
     if plan["regime"] == "locked":
         lines.append(plan["scenario_a"] + f" Until {at_label(plan['end_ms'])}.")
         if plan.get("day_range"):
@@ -237,7 +245,7 @@ def plan_headline(plan: dict, live: dict | None = None, title: str = "QUANT FORE
     lines.append(coordinates_line(plan))
     if windows_line(plan):
         lines.append(windows_line(plan))
-    lines.append(f"Hard invalidation (4H close): {_inv_text(plan)}")
+    lines.append(f"Whole-day invalidation: {_inv_text(plan)}")
     return "\n".join(lines)
 
 
@@ -245,26 +253,31 @@ def caution_headline(plan: dict, c: dict) -> str:
     why = (f"a 15-minute candle moved {c['sigmas']}x its usual size ({_money(c['from'])} → {_money(c['to'])})"
            if c["why"] == "move" else
            f"the last hour's taker flow turned against the plan ({c['delta_btc']:+,.0f} BTC)")
-    return (f"⚠️ CAUTION: market is moving differently from the forecast: {why}. Be careful. "
-            f"Hard invalidation {_inv_text(plan)} has NOT been breached.")
+    return (f"⚠️ CAUTION: Order flow metrics are moving differently than baseline projection: {why}. "
+            f"Exercise caution. Whole-Day Invalidation {_inv_text(plan)} has NOT been breached. Plan remains active.")
 
 
 def held_headline(plan: dict, h: dict) -> str:
-    return (f"🟢 MODEL HELD: the shock to {_money(h['to'])} was absorbed without breaching invalidation "
-            f"({_inv_text(plan)}). The original forecast stays active.")
+    return (f"🟢 MODEL HELD: Intraday shock to {_money(h['to'])} absorbed successfully inside the whole-day "
+            f"invalidation boundary ({_inv_text(plan)}). Baseline 1-day forecast path remains active.")
 
 
 def invalidated_headline(plan: dict, hit: dict, new: dict | None) -> str:
-    """Tier 2, in Hammad's words, then what replaces the plan."""
-    where = (f"{hit['basis']} at {_money(hit['close'])}, {hit['side']} the {_money(hit['level'])} line, "
-             f"{at_label(hit['close_ms'])}")
+    """Tier 3, in Hammad's words (message 5), then what replaces the plan."""
+    where = (f"{hit['basis']}, {hit['side']} the {_money(hit['level'])} line, {at_label(hit['close_ms'])}")
+    head = (f"🔴 WHOLE-DAY PLAN INVALIDATED: Macro structure breached at {_money(hit['close'])} ({where}). "
+            "Original 1-day roadmap voided.")
     if new is not None and new["regime"] == "locked":
-        return (f"🔴 Plan invalidated ({where}). Max re-forecasts reached: locking into range mode.\n"
-                + plan_headline(new, title="SYSTEM LOCKED"))
-    head = f"🔴 Plan invalidated. Re-mapping intraday forecast. ({where})"
+        return (head + f" Invalidated {_TIMES.get(qf.LOCK_AFTER_INVALIDATIONS, qf.LOCK_AFTER_INVALIDATIONS)} today: "
+                "LOCKOUT MODE: HIGH CHOP / STAND ASIDE for the remainder of the 24-hour cycle.\n"
+                + plan_headline(new, title="LOCKOUT MODE"))
+    head += " AI Agent has re-simulated market metrics and issued a NEW intraday projection."
     if new is None:
-        return head + "\nThe new forecast follows on the next pass."
+        return head + "\nThe new projection follows on the next pass."
     return head + "\n" + plan_headline(new, title=f"NEW FORECAST #{new['version']}")
+
+
+_TIMES = {2: "twice", 3: "three times"}
 
 
 def _key(plan: dict, *parts) -> str:
@@ -382,7 +395,7 @@ def run(store, m, now_ms: int, gamma: dict | None = None) -> list[Event]:
         plan["backtest"] = qf.backtest(h1, now_ms)
         plan["preflight"] = pre
         if _publish(store, plan):
-            events.append(Event("qf_plan", _key(plan, "plan"), plan_headline(plan), plan["origin"]))
+            events.append(Event("qf_plan", _key(plan, "plan"), plan_headline(plan, live_record(store)), plan["origin"]))
         plans = store.qf_plans(day)
 
     active = next((r for r in reversed(plans) if r["status"] == "active"), None)
