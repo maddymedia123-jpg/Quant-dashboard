@@ -1,5 +1,6 @@
-"""The Quant Forecast as the JSON payload Hammad specified (message 5, section 5): the plan's status, the
-layman summary, the hourly and 4-hour volatility schedule, the chart payload hour by hour, and the raw math.
+"""The Quant Forecast as the JSON payload Hammad specified (message 6, section 5): the plan's status and the
+bot's compact message, the layman summary with the timeline tree and the trade directive box, the chart
+payload hour by hour with its overlays, and - kept from message 5 - the raw math for the drawer.
 
 Every number is the plan's own; nothing is computed here. The hourly trajectory's projected_high and
 projected_low are the 68% band of the simulated paths at that hour (the envelope the chart draws), not an
@@ -11,6 +12,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from core import quant_forecast as qf
+from core.qf_tree import timeline_tree, trade_directive
 
 REGIME_TYPE = {"chop": "CHOP_BOX", "expansion": "EXPANSION_VECTOR", "normal": "NORMAL"}
 
@@ -26,8 +28,8 @@ def _window(start_ms: int, end_ms: int) -> tuple[str, str]:
 
 
 def payload(plan: dict, status: str, plans_today: list[dict], bot_message: str, live: dict | None,
-            now_ms: int) -> dict:
-    from core.qf_alerts import REGIME_WORD, _clock, trap_label
+            now_ms: int, h1=None) -> dict:
+    from core.qf_alerts import REGIME_WORD, _clock, timeline_line, trap_label
     from ui.panels import QF_STATUS
     hours = plan.get("hours") or []
     parts = plan.get("parts") or {}
@@ -47,29 +49,42 @@ def payload(plan: dict, status: str, plans_today: list[dict], bot_message: str, 
                      "hourly_volatility_garch_bps": qf._bps(h.get("sigma_full_pct", h["sigma_pct"])),
                      "regime_type": REGIME_TYPE.get(h["phase"], "NORMAL")})
         prev = h["median"]
-    sched = qf.volatility_schedule(plan, now_ms)
-    blocks = []
-    for b in sched["blocks"]:
-        wu, wk = _window(b["start_ms"], b["end_ms"])
-        blocks.append({"block_window_utc": wu, "block_window_pkt": wk, "expected_volatility_bps": b["bps"],
-                       "volatility_character": b["character"], "expected_low": b["low"], "expected_high": b["high"],
-                       "key_inflection_levels": [lv["price"] for lv in b["levels"]]})
+    nodes = []
+    for n in timeline_tree(plan, now_ms, h1):
+        wu, wk = _window(n["start_ms"], n["end_ms"])
+        node = {"time_window_utc": wu, "time_window_pkt": wk, "state": n["state"], "phase": n["phase"],
+                "summary_oneliner": n["summary"], "rationale_why": n["why"],
+                "price_levels": {"low": n["low"], "high": n["high"]}, "expected_move_bps": n["bps"],
+                "key_levels_inside": [lv["price"] for lv in n["levels"]]}
+        if "actual_low" in n:
+            node["actual_range"] = {"low": n["actual_low"], "high": n["actual_high"]}
+        nodes.append(node)
+    d = trade_directive(plan)
+    box = {"asset": d["asset"], "direction": d["direction"], "setup_type": d["setup_type"],
+           "stop_loss_invalidation": d["stop_loss_invalidation"], "entry_zone": d["entry_zone"],
+           "tp1": d["tp1"], "tp2": d["tp2"], "tp3": d["tp3"], "risk_reward": d["risk_reward"],
+           "active_window_utc": None, "active_window_pkt": None}
+    if d["active_start_ms"]:
+        box["active_window_utc"], box["active_window_pkt"] = _window(d["active_start_ms"], d["active_end_ms"])
     chop = [{"start_utc": _clock(w["start_ms"])[0], "end_utc": _clock(w["end_ms"])[0], "high": w["upper"], "low": w["lower"]}
             for w in plan.get("windows") or [] if w["phase"] == "chop"]
     rate = qf.hit_rate(plan, live)
     p = plan.get("p_scenario_a")
+    voided = [r for r in plans_today if r.get("status") == "invalidated"]
     return {
         "audit_and_alert_status": {
             "plan_id": plan["version"], "tier_status": QF_STATUS.get(status, (status.upper(),))[0],
-            "re_forecast_count": sum(1 for r in plans_today if r.get("status") == "invalidated"),
-            "trap_agent": trap_label(plan), "bot_message": bot_message or ""},
-        "layman_summary_sideways": {
+            "re_forecast_count": len(voided), "trap_agent": trap_label(plan),
+            "magnitude_scaler": plan.get("magnitude") or {"scaled": False},
+            "timeline_status": timeline_line(plan, now_ms), "bot_message": bot_message or ""},
+        "layman_summary_and_timeline_tree": {
             "master_regime": REGIME_WORD[plan["regime"]],
             "confidence_odds": (f"{p:.0%}" if p is not None else "") + (f" (Hit rate: {rate})" if rate else ""),
             "plain_english_plan": qf.wire_line(plan),
             "daily_coordinates": {"predicted_low": coord(pl), "predicted_high": coord(ph),
-                                  "whole_day_macro_invalidation": plan.get("invalidation") or {}}},
-        "hourly_and_four_hour_volatility_schedule": blocks,
+                                  "whole_day_macro_invalidation": plan.get("invalidation") or {}},
+            "timeline_tree_nodes": nodes,
+            "trade_directive_box": box},
         "tradingview_chart_payload": {
             "macro_anchor": "1-Day", "forecast_origin_timestamp": _iso(plan["created_ms"]),
             "forecast_end_timestamp": _iso(plan["end_ms"]),
@@ -77,6 +92,7 @@ def payload(plan: dict, status: str, plans_today: list[dict], bot_message: str, 
             "hourly_trajectory_24h": traj,
             "visual_overlays": {
                 "chop_boxes": chop,
+                "scenario_b_secondary_chart_active": plan["version"] >= 1 and bool(voided),
                 "right_axis_badges": {"predicted_high": ph.get("price"), "predicted_low": pl.get("price"),
                                       "whole_day_invalidation_level": plan.get("invalidation") or {},
                                       "lvn_air_pockets": [round((z["low"] + z["high"]) / 2, 2)
@@ -89,5 +105,6 @@ def payload(plan: dict, status: str, plans_today: list[dict], bot_message: str, 
             "open_interest_24h_change_pct": (parts.get("open_interest") or {}).get("pct"),
             "funding_rate_8h": (parts.get("funding") or {}).get("rate"),
             "lean_score": plan.get("score"), "lean_parts": {k: v.get("value") for k, v in parts.items()},
+            "volatility_schedule_4h": qf.volatility_schedule(plan, now_ms)["blocks"],
             "backtest_summary_stats": plan.get("backtest") or {}},
     }
