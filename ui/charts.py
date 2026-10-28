@@ -302,11 +302,14 @@ def render_forecast_chart(a: CategoryAnalysis, f, dark: bool, height: int = 360,
 QF_CONTEXT_HOURS = 36        # real hours shown before the plan was made
 
 
-def qf_chart_payload(plan: dict, h1, dark: bool, signal: bool = False, now_ms: int | None = None) -> dict:
-    """The day plan drawn on hourly candles: the hours before it, the hours since, then the median path,
-    its 68% envelope, the chop and expansion boxes, the air pockets, the value area, the projected high
-    and low, and the invalidation line."""
-    p = palette(dark, signal)
+def qf_chart_payload(plan: dict, h1, dark: bool = True, signal: bool = True, now_ms: int | None = None) -> dict:
+    """The pure-forecasting chart (Hammad, 28 Oct): dark, hourly candles up to a vertical "now" line, then
+    the green median path with its 68% envelope, green expansion boxes and grey chop boxes, and the
+    invalidation, predicted high, predicted low and air pockets as right-axis badges only - no text over
+    the candles. A locked day draws its range so far as one grey box to the end of the day.
+
+    Always drawn on the dark signal palette, whatever the page's mode: the chart is the terminal."""
+    p = palette(True, True)
     t = h1["timestamp"].astype("int64")
     start = plan["created_ms"] - QF_CONTEXT_HOURS * 3_600_000
     df = h1[(t >= start) & (t <= (now_ms or plan["end_ms"]))]
@@ -318,48 +321,48 @@ def qf_chart_payload(plan: dict, h1, dark: bool, signal: bool = False, now_ms: i
     path = [origin] + [{"time": h["t_ms"] // 1000, "value": h["median"]} for h in hours]
     band_hi = [origin] + [{"time": h["t_ms"] // 1000, "value": h["band_high"]} for h in hours]
     band_lo = [origin] + [{"time": h["t_ms"] // 1000, "value": h["band_low"]} for h in hours]
-
-    def snap(ms: int) -> int:
-        return min((pt["time"] for pt in path), key=lambda x: abs(x - ms // 1000))
-
-    markers = []
+    boxes = [{"t1": w["start_ms"] // 1000, "t2": w["end_ms"] // 1000, "p1": w["lower"], "p2": w["upper"],
+              "kind": w["phase"]} for w in plan.get("windows") or []]
+    lines = []
     if hours:
         ph, pl = plan["projected_high"], plan["projected_low"]
-        markers = sorted([{"time": snap(ph["t_ms"]), "position": "aboveBar", "color": p["up"], "shape": "arrowDown",
-                           "text": f"high ≈ ${ph['price']:,.0f}"},
-                          {"time": snap(pl["t_ms"]), "position": "belowBar", "color": p["down"], "shape": "arrowUp",
-                           "text": f"low ≈ ${pl['price']:,.0f}"}], key=lambda m: m["time"])
-    boxes = [{"t1": w["start_ms"] // 1000, "t2": w["end_ms"] // 1000, "p1": w["lower"], "p2": w["upper"],
-              "kind": w["phase"], "label": "CHOP" if w["phase"] == "chop" else "EXPANSION"}
-             for w in plan.get("windows") or []]
-    left = candles[0]["time"] if candles else plan["created_ms"] // 1000
-    zones = [{"t1": left, "t2": plan["end_ms"] // 1000, "p1": z["low"], "p2": z["high"],
-              "kind": "liq" if z["oi_surge"] else "lvn",
-              "label": "est. liquidation zone" if z["oi_surge"] else "air pocket"}
-             for z in plan.get("liquidation_zones") or []]
-    lines = [{"price": v, "title": f"invalidation {side}", "color": p["down"], "style": "solid"}
-             for side, v in (plan.get("invalidation") or {}).items()]
-    va = plan.get("value_area") or {}
-    lines += [{"price": va[k], "title": label, "color": p["muted"], "style": "dotted"}
-              for k, label in (("poc", "POC"), ("high", "VAH"), ("low", "VAL")) if va.get(k)]
+        lines += [{"price": ph["price"], "kind": "high", "color": p["up"], "style": "dotted"},
+                  {"price": pl["price"], "kind": "low", "color": p["up"], "style": "dotted"}]
+        left = plan["created_ms"] // 1000
+        for z in plan.get("liquidation_zones") or []:
+            boxes.append({"t1": left, "t2": plan["end_ms"] // 1000, "p1": z["low"], "p2": z["high"],
+                          "kind": "liq" if z["oi_surge"] else "lvn"})
+            lines.append({"price": round((z["low"] + z["high"]) / 2, 2), "kind": "liq" if z["oi_surge"] else "lvn",
+                          "color": p["down"] if z["oi_surge"] else p["muted"], "style": "dotted"})
+    elif plan.get("day_range"):
+        lo, hi = plan["day_range"]
+        boxes.append({"t1": plan["created_ms"] // 1000, "t2": plan["end_ms"] // 1000, "p1": lo, "p2": hi, "kind": "chop"})
+        lines += [{"price": hi, "kind": "range", "color": p["muted"], "style": "dotted"},
+                  {"price": lo, "kind": "range", "color": p["muted"], "style": "dotted"}]
+    lines += [{"price": v, "kind": "invalidation", "color": p["down"], "style": "solid"}
+              for v in (plan.get("invalidation") or {}).values()]
     last_real = candles[-1]["time"] if candles else 0
-    whitespace = [{"time": h["t_ms"] // 1000} for h in hours if h["t_ms"] // 1000 > last_real]
+    future = [h["t_ms"] // 1000 for h in hours] or list(range(plan["created_ms"] // 1000 + 3600,
+                                                              plan["end_ms"] // 1000 + 1, 3600))
+    whitespace = [{"time": s} for s in future if s > last_real]
+    now = (now_ms or plan["created_ms"]) // 1000
     return {"theme": {k: p[k] for k in ("panel", "border", "grid", "text", "muted", "accent", "up", "down", "now")},
             "candles": candles, "whitespace": whitespace, "path": path, "bandHigh": band_hi, "bandLow": band_lo,
-            "markers": markers, "boxes": boxes + zones, "lines": lines}
+            "boxes": boxes, "lines": lines, "now": now, "origin": origin["time"]}
 
 
 _QF_TEMPLATE = (pathlib.Path(__file__).with_name("qf_chart.html")).read_text(encoding="utf-8")
 
 
-def build_qf_chart_html(plan: dict, h1, dark: bool, height: int = 460, signal: bool = False,
+def build_qf_chart_html(plan: dict, h1, dark: bool = True, height: int = 520, signal: bool = True,
                         now_ms: int | None = None) -> str:
-    p = palette(dark, signal)
-    payload = json.dumps(qf_chart_payload(plan, h1, dark, signal, now_ms), separators=(",", ":"))
+    """`dark` and `signal` are accepted for the call sites' sake; the chart is always the dark terminal."""
+    p = palette(True, True)
+    payload = json.dumps(qf_chart_payload(plan, h1, True, True, now_ms), separators=(",", ":"))
     return (_QF_TEMPLATE.replace("__LIB__", LIGHTWEIGHT_CHARTS_URL).replace("__HEIGHT__", str(height))
-            .replace("__PANEL__", p["panel"]).replace("__TEXT__", p["muted"]).replace("__PAYLOAD__", payload))
+            .replace("__PANEL__", p["panel"]).replace("__PAYLOAD__", payload))
 
 
-def render_qf_chart(plan: dict, h1, dark: bool, height: int = 460, signal: bool = False,
+def render_qf_chart(plan: dict, h1, dark: bool = True, height: int = 520, signal: bool = True,
                     now_ms: int | None = None) -> None:
     components.html(build_qf_chart_html(plan, h1, dark, height, signal, now_ms), height=height + 6, scrolling=False)

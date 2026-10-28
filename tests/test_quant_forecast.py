@@ -1,5 +1,6 @@
 """Quant Forecast: GARCH, the hourly profile, air pockets, the plan, its invalidation, the audit tiers,
 the store's once-only writes, scoring, and the pass that ties them together."""
+import json
 import math
 import os
 
@@ -129,17 +130,18 @@ def candles(closes, start=DAY0, bar=H):
                          "low": np.minimum(o, c) - 5, "close": c, "volume": 100.0})
 
 
-def test_invalidation_needs_a_4h_close_or_an_hourly_close_one_atr_beyond():
+def test_invalidation_is_strictly_a_4h_close():
     plan = _plan_fixed(below=79_000.0, atr=200.0)
     wick_and_shallow = candles([80_000, 78_950, 80_000, 80_000, 80_000, 80_000])  # 01:00 close below, not a 4h close
     assert qf.invalidation_hit(plan, wick_and_shallow, DAY0 + 6 * H) is None
     at_4h = candles([80_000, 80_000, 80_000, 78_990])                            # closes at 04:00
     hit = qf.invalidation_hit(plan, at_4h, DAY0 + 4 * H)
     assert hit and hit["basis"] == "4-hour close" and hit["close_ms"] == DAY0 + 4 * H
-    deep = candles([80_000, 78_700])                                             # 300 below on an hourly close
-    hit = qf.invalidation_hit(plan, deep, DAY0 + 2 * H)
-    assert hit and hit["basis"].startswith("hourly close")
+    deep = candles([80_000, 78_700, 77_000, 80_000])                             # far below on 01:00 and 02:00 closes
+    assert qf.invalidation_hit(plan, deep, DAY0 + 4 * H) is None, \
+        "an hourly close beyond the line, however far, is a wick until the 4h candle closes (Hammad, 28 Oct)"
     assert qf.invalidation_hit(plan, at_4h, DAY0 + 3 * H) is None, "a candle still forming does not count"
+    assert "or an hourly candle" not in qf.directive(plan, qa.at_label)
 
 
 def test_a_shock_against_the_plan_is_a_caution_and_taking_half_back_is_model_held():
@@ -166,12 +168,34 @@ def test_a_neutral_plan_is_cautioned_either_way_and_cvd_needs_a_direction():
 
 def test_cautions_are_one_an_hour_and_stale_ones_are_not_sent():
     plan = _plan_fixed()
-    a = {"cautions": [{"t_ms": DAY0 + H + 900_000, "why": "move", "sigmas": 2.5, "from": 1, "to": 1},
+    a = {"cautions": [{"t_ms": DAY0 + H, "why": "move", "sigmas": 2.5, "from": 1, "to": 1},
                       {"t_ms": DAY0 + H + 1_800_000, "why": "move", "sigmas": 3, "from": 1, "to": 1}], "holds": []}
     assert len(qa.audit_events(plan, a, DAY0 + H + 1_900_000)) == 1
     assert qa.audit_events(plan, a, DAY0 + 5 * H) == [], "an hours-old caution is not news"
     text = qa.caution_headline(plan, a["cautions"][0])
     assert "NOT been breached" in text and "79,000" in text
+    # the worker was down for the first caution of the hour: the fresh one still goes out, and the hour's
+    # ledger key is what keeps a third from following it
+    late = qa.audit_events(plan, a, DAY0 + H + 1_800_000 + 5 * 60_000)
+    assert [e.headline for e in late] == [qa.caution_headline(plan, a["cautions"][1])]
+    # a MODEL HELD answers only a caution that was sent: the second shock of an hour never was
+    held = {"cautions": [{"t_ms": DAY0 + H, "why": "move", "sigmas": 2.5, "from": 1, "to": 1},
+                         {"t_ms": DAY0 + H + 900_000, "why": "move", "sigmas": 3, "from": 1, "to": 1}],
+            "holds": [{"t_ms": DAY0 + H + 1_800_000, "shock_ms": DAY0 + H + 900_000, "from": 1, "to": 1}]}
+    assert [e.kind for e in qa.audit_events(plan, held, DAY0 + H + 1_800_000)] == ["qf_caution"]
+    held["holds"][0]["shock_ms"] = DAY0 + H
+    assert [e.kind for e in qa.audit_events(plan, held, DAY0 + H + 1_800_000)] == ["qf_caution", "qf_held"]
+
+
+def test_the_15m_caution_sigma_is_the_whole_hours_not_the_scaled_first_hour():
+    plan = _plan_fixed()
+    plan["hours"][0].update(sigma_pct=0.05, sigma_full_pct=0.4)      # made at :53, seven minutes of hour left
+    m15 = candles([80_000, 80_000, 79_760], bar=qa.M15_MS)          # -0.3%: 1.5 sigma of the hour, not 12
+    assert qa.shocks(plan, m15, DAY0 + 3 * qa.M15_MS) == []
+    plan["hours"][0]["sigma_full_pct"] = 0.1
+    assert len(qa.shocks(plan, m15, DAY0 + 3 * qa.M15_MS)) == 1
+    p = _plan(hourly(800, DAY0 - 800 * H), DAY0 + 53 * 60_000)
+    assert p["hours"][0]["sigma_full_pct"] > 2 * p["hours"][0]["sigma_pct"], "the plan carries both"
 
 
 def test_a_plan_is_written_once_per_day_and_version_and_closed_once(tmp_path):
@@ -199,6 +223,14 @@ def test_scoring_waits_for_the_window_and_reads_the_day():
     assert o["scored"] and o["direction_hit"] and not o["invalidated"] and o["scenario_a_right"]
     assert o["high_hit"] and o["close"] == 80_920.0
     assert qf.record([o, {"scored": False}, None])["days"] == 1
+    # a candle the feed never delivered must not leave the plan unscored forever
+    day = candles(closes)
+    assert qf.score_plan(plan, day.drop(index=[5, 6]))["scored"], "two missing hours are tolerated"
+    gap = qf.score_plan(plan, day.drop(index=[3, 4, 5, 6]))
+    assert gap["scored"] is False and "missing" in gap["reason"]
+    # an invalidated plan is judged on the hours it was live
+    short = qf.score_plan(plan, day, until_ms=DAY0 + 8 * H)
+    assert short["scored"] and short["close"] == closes[7] and short["high"] < 80_500
 
 
 def test_the_backtest_replays_past_days_price_only():
@@ -231,20 +263,80 @@ def test_one_pass_makes_the_day_plan_once_and_replaces_it_when_broken(tmp_path, 
     later = pd.concat([hist, candles([plan["origin"]] * 3 + [away], start=DAY0)], ignore_index=True)
     ev = qa.run(store, _M(later, price=away), DAY0 + 4 * H + 60_000)
     assert [e.kind for e in ev] == ["qf_invalid"] and "NEW FORECAST #1" in ev[0].headline
+    assert ev[0].headline.startswith("🔴 Plan invalidated. Re-mapping intraday forecast."), "Hammad's words"
     rows = store.qf_plans(DAY0)
     assert [(r["version"], r["status"]) for r in rows] == [(0, "invalidated"), (1, "active")]
     assert rows[1]["payload"]["replaces"]["version"] == 0
 
-    # the second failure locks the day
-    p1 = rows[1]["payload"]
-    lvl = p1["invalidation"].get("below") or p1["invalidation"]["above"]
-    far = lvl * (0.98 if "below" in p1["invalidation"] else 1.02)
-    later2 = pd.concat([later, candles([away] * 3 + [far], start=DAY0 + 4 * H)], ignore_index=True)
+    # the second failure is the second re-forecast; the third locks the day (two re-forecasts a day)
+    def _break(prev_rows, prev_price, start, k):
+        p = prev_rows[-1]["payload"]
+        lvl = p["invalidation"].get("below") or p["invalidation"]["above"]
+        far = lvl * (1 - 0.01 * k if "below" in p["invalidation"] else 1 + 0.01 * k)
+        return far, candles([prev_price] * 3 + [far], start=start)
+    far, more = _break(rows, away, DAY0 + 4 * H, 2)
+    later2 = pd.concat([later, more], ignore_index=True)
     ev = qa.run(store, _M(later2, price=far), DAY0 + 8 * H + 60_000)
-    assert [e.kind for e in ev] == ["qf_invalid"] and "SYSTEM LOCKED" in ev[0].headline
+    assert [e.kind for e in ev] == ["qf_invalid"] and "NEW FORECAST #2" in ev[0].headline
     rows = store.qf_plans(DAY0)
-    assert rows[-1]["regime"] == "locked" and rows[-1]["status"] == "active"
-    assert qa.run(store, _M(later2, price=far), DAY0 + 9 * H) == [], "a locked day raises nothing more"
+    assert [(r["version"], r["status"]) for r in rows] == [(0, "invalidated"), (1, "invalidated"), (2, "active")]
+    far3, more = _break(rows, far, DAY0 + 8 * H, 3)
+    later3 = pd.concat([later2, more], ignore_index=True)
+    ev = qa.run(store, _M(later3, price=far3), DAY0 + 12 * H + 60_000)
+    assert [e.kind for e in ev] == ["qf_invalid"] and "SYSTEM LOCKED" in ev[0].headline
+    assert "locking into range mode" in ev[0].headline and "Three plans failed" in ev[0].headline
+    rows = store.qf_plans(DAY0)
+    assert rows[-1]["regime"] == "locked" and rows[-1]["status"] == "active" and rows[-1]["version"] == 3
+    assert qa.run(store, _M(later3, price=far3), DAY0 + 13 * H) == [], "a locked day raises nothing more"
+    store.close()
+
+
+def test_a_day_left_with_no_active_plan_gets_its_replacement_on_the_next_pass(tmp_path):
+    """A crash between closing a plan and writing its replacement (or a replacement that could not be built)
+    used to leave the day dead and silent."""
+    store = Store(tmp_path / "s.sqlite")
+    hist = hourly(800, DAY0 - 800 * H)
+    qa.run(store, _M(hist), DAY0 + 60_000)
+    row = store.qf_plans(DAY0)[0]
+    hit = {"side": "below", "level": 1.0, "close": 0.5, "close_ms": DAY0 + 4 * H, "basis": "4-hour close"}
+    assert store.close_qf_plan(row["id"], "invalidated", json.dumps(hit), DAY0 + 4 * H)
+    ev = qa.run(store, _M(hist), DAY0 + 4 * H + 120_000)
+    assert [e.kind for e in ev] == ["qf_invalid"] and "NEW FORECAST #1" in ev[0].headline
+    assert [(r["version"], r["status"]) for r in store.qf_plans(DAY0)] == [(0, "invalidated"), (1, "active")]
+    assert qa.run(store, _M(hist), DAY0 + 4 * H + 180_000) == []
+    store.close()
+
+
+def test_the_plan_row_is_written_before_the_ai_is_asked(tmp_path, monkeypatch):
+    """Insert first, then the write-up: a slow or crashing model can never leave the day without a plan,
+    and only the process that won the row makes the call."""
+    store = Store(tmp_path / "s.sqlite")
+    calls = []
+
+    def write(plan, live=None):
+        calls.append(plan["version"])
+        assert store.qf_plans(DAY0), "the row exists before the model is asked"
+        return {"summary": "Dips hold, then up.", "scenario_a": "Up.", "scenario_b": "Fails.", "model": "t"}
+    monkeypatch.setattr(qw, "write", write)
+    ev = qa.run(store, _M(hourly(800, DAY0 - 800 * H)), DAY0 + 60_000)
+    assert calls == [0] and "Directive: Dips hold, then up." in ev[0].headline
+    assert store.qf_plans(DAY0)[0]["payload"]["writeup"]["summary"] == "Dips hold, then up."
+    assert qa.run(store, _M(hourly(800, DAY0 - 800 * H)), DAY0 + 60_000) == [] and calls == [0], \
+        "a second process finds the row and asks nothing"
+    store.close()
+
+
+def test_the_other_detectors_failing_does_not_block_the_forecast_or_the_send_step(tmp_path, monkeypatch):
+    from core import pipeline
+    store = Store(tmp_path / "s.sqlite")
+
+    def boom(*a, **k):
+        raise RuntimeError("market events broke")
+    monkeypatch.setattr(pipeline, "market_events", boom)
+    r = pipeline.market_alerts(store, _M(hourly(800, DAY0 - 800 * H)), {}, DAY0 + 60_000, {}, may_send=False)
+    assert any("market events broke" in p for p in r.problems)
+    assert [a["kind"] for a in store.market_alerts_keyed(f"qf:{DAY0}:")] == ["qf_plan"], \
+        "the day plan was still made and logged"
     store.close()
 
 
@@ -254,19 +346,51 @@ def test_the_chart_and_panels_build_from_a_plan():
     df = hourly(800, DAY0 - 800 * H, loud_hour=14)
     p = _plan(df, DAY0)
     payload = qf_chart_payload(p, df, dark=False, now_ms=DAY0)
-    assert len(payload["path"]) == 25 and payload["lines"] and payload["markers"]
+    assert len(payload["path"]) == 25 and payload["now"] == DAY0 // 1000
     assert {b["kind"] for b in payload["boxes"]} & {"chop", "expansion"}
-    assert "__PAYLOAD__" not in build_qf_chart_html(p, df, dark=True, now_ms=DAY0)
+    # right-axis badges only: the high, the low, the invalidation and the air pockets, no text on the chart
+    kinds = [ln["kind"] for ln in payload["lines"]]
+    assert kinds.count("high") == 1 and kinds.count("low") == 1 and kinds.count("invalidation") == len(p["invalidation"])
+    assert "markers" not in payload and all("label" not in b for b in payload["boxes"])
+    assert all("title" not in ln for ln in payload["lines"])
+    html_dark = build_qf_chart_html(p, df, dark=False, now_ms=DAY0)
+    assert "__PAYLOAD__" not in html_dark and "#16181A" in html_dark, "the chart is the dark terminal in light mode too"
+    assert "fillText(b.label" not in html_dark and "title: ''" in html_dark
     live = {"days": 0}
-    for markup in (panels.qf_gameplan_html(p, live), panels.qf_levels_html(p),
-                   panels.qf_status_html("caution", "⚠️ CAUTION", [{"version": 0, "status": "active"}]),
+    for markup in (panels.qf_wire_html(p, "on track"), panels.qf_gameplan_html(p, live), panels.qf_levels_html(p),
+                   panels.qf_status_html("caution", ["⚠️ CAUTION", "📊 plan"], [{"version": 0, "status": "active"}]),
                    panels.qf_record_html({"days": 2, "scenario_a_right": 1, "high_hit": 1, "low_hit": 0,
                                           "high_time_hit": 0, "low_time_hit": 0, "band_held": 1, "invalidated": 0},
                                          live, [{"day_ms": DAY0, "version": 0, "regime": "bullish",
                                                  "status": "active", "outcome": None}])):
         assert markup.startswith("<div class=\"ti-card")
-    locked = qf.locked_plan(DAY0, DAY0 + qf.DAY_MS, 80_000.0, 2, 81_000.0, 79_000.0)
-    assert "Stand aside" in panels.qf_gameplan_html(locked, live)
+    assert "the 3rd locks the day" in panels.qf_status_html("on track", None, [])
+    locked = qf.locked_plan(DAY0, DAY0 + qf.DAY_MS, 80_000.0, 3, 81_000.0, 79_000.0)
+    assert "Stand aside" in panels.qf_gameplan_html(locked, live) and "Stand aside" in panels.qf_wire_html(locked, "locked")
+    lp = qf_chart_payload(locked, df, now_ms=DAY0 + 12 * H)
+    assert [b["kind"] for b in lp["boxes"]] == ["chop"] and lp["boxes"][0]["p1"] == 79_000.0 and lp["path"] == [
+        {"time": DAY0 // 1000, "value": 80_000.0}]
+    assert lp["whitespace"] and lp["whitespace"][-1]["time"] == (DAY0 + qf.DAY_MS) // 1000
+
+
+def test_the_wire_plan_carries_no_math_and_the_bot_message_matches_it():
+    p = _plan_fixed()
+    p["scenario_a"], p["scenario_b"] = qf.scenarios(p)
+    p["backtest"] = {"days": 26, "direction_days": 26, "direction_right": 8}
+    p["garch"] = {"alpha": 0.1, "beta": 0.8, "compression": 0.9}
+    from ui import panels
+    wire = panels.qf_wire_html(p, "on track")
+    for banned in ("of 26", "alpha", "Hurst", "GARCH", "backtest", "Written by", "0.6"):
+        assert banned not in wire, banned
+    assert "BULLISH EXPANSION (60%)" in wire and "Hard invalidation (4H close)" in wire
+    assert "$79,600" in wire and "03:00 UTC (08:00 PKT)" in wire and "$80,800" in wire
+    assert "dips hold above $79,600" in wire.lower() and "Higher:" not in wire
+    msg = qa.plan_headline(p)
+    assert "direction right" not in msg and "Directive: Dips hold above" in msg
+    assert "Low $79,600 at 03:00 UTC (08:00 PKT) → High $80,800 at 14:00 UTC (19:00 PKT)" in msg
+    assert msg.splitlines()[-1] == "Hard invalidation (4H close): below $79,000"
+    assert qa.regime_line(p, "Trap Agent: Clear") == "BULLISH EXPANSION (60%) | Trap Agent: Clear"
+    assert qf.wire_line({"regime": "neutral", "scenario_a": "Range: price stays between."}) == "Price stays between."
 
 
 def test_range_days_are_counted_apart_from_direction_calls():
@@ -298,6 +422,7 @@ def test_the_check_catches_invented_numbers_times_odds_direction_and_jargon():
     assert qw.check(ok, p) == [], "its own numbers, rounded to the dollar, pass; 'remains' is not 'ema'"
     assert qw.check("Watch $81,000.", p) == ["price $81,000 is not in the plan"]
     assert qw.check("Watch $80.8k.", p) == [], "80.8k is the projected high"
+    assert qw.check("Support at $80,000 keeps the plan alive.", p) == [], "'keeps' is not a thousands suffix"
     assert qw.check("Moves come at 07:00.", p) == ["time 07:00 is not in the plan"]
     assert qw.check("A 75% chance.", p) == ["75% is not one of the plan's odds"]
     assert qw.check("A bearish day.", p) == ["says 'bearish' on a bullish plan"]
@@ -324,7 +449,20 @@ def test_the_model_is_shown_the_numbers_already_written_out():
     seen = {}
     qw.write(p, ask=lambda s, u: seen.update(system=s, user=u) or {"data": _good_text(p)})
     assert "$80,800 around" in seen["user"] and "a 4-hour candle closes below $79,000" in seen["user"]
-    assert "Never round" in seen["system"]
+    assert "Never round" in seen["system"] and "ONE direct sentence" in seen["system"]
+    # it is shown nothing it is forbidden to say, and no record to quote
+    p["parts"] = {"funding": {"value": 0.2, "note": "funding 0.0100% per 8h"},
+                  "flow": {"value": 0.1, "note": "24h taker delta +120 BTC"}}
+    p["levels"] = [{"label": "gamma flip", "price": 80_500.0, "side": "above", "p_touch": 0.4}]
+    p["backtest"] = {"days": 26, "direction_days": 26, "direction_right": 8}
+    qw.write(p, live={"days": 3, "direction_days": 3, "direction_right": 1},
+             ask=lambda s, u: seen.update(user=u) or {"data": _good_text(p)})
+    low = seen["user"].lower()
+    for w in ("funding", "taker", "delta", "gamma", "of 26", "of 3 days"):
+        assert w not in low, w
+    assert "hedging flip level $80,500" in seen["user"]
+    long = {**_good_text(p), "summary": "x" * 300}
+    assert "too long" in qw.write(p, ask=lambda s, u: {"data": long})["rejected"]
 
 
 def test_the_plan_carries_the_write_up_into_the_message_and_the_screen(tmp_path, monkeypatch):
@@ -334,7 +472,7 @@ def test_the_plan_carries_the_write_up_into_the_message_and_the_screen(tmp_path,
                                                              "scenario_a": "Up.", "scenario_b": "Fails.",
                                                              "model": "gemini-test"})
     ev = qa.run(store, _M(hourly(800, DAY0 - 800 * H)), DAY0 + 60_000)
-    assert "Game plan: A calm day, leaning up." in ev[0].headline
+    assert "Directive: A calm day, leaning up." in ev[0].headline
     plan = store.qf_plans(DAY0)[0]["payload"]
     assert plan["writeup"]["model"] == "gemini-test"
     shown = panels.qf_gameplan_html(plan, {"days": 0})
@@ -342,3 +480,26 @@ def test_the_plan_carries_the_write_up_into_the_message_and_the_screen(tmp_path,
     plan["writeup"] = {"rejected": "price $1 is not in the plan"}
     assert "was not used (price $1 is not in the plan)" in panels.qf_gameplan_html(plan, {"days": 0})
     store.close()
+
+
+def test_an_active_4h_trap_forces_the_day_neutral_and_the_wire_says_so(tmp_path):
+    """Pre-flight (Hammad, 28 Oct): an engineered trap active on the 4h overrides the lean; the top line of
+    the plan and the bot's message carry the Trap Agent's word for it."""
+    from ui import panels
+    store = Store(tmp_path / "s.sqlite")
+    hist = hourly(800, DAY0 - 800 * H, drift=0.0008, seed=4)        # a strong up-drift: a bullish lean
+    assert _plan(hist, DAY0 + 60_000)["regime"] == "bullish", "the fixture leans without the trap"
+    store.put_trap("live", "bull_trap", "4h", 80_500.0, 80_900.0, 79_000.0, DAY0 - H, 0.8, "ENGINEERED_TRAP", ["x"])
+    ev = qa.run(store, _M(hist), DAY0 + 60_000)
+    plan = store.qf_plans(DAY0)[0]["payload"]
+    assert plan["regime"] == "neutral" and plan["preflight_override"] == "trap"
+    assert plan["preflight"]["trap"]["label"] == "Trap Agent: BULL TRAP active (4H)"
+    assert "NEUTRAL / RANGE-BOUND" in ev[0].headline and "| Trap Agent: BULL TRAP active (4H)" in ev[0].headline
+    wire = panels.qf_wire_html(plan, "on track")
+    assert "Trap Agent: BULL TRAP active (4H)" in wire
+    assert "overridden to NEUTRAL" in panels.qf_gameplan_html(plan, {"days": 0})
+    store.close()
+    clear = Store(tmp_path / "c.sqlite")
+    ev = qa.run(clear, _M(hist), DAY0 + 60_000)
+    assert "| Trap Agent: Clear" in ev[0].headline and clear.qf_plans(DAY0)[0]["payload"]["regime"] == "bullish"
+    clear.close()

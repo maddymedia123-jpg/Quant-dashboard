@@ -1279,9 +1279,9 @@ if screen == "qf":
     from ui.charts import render_qf_chart
     panels.render(panels.engine_hero_html(
         9, "Quant Forecast",
-        "One plan for the day (00:00 UTC / 05:00 PKT, 24 hours): a direction or a range, its odds and track "
-        "record, the quiet and busy windows, the predicted high and low, and the line that cancels it. Every "
-        "number is computed; the plan is checked every minute and replaced if price breaks it."))
+        "The day's plan at 00:00 UTC (05:00 PKT): direction or range, the one-line directive, the low and high "
+        "with their times, the hard invalidation on a 4-hour close. Set your levels and walk away; the bot "
+        "watches every minute and re-maps the plan if a 4-hour candle breaks it."))
     _qf_day = qf_alerts.qf.day_start(now_ms)
     _qf_today = store.qf_plans(_qf_day)
     _qf_active = next((r for r in reversed(_qf_today) if r["status"] == "active"), None)
@@ -1292,29 +1292,38 @@ if screen == "qf":
         _qf_plan = _qf_active["payload"]
         _h1 = m.spot.frames.get("1h")
         _flow = m.taker_flow.frames if getattr(m.taker_flow, "available", False) else {}
+        _qf_problem = None
         try:
             _qf_audit = qf_alerts.audit(_qf_plan, m.spot.frames, _flow.get("15m"), now_ms)
         except Exception as e:  # noqa: BLE001 - the plan still shows without its audit
             _qf_audit = {"status": "on track", "cautions": [], "holds": []}
-            st.caption(f"Audit unavailable this refresh: {e}")
-        _qf_sent = store.market_alerts_keyed(f"qf:{_qf_day}:", limit=1)
-        _qf_live = qf_alerts.live_record(store)
-        panels.render(panels.qf_status_html(_qf_audit["status"], _qf_sent[0]["headline"] if _qf_sent else None,
-                                            _qf_today))
-        panels.render(panels.qf_gameplan_html(_qf_plan, _qf_live))
-        if _h1 is not None and _qf_plan.get("hours"):
+            _qf_problem = f"Audit unavailable this refresh: {e}"
+        # Part A: the layman wire plan
+        panels.render(panels.qf_wire_html(_qf_plan, _qf_audit["status"]))
+        # Part B: the pure-forecasting chart (always the dark terminal)
+        if _h1 is not None:
             with st.container(key="ti_chart_qf"):
-                render_qf_chart(_qf_plan, _h1, dark, height=460, signal=signal, now_ms=now_ms)
-        _c1, _c2 = st.columns(2, gap="large")
-        with _c1:
-            panels.render(panels.qf_levels_html(_qf_plan))
-        with _c2:
-            _qf_hist = [{**r, "day": r["day_ms"]} for r in store.qf_plans(limit=30)]
-            _bt = next((r["payload"].get("backtest") for r in _qf_today if r["payload"].get("backtest")), None)
-            panels.render(panels.qf_record_html(_bt, _qf_live, _qf_hist))
-        st.caption("Alerts for this plan (Discord): daily plan at 00:00 UTC (05:00 PKT), CAUTION, MODEL HELD, "
-                   "INVALIDATED with the new plan, SYSTEM LOCKED. The AI writes the game plan's words once per "
-                   "plan; it never sets a number.")
+                render_qf_chart(_qf_plan, _h1, dark, height=520, signal=signal, now_ms=now_ms)
+        # Part C: the raw data and audit drawer, closed by default
+        with st.expander("Raw data & audit (odds, record, levels, the lean, the bot's messages)", expanded=False):
+            if _qf_problem:
+                st.caption(_qf_problem)
+            _qf_live = qf_alerts.live_record(store)
+            _qf_sent = store.market_alerts_keyed(f"qf:{_qf_day}:", limit=6)
+            panels.render(panels.qf_gameplan_html(_qf_plan, _qf_live))
+            _c1, _c2 = st.columns(2, gap="large")
+            with _c1:
+                panels.render(panels.qf_levels_html(_qf_plan))
+            with _c2:
+                _qf_hist = [{**r, "day": r["day_ms"]} for r in store.qf_plans(limit=30)]
+                _bt = next((r["payload"].get("backtest") for r in _qf_today if r["payload"].get("backtest")), None)
+                panels.render(panels.qf_record_html(_bt, _qf_live, _qf_hist))
+            panels.render(panels.qf_status_html(_qf_audit["status"], [r["headline"] for r in _qf_sent], _qf_today))
+            st.caption("Alerts (Discord): the daily plan at 00:00 UTC (05:00 PKT); CAUTION when a 15-minute candle "
+                       "moves 2x its usual size against the plan or buyer/seller flow flips against it; MODEL HELD "
+                       "when half of a shock is taken back within the hour; INVALIDATED strictly on a 4-hour close, "
+                       "with the new plan; SYSTEM LOCKED after the third failed plan. The AI writes the words once "
+                       "per plan and never sets a number.")
 
 # ---------- phone footer: the feed list, which lives in the folded-away sidebar on a desktop ----------
 with st.container(key="ti_mobile_foot"):

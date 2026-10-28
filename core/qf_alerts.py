@@ -8,13 +8,17 @@ The tiers, as agreed with Hammad (28 Oct):
   one caution an hour.
 * MODEL HELD (tier 2B) - after a shock like that, price takes back at least half of it within
   HOLD_WINDOW_MS without breaking invalidation.
-* INVALIDATED (tier 2A) - a 4-hour candle closes beyond the invalidation level, or an hourly candle
-  closes more than one 1h ATR beyond it (core.quant_forecast.invalidation_hit). The plan is replaced by a
-  new one for the rest of the day; the LOCK_AFTER_INVALIDATIONS-th failure locks the day instead.
+* INVALIDATED (tier 2A) - strictly a 4-hour candle close beyond the invalidation level
+  (core.quant_forecast.invalidation_hit). "Plan invalidated. Re-mapping intraday forecast." and the plan is
+  replaced by a new one for the rest of the day; the LOCK_AFTER_INVALIDATIONS-th failure locks the day into
+  range mode instead (two re-forecasts a day).
 
 Detection is read from the candles each pass, so it holds no state of its own; what is new is decided by
-the alert ledger's unique keys, and who replaces a plan by the one-statement update in the store. An
-alert older than SEND_WITHIN_MS (the worker was down) is skipped: an hour-old caution is not news."""
+the alert ledger's unique keys, and who replaces a plan by the one-statement update in the store. A plan's
+row is written before its AI write-up is asked for, so a day can never be left with no active plan by a slow
+or failing model, and a pass that finds the day's last plan closed with nothing after it (a crash between
+the two steps) builds the replacement then. An alert older than SEND_WITHIN_MS (the worker was down) is
+skipped: an hour-old caution is not news."""
 from __future__ import annotations
 
 import json
@@ -23,6 +27,7 @@ from datetime import datetime, timezone
 
 import pandas as pd
 
+from core import qf_preflight
 from core import quant_forecast as qf
 from core.alerts import Event
 
@@ -66,10 +71,12 @@ def _against(regime: str) -> int:
 
 
 def _sigma_15m(plan: dict, t_ms: int) -> float | None:
-    """The plan's expected 15-minute move (as a log return) for the hour holding t_ms."""
+    """The plan's expected 15-minute move (as a log return) for the hour holding t_ms: half the whole
+    hour's sigma (a quarter of its variance). The whole hour's, not the first hour's remaining-minutes
+    sigma, which is scaled down for the path and would make an ordinary candle look like a shock."""
     for h in plan.get("hours") or []:
         if t_ms <= h["t_ms"]:
-            return h["sigma_pct"] / 100 / 2          # a quarter of the hour's variance
+            return h.get("sigma_full_pct", h["sigma_pct"]) / 100 / 2
     return None
 
 
@@ -175,13 +182,6 @@ def _inv_text(plan: dict) -> str:
     return " or ".join(parts) if parts else "none"
 
 
-def _odds_text(plan: dict, live: dict | None = None) -> str:
-    p = plan.get("p_scenario_a")
-    out = "" if p is None else f"{p:.0%} by the model"
-    out += "".join(f" · {t}" for t in record_words(plan, live))
-    return out
-
-
 def record_words(plan: dict, live: dict | None) -> list[str]:
     """The record that matters for this plan's kind: direction calls for a directional plan, range days
     for a neutral one, from the backtest and the live days."""
@@ -193,24 +193,51 @@ def record_words(plan: dict, live: dict | None) -> list[str]:
     return out
 
 
-def plan_headline(plan: dict, live: dict | None = None, title: str = "QUANT FORECAST") -> str:
-    """The day's plan, as the bot sends it: regime and odds, the plan in a line, the windows, the levels."""
-    d = datetime.fromtimestamp(plan["day_ms"] / 1000, timezone.utc)
-    lines = [f"📊 {title} · {d:%a %d %b} · BTC {_money(plan['origin'])}",
-             f"Regime: {REGIME_WORD[plan['regime']]}" + (f" ({_odds_text(plan, live)})" if plan.get("p_scenario_a") else "")]
-    if plan["regime"] == "locked":
-        lines.append(plan["scenario_a"] + f" Until {at_label(plan['end_ms'])}.")
-        return "\n".join(lines)
-    w = plan.get("writeup") or {}
-    lines.append(f"Game plan: {w['summary']}" if w.get("summary") else f"Plan: {plan['scenario_a']}")
-    for phase, word in (("chop", "Quiet / chop"), ("expansion", "Expansion")):
+def trap_label(plan: dict) -> str | None:
+    """'Trap Agent: Clear' or 'Trap Agent: BULL TRAP active (4H)', from the pre-flight the plan was built with."""
+    return ((plan.get("preflight") or {}).get("trap") or {}).get("label")
+
+
+def regime_line(plan: dict, trap: str | None = None) -> str:
+    """'BULLISH EXPANSION (62%) | Trap Agent: Clear' - the top line of the wire plan. No record, no decimals."""
+    p = plan.get("p_scenario_a")
+    out = REGIME_WORD[plan["regime"]] + ("" if p is None else f" ({p:.0%})")
+    trap = trap or trap_label(plan)
+    return out + (f" | {trap}" if trap else "")
+
+
+def windows_line(plan: dict) -> str:
+    """'Chop 00:00–06:00 UTC (05:00–11:00 PKT) · Expansion 13:00–16:00 UTC (…)' or ''."""
+    parts = []
+    for phase, word in (("chop", "Chop"), ("expansion", "Expansion")):
         ws = [window_label(w["start_ms"], w["end_ms"]) for w in plan.get("windows") or [] if w["phase"] == phase]
         if ws:
-            lines.append(f"{word}: " + ", ".join(ws[:3]))
-    ph, pl = plan["projected_high"], plan["projected_low"]
-    lines.append(f"High ≈ {_money(ph['price'])} around {at_label(ph['t_ms'])} · "
-                 f"Low ≈ {_money(pl['price'])} around {at_label(pl['t_ms'])}")
-    lines.append(f"Invalidation (4h close): {_inv_text(plan)}")
+            parts.append(f"{word} " + ", ".join(ws[:3]))
+    return " · ".join(parts)
+
+
+def coordinates_line(plan: dict) -> str:
+    pl, ph = plan["projected_low"], plan["projected_high"]
+    return (f"Low {_money(pl['price'])} at {at_label(pl['t_ms'])} → High {_money(ph['price'])} at "
+            f"{at_label(ph['t_ms'])}")
+
+
+def plan_headline(plan: dict, live: dict | None = None, title: str = "QUANT FORECAST",
+                  trap: str | None = None) -> str:
+    """The day's plan as the bot sends it: the layman wire plan - regime, the one-sentence directive, the
+    coordinates, the windows, the hard invalidation. The record stays on the dashboard's drawer."""
+    d = datetime.fromtimestamp(plan["day_ms"] / 1000, timezone.utc)
+    lines = [f"📊 {title} · {d:%a %d %b} · BTC {_money(plan['origin'])}", f"Regime: {regime_line(plan, trap)}"]
+    if plan["regime"] == "locked":
+        lines.append(plan["scenario_a"] + f" Until {at_label(plan['end_ms'])}.")
+        if plan.get("day_range"):
+            lines.append(f"Today's range so far: {_money(plan['day_range'][0])} – {_money(plan['day_range'][1])}")
+        return "\n".join(lines)
+    lines.append(f"Directive: {qf.wire_line(plan)}")
+    lines.append(coordinates_line(plan))
+    if windows_line(plan):
+        lines.append(windows_line(plan))
+    lines.append(f"Hard invalidation (4H close): {_inv_text(plan)}")
     return "\n".join(lines)
 
 
@@ -228,12 +255,15 @@ def held_headline(plan: dict, h: dict) -> str:
 
 
 def invalidated_headline(plan: dict, hit: dict, new: dict | None) -> str:
-    head = (f"🔴 FORECAST INVALIDATED: {hit['basis']} at {_money(hit['close'])}, {hit['side']} the "
-            f"{_money(hit['level'])} line ({at_label(hit['close_ms'])}). The plan is cancelled.")
+    """Tier 2, in Hammad's words, then what replaces the plan."""
+    where = (f"{hit['basis']} at {_money(hit['close'])}, {hit['side']} the {_money(hit['level'])} line, "
+             f"{at_label(hit['close_ms'])}")
+    if new is not None and new["regime"] == "locked":
+        return (f"🔴 Plan invalidated ({where}). Max re-forecasts reached: locking into range mode.\n"
+                + plan_headline(new, title="SYSTEM LOCKED"))
+    head = f"🔴 Plan invalidated. Re-mapping intraday forecast. ({where})"
     if new is None:
-        return head
-    if new["regime"] == "locked":
-        return head + "\n" + plan_headline(new, title="SYSTEM LOCKED")
+        return head + "\nThe new forecast follows on the next pass."
     return head + "\n" + plan_headline(new, title=f"NEW FORECAST #{new['version']}")
 
 
@@ -242,19 +272,31 @@ def _key(plan: dict, *parts) -> str:
 
 
 def audit_events(plan: dict, a: dict, now_ms: int) -> list[Event]:
-    """Cautions (one an hour) and holds as alert events; stale ones are dropped, not sent late."""
-    out, hours_seen = [], set()
+    """Cautions (one an hour) and holds as alert events; stale ones are dropped, not sent late.
+
+    The hour is taken by the caution that is sent, not by a stale one that was not: the ledger's key per
+    hour still keeps a second caution in the same hour from going out. A MODEL HELD goes out only for a
+    shock whose caution went out, else it answers a message nobody got."""
+    out, hours_seen, sent_shocks = [], set(), set()
     for c in a["cautions"]:
         bucket = c["t_ms"] // HOUR_MS
-        if bucket in hours_seen:
+        if bucket in hours_seen or now_ms - c["t_ms"] > SEND_WITHIN_MS:
             continue
         hours_seen.add(bucket)
-        if now_ms - c["t_ms"] <= SEND_WITHIN_MS:
-            out.append(Event("qf_caution", _key(plan, "caution", bucket), caution_headline(plan, c), c.get("to")))
+        sent_shocks.add(c["t_ms"])
+        out.append(Event("qf_caution", _key(plan, "caution", bucket), caution_headline(plan, c), c.get("to")))
     for h in a["holds"]:
-        if now_ms - h["t_ms"] <= SEND_WITHIN_MS:
-            out.append(Event("qf_held", _key(plan, "held", h["shock_ms"]), held_headline(plan, h), h["to"]))
+        if h["shock_ms"] in sent_shocks or _shock_was_sent(a, h, now_ms):
+            if now_ms - h["t_ms"] <= SEND_WITHIN_MS:
+                out.append(Event("qf_held", _key(plan, "held", h["shock_ms"]), held_headline(plan, h), h["to"]))
     return out
+
+
+def _shock_was_sent(a: dict, h: dict, now_ms: int) -> bool:
+    """Whether the shock behind this hold was the first caution of its hour (so an earlier pass sent it)."""
+    bucket = h["shock_ms"] // HOUR_MS
+    first = next((c for c in a["cautions"] if c["t_ms"] // HOUR_MS == bucket), None)
+    return bool(first) and first["t_ms"] == h["shock_ms"]
 
 
 # ---------- one pass ----------
@@ -277,6 +319,41 @@ def _write_up(plan: dict, store) -> None:
         plan["writeup"] = w
 
 
+def _publish(store, plan: dict) -> bool:
+    """Write the plan's row, then - only as the process that won the row - ask for its write-up and keep
+    it on the row. False when another process had already written this version."""
+    pid = store.put_qf_plan(plan)
+    if not pid:
+        return False
+    _write_up(plan, store)
+    if plan.get("writeup"):
+        store.set_qf_payload(pid, plan)
+    return True
+
+
+def _replacement(store, plans: list[dict], prev: dict, hit: dict, h1, price: float, now_ms: int,
+                 flow: dict, gamma: dict | None, pre: dict) -> dict | None:
+    """The plan that follows an invalidated one: a fresh forecast, or the locked rest of the day once
+    LOCK_AFTER_INVALIDATIONS plans have failed. None when it could not be built or was built elsewhere."""
+    day, end = prev["day_ms"], prev["end_ms"]
+    failed = sum(1 for r in plans if r["status"] == "invalidated")
+    version = max(r["version"] for r in plans) + 1
+    if failed >= qf.LOCK_AFTER_INVALIDATIONS:
+        h_since = h1[h1["timestamp"].astype("int64") >= day]
+        new = qf.locked_plan(now_ms, end, float(price), version,
+                             float(h_since["high"].max()) if len(h_since) else None,
+                             float(h_since["low"].min()) if len(h_since) else None)
+    else:
+        new = qf.build_plan(h1, now_ms, end, float(price), version=version, flow=flow.get("1h"), gamma=gamma,
+                            **qf_preflight.plan_kwargs(pre))
+        if not new.get("available"):
+            return None
+        new["backtest"] = prev.get("backtest")
+        new["preflight"] = pre
+    new["replaces"] = {"version": prev["version"], "invalidation": hit}
+    return new if _publish(store, new) else None
+
+
 def run(store, m, now_ms: int, gamma: dict | None = None) -> list[Event]:
     """Make today's plan if there is none, replace it when invalidated, audit it, score what has ended.
     Returns the alert events this pass found; the caller logs them in the ledger, which keeps them once."""
@@ -291,23 +368,38 @@ def run(store, m, now_ms: int, gamma: dict | None = None) -> list[Event]:
     events: list[Event] = []
 
     for row in store.qf_due(now_ms):
-        outcome = qf.score_plan(row["payload"], h1)
+        outcome = qf.score_plan(row["payload"], h1, row.get("closed_ms"))
         if outcome is not None:
             store.score_qf_plan(row["id"], outcome, now_ms)
 
     plans = store.qf_plans(day)
+    pre = qf_preflight.preflight(store, m, now_ms, end)     # Trap Head and Economic Data, before any plan is built
     if not plans:
-        plan = qf.build_plan(h1, now_ms, end, float(price), version=0, flow=flow.get("1h"), gamma=gamma)
+        plan = qf.build_plan(h1, now_ms, end, float(price), version=0, flow=flow.get("1h"), gamma=gamma,
+                             **qf_preflight.plan_kwargs(pre))
         if not plan.get("available"):
             return events
         plan["backtest"] = qf.backtest(h1, now_ms)
-        _write_up(plan, store)
-        if store.put_qf_plan(plan):
-            events.append(Event("qf_plan", _key(plan, "plan"), plan_headline(plan, live_record(store)), plan["origin"]))
+        plan["preflight"] = pre
+        if _publish(store, plan):
+            events.append(Event("qf_plan", _key(plan, "plan"), plan_headline(plan), plan["origin"]))
         plans = store.qf_plans(day)
 
     active = next((r for r in reversed(plans) if r["status"] == "active"), None)
     if active is None:
+        # the day's last plan was closed and nothing followed it (a crash between the two steps, or the
+        # replacement could not be built then): build it now, and send the invalidation with it
+        last = plans[-1] if plans else None
+        if last and last["status"] == "invalidated" and now_ms < end:
+            try:
+                hit = json.loads(last.get("closed_reason") or "")
+            except ValueError:
+                hit = {"basis": "4-hour close", "close": last["payload"]["origin"], "side": "beyond",
+                       "level": 0.0, "close_ms": last.get("closed_ms") or now_ms}
+            new = _replacement(store, plans, last["payload"], hit, h1, float(price), now_ms, flow, gamma, pre)
+            if new is not None:
+                events.append(Event("qf_invalid", _key(last["payload"], "invalidated"),
+                                    invalidated_headline(last["payload"], hit, new), hit.get("close")))
         return events
     plan = active["payload"]
     a = audit(plan, frames, flow.get("15m"), now_ms)
@@ -316,23 +408,7 @@ def run(store, m, now_ms: int, gamma: dict | None = None) -> list[Event]:
         return events + audit_events(plan, a, now_ms)
     if not store.close_qf_plan(active["id"], "invalidated", json.dumps(hit), now_ms):
         return events                               # another process replaced it first, and sent the alert
-    failed = sum(1 for r in plans if r["status"] == "invalidated") + 1
-    version = max(r["version"] for r in plans) + 1
-    new = None
-    if failed >= qf.LOCK_AFTER_INVALIDATIONS:
-        h_since = h1[h1["timestamp"].astype("int64") >= day]
-        new = qf.locked_plan(now_ms, end, float(price), version,
-                             float(h_since["high"].max()) if len(h_since) else None,
-                             float(h_since["low"].min()) if len(h_since) else None)
-    else:
-        built = qf.build_plan(h1, now_ms, end, float(price), version=version, flow=flow.get("1h"), gamma=gamma)
-        if built.get("available"):
-            built["backtest"] = plan.get("backtest")
-            built["replaces"] = {"version": plan["version"], "invalidation": hit}
-            _write_up(built, store)
-            new = built
-    if new is not None:
-        new["replaces"] = {"version": plan["version"], "invalidation": hit}
-        store.put_qf_plan(new)
+    plans = store.qf_plans(day)
+    new = _replacement(store, plans, plan, hit, h1, float(price), now_ms, flow, gamma, pre)
     events.append(Event("qf_invalid", _key(plan, "invalidated"), invalidated_headline(plan, hit, new), hit["close"]))
     return events

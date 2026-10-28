@@ -1,9 +1,10 @@
 """Step 5: the AI writes the Quant Forecast's game plan in plain English, from the plan's numbers.
 
-The model never makes a number. It is handed the computed plan - direction, odds and record, windows,
-high and low, invalidation, the levels - and asked for three pieces of text: a short game plan and one
-line each for Scenario A and B. The direction is not its to choose: the regime comes from the math, and
-the plan's scoring is of that regime.
+The model never makes a number. It is handed the computed plan - direction, odds, windows, high and low,
+invalidation, the levels - and asked for three pieces of text: the one-sentence directive the top panel
+and the bot carry (Hammad's "core plan": one direct sentence), and one line each for Scenario A and B. The
+direction is not its to choose: the regime comes from the math, and the plan's scoring is of that regime.
+It is shown no jargon it could echo (the lean's reads stay in the drawer) and no track record.
 
 Every reply is checked before it is used (`check`): each price must be one of the plan's own (to within
 PRICE_TOL), each clock time one of the plan's times in UTC or PKT, each percentage one of its odds; it must
@@ -11,7 +12,8 @@ not name the opposite direction, and it must not use trader jargon (the plan_ale
 fails any check, or a model that is down or slow, leaves the code-written text in place: a plan is never
 late and never carries a number the math did not produce.
 
-Calls: one per plan, so at most LOCK_AFTER_INVALIDATIONS + 1 a day - well inside Gemini's free tier.
+Calls: one per plan, so at most LOCK_AFTER_INVALIDATIONS a day - well inside Gemini's free tier. The plan's
+row is written before the call, so only the process that won the row makes it.
 Never called on offline fixture data."""
 from __future__ import annotations
 
@@ -29,31 +31,34 @@ log = logging.getLogger(__name__)
 TIMEOUT_S = 20.0                 # per request
 TOTAL_S = 45.0                   # the whole write-up, retries and spare models included: the worker's alerts wait on it
 PRICE_TOL = 0.0002               # 0.02%: about $16 at $80,000 - rounding, not a different level
-MAX_SUMMARY_CHARS = 900
+MAX_SUMMARY_CHARS = 220          # one desk-wire sentence
 MAX_LINE_CHARS = 260
+LEVEL_WORDS = {"gamma flip": "hedging flip level", "call wall": "upper hedging wall", "put wall": "lower hedging wall",
+               "POC": "busiest price of the last 3 days", "value high": "top of the last 3 days' value",
+               "value low": "bottom of the last 3 days' value"}
 
-SYSTEM = """You write the daily BTC game plan for a trading dashboard whose readers are not traders.
-You are given a plan that has already been computed. Your job is only to put it in clear, calm, plain English.
+SYSTEM = """You write the daily BTC desk wire for a trading dashboard whose readers are not traders.
+You are given a plan that has already been computed. Your job is only to put it in clear, punchy, plain English.
 
 Rules - a reply that breaks any of them is thrown away:
 - Use ONLY the prices, times and percentages given. Write prices exactly as given (for example $80,954) and
   times exactly as given, with both clocks (for example 14:00 UTC (19:00 PKT)). Never round, estimate or add
-  a number of your own.
+  a number of your own. The directive needs no numbers at all.
 - Keep the direction you are given. Do not hedge it into its opposite, and do not invent a new forecast.
 - No trader jargon. Never use these words: gamma, CVD, RSI, Fibonacci, delta, option, VWAP, taker, EMA,
   liquidity, sweep, VAH, VAL, order flow, funding, open interest, squeeze. Say what they mean instead
   ("buyers were paying up", "more traders are piling in").
-- Be honest about the odds: say the percentage and the track record you are given; never call it certain.
+- Never call it certain.
 
 Return JSON only:
-{"summary": "3 to 5 sentences: what to expect today, when it is quiet and when it moves, the likely high and low, and the line that cancels the plan",
+{"summary": "ONE direct sentence, under 160 characters, saying what price will do today - for example 'Quiet chop early, the morning dip holds support, then an afternoon run toward the high.'",
  "scenario_a": "one sentence: the main path",
  "scenario_b": "one sentence: what happens if it fails"}"""
 
 
 def facts(plan: dict, live: dict | None, at) -> dict:
     """What the model is shown: the plan's numbers, already formatted the way they must be written."""
-    from core.qf_alerts import REGIME_WORD, record_words, window_label
+    from core.qf_alerts import REGIME_WORD, window_label
     money = lambda x: f"${x:,.0f}"  # noqa: E731
     out = {
         "direction": REGIME_WORD[plan["regime"]],
@@ -61,7 +66,6 @@ def facts(plan: dict, live: dict | None, at) -> dict:
         "plan_ends": at(plan["end_ms"]),
         "odds_main_path": f"{plan['p_scenario_a']:.0%}",
         "odds_alternative": f"{1 - plan['p_scenario_a']:.0%}",
-        "track_record": record_words(plan, live) or ["no finished days yet"],
         "likely_high": f"{money(plan['projected_high']['price'])} around {at(plan['projected_high']['t_ms'])}",
         "likely_low": f"{money(plan['projected_low']['price'])} around {at(plan['projected_low']['t_ms'])}",
         "cancelled_if": [f"a 4-hour candle closes {side} {money(v)}" for side, v in plan["invalidation"].items()],
@@ -69,10 +73,9 @@ def facts(plan: dict, live: dict | None, at) -> dict:
                           for w in plan.get("windows") or [] if w["phase"] == "chop"],
         "busy_windows": [window_label(w["start_ms"], w["end_ms"]) for w in plan.get("windows") or []
                          if w["phase"] == "expansion"],
-        "levels": [f"{lv['label']} {money(lv['price'])}: {lv['p_touch']:.0%} chance price trades there today"
-                   for lv in plan.get("levels") or [] if lv["p_touch"] >= 0.05][:6],
-        "why": [v["note"] for v in (plan.get("parts") or {}).values()],
-        "draft_written_by_code": {"summary": qf.directive(plan, at), "scenario_a": plan["scenario_a"],
+        "levels": [f"{LEVEL_WORDS.get(lv['label'], lv['label'])} {money(lv['price'])}: {lv['p_touch']:.0%} chance "
+                   "price trades there today" for lv in plan.get("levels") or [] if lv["p_touch"] >= 0.05][:6],
+        "draft_written_by_code": {"summary": qf.wire_line(plan), "scenario_a": plan["scenario_a"],
                                   "scenario_b": plan["scenario_b"]},
     }
     if plan.get("replaces"):
@@ -96,7 +99,7 @@ def _allowed(plan: dict, live: dict | None) -> tuple[list[float], set[str], set[
     return prices, clocks, pcts
 
 
-PRICE_RE = re.compile(r"\$\s?(\d[\d,]*(?:\.\d+)?)\s?([kK])?")
+PRICE_RE = re.compile(r"\$\s?(\d[\d,]*(?:\.\d+)?)(?:\s?([kK])(?![A-Za-z]))?")   # "$80.8k" yes; "$80,000 keeps" no
 CLOCK_RE = re.compile(r"\b([01]?\d|2[0-3]):([0-5]\d)\b")
 PCT_RE = re.compile(r"(\d{1,3})(?:\.\d+)?\s?%")
 OPPOSITE = {"bullish": ("bearish", "leans down"), "bearish": ("bullish", "leans up"),

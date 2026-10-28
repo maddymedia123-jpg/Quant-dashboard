@@ -102,9 +102,8 @@ def market_alerts(store, m, analyses: dict, now_ms: int, secrets: dict, may_send
     try:
         for e in market_events(store, m, analyses, now_ms):
             store.add_market_alert(now_ms, e.kind, e.dedup_key, e.headline, e.price)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:  # noqa: BLE001 - the other detectors and the send step still run
         r.problems.append(f"market alerts: {type(e).__name__}: {e}")
-        return r
     try:
         # the Quant Forecast's day plan: made, audited, replaced and scored here, its alerts logged with the rest
         from core import qf_alerts

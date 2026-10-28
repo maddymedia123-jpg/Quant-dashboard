@@ -46,8 +46,8 @@ HOUR_MS = 3_600_000
 DAY_MS = 24 * HOUR_MS
 FOUR_H_MS = 4 * HOUR_MS
 DAY_START_HOUR_UTC = 0
-LOCK_AFTER_INVALIDATIONS = 2     # the second failed plan of the day locks the rest of it
-EMERGENCY_ATR = 1.0              # an hourly close this many 1h ATRs past invalidation counts without the 4h close
+LOCK_AFTER_INVALIDATIONS = 3     # two re-forecasts a day; the third failed plan locks the rest of it (Hammad, 28 Oct)
+MISSING_HOURS_TOLERATED = 2      # a day is still scored with this many hourly candles missing from the feed
 
 CHOP_X, EXPAND_X = 0.85, 1.15
 NEUTRAL_SCORE = 0.20             # a lean weaker than this is no lean
@@ -64,6 +64,7 @@ OI_SURGE_Z = 2.0                 # an hourly open interest rise two standard dev
 HIGH_LOW_TOL = 0.25              # a projected high or low is right within a quarter of the projected range
 TIME_TOL_MS = 2 * HOUR_MS
 BACKTEST_DAYS = 60
+MACRO_SIGMA_X = 1.5              # an hour inside a high-impact release window: a chop box, but a loud one
 
 WEIGHTS = {"momentum": 0.35, "value": 0.20, "flow": 0.25, "open_interest": 0.10, "funding": 0.10}
 PRICE_ONLY = ("momentum", "value")
@@ -92,7 +93,7 @@ def lean_parts(closed: pd.DataFrame, price: float, flow: pd.DataFrame | None, no
     out: dict[str, dict] = {}
     if len(c) >= 25 and len(r) >= 168:
         sd = float(np.std(r[-168:], ddof=1))
-        r24 = math.log(price / c[-24])
+        r24 = math.log(price / c[-25])       # the close 24 full hours before the last closed hour
         z = r24 / (sd * math.sqrt(24)) if sd > 0 else 0.0
         h = hurst(c[-201:])
         carry = _clip(0.5 + ((h or 0.5) - 0.5) * 5)
@@ -119,8 +120,8 @@ def lean_parts(closed: pd.DataFrame, price: float, flow: pd.DataFrame | None, no
         oi = f["oi_btc"].astype(float).dropna() if "oi_btc" in f else pd.Series(dtype=float)
         if len(oi) >= 12 and float(oi.iloc[0]) > 0 and "momentum" in out:
             oi_pct = (float(oi.iloc[-1]) / float(oi.iloc[0]) - 1) * 100
-            move = math.log(price / c[-24]) if len(c) >= 24 else 0.0
-            out["open_interest"] = {"value": round(math.copysign(1, move) * math.tanh(oi_pct / 3), 3),
+            move = math.log(price / c[-25]) if len(c) >= 25 else 0.0
+            out["open_interest"] = {"value": round(float(np.sign(move)) * math.tanh(oi_pct / 3), 3),
                                     "note": f"open interest {oi_pct:+.1f}% over 24h "
                                             f"{'with' if (oi_pct > 0) else 'against'} the move"}
         fr = f["funding_rate"].astype(float).dropna() if "funding_rate" in f else pd.Series(dtype=float)
@@ -183,9 +184,17 @@ def _windows(times: list[int], phases: list[str], sigmas: list[float], path: lis
 
 def build_plan(h1: pd.DataFrame, now_ms: int, end_ms: int, price: float, *, version: int = 0,
                flow: pd.DataFrame | None = None, gamma: dict | None = None, price_only: bool = False,
-               paths: int = PATHS) -> dict:
+               paths: int = PATHS, force_neutral: bool = False, forced_windows: list | None = None) -> dict:
     """The plan from now to end_ms, as a JSON-safe dict. {"available": False, "reason": ...} without
-    enough history."""
+    enough history.
+
+    The pre-flight (core.qf_preflight) can override two things. `force_neutral` (an engineered trap is
+    active on the 4h) keeps the lean's parts for the record but scores the day 0.0: the regime is neutral,
+    there is no drift, and invalidation has both sides. `forced_windows` ([(start_ms, end_ms, title)], a
+    high-impact release inside the day) marks the hours they touch as chop, so no drift is carried through
+    them and the chart draws one grey box with the plan's own chop hours; their sigma is scaled by
+    MACRO_SIGMA_X, because a print is a chop box in direction only - the range it trades is wider, not
+    narrower, than the hour's usual, and the band and invalidation should say so."""
     closed = closed_hours(h1, now_ms)
     need = garch.FIT_HOURS + 50
     if len(closed) < need or not price or end_ms <= now_ms:
@@ -202,12 +211,26 @@ def build_plan(h1: pd.DataFrame, now_ms: int, end_ms: int, price: float, *, vers
     n = max(1, math.ceil((end_ms - hour0) / HOUR_MS))
     times = [min(hour0 + (k + 1) * HOUR_MS, end_ms) for k in range(n)]
     sigmas = garch.hour_sigmas(fit, profile, hour0, n)
+    full_sigmas = list(sigmas)                                               # whole hours, for the 15m caution test
     sigmas[0] *= math.sqrt(max((times[0] - now_ms) / HOUR_MS, 1 / 60))     # what is left of this hour
     mults = [profile[int((hour0 + k * HOUR_MS) // HOUR_MS % 24)] for k in range(n)]
     phases = [_phase(x) for x in mults]
+    macro_windows = []
+    for ws, we, title in forced_windows or []:
+        ws, we = max(int(ws), int(now_ms)), min(int(we), int(end_ms))
+        if we <= ws:
+            continue
+        macro_windows.append({"title": str(title), "start_ms": ws, "end_ms": we})
+        for k in range(n):
+            begin = now_ms if k == 0 else times[k - 1]
+            if begin < we and times[k] > ws and phases[k] != "macro":
+                phases[k] = "macro"                     # marked once, scaled once, renamed below
+                sigmas[k] *= MACRO_SIGMA_X
+                full_sigmas[k] *= MACRO_SIGMA_X         # the caution test is as wide as the hour it judges
+    phases = ["chop" if ph == "macro" else ph for ph in phases]
 
     parts = lean_parts(closed, price, flow, now_ms, price_only)
-    score = lean_score(parts)
+    score = 0.0 if force_neutral else lean_score(parts)
     compressed = fit.compression < COMPRESSION_X
     neutral = abs(score) < NEUTRAL_SCORE or (compressed and abs(score) < COMPRESSED_SCORE)
     regime = "neutral" if neutral else "bullish" if score > 0 else "bearish"
@@ -276,8 +299,9 @@ def build_plan(h1: pd.DataFrame, now_ms: int, end_ms: int, price: float, *, vers
         "score": round(score, 3), "parts": parts, "price_only": price_only,
         "p_scenario_a": round(p_a, 3), "p_up": round(p_up, 3),
         "hours": [{"t_ms": int(t), "phase": ph, "mult": round(mu_, 2), "sigma_pct": round(s * 100, 3),
+                   "sigma_full_pct": round(fs * 100, 3),
                    "median": p, "band_low": round(float(lo), 2), "band_high": round(float(hi), 2)}
-                  for t, ph, mu_, s, p, lo, hi in zip(times, phases, mults, sigmas, path, band_lo, band_hi)],
+                  for t, ph, mu_, s, fs, p, lo, hi in zip(times, phases, mults, sigmas, full_sigmas, path, band_lo, band_hi)],
         "windows": _windows(times, phases, sigmas, path, now_ms, price),
         "projected_high": {"price": round(float(np.median(highs)), 2), "t_ms": hi_t},
         "projected_low": {"price": round(float(np.median(lows)), 2), "t_ms": lo_t},
@@ -289,6 +313,10 @@ def build_plan(h1: pd.DataFrame, now_ms: int, end_ms: int, price: float, *, vers
         "garch": {"alpha": fit.alpha, "beta": fit.beta, "compression": round(fit.compression, 3),
                   "compressed": compressed, "fit_hours": fit.n},
     }
+    if force_neutral:
+        plan["preflight_override"] = "trap"
+    if macro_windows:
+        plan["macro_windows"] = macro_windows
     plan["scenario_a"], plan["scenario_b"] = scenarios(plan)
     return plan
 
@@ -301,8 +329,25 @@ def locked_plan(now_ms: int, end_ms: int, price: float, version: int, high: floa
             "parts": {}, "p_scenario_a": None, "hours": [], "windows": [], "levels": [],
             "liquidation_zones": [], "invalidation": {},
             "day_range": None if high is None or low is None else [round(low, 2), round(high, 2)],
-            "scenario_a": "Stand aside. Two forecasts failed today: the market is chopping both ways.",
+            "scenario_a": f"Stand aside. {_COUNT_WORD.get(LOCK_AFTER_INVALIDATIONS, LOCK_AFTER_INVALIDATIONS)} "
+                          "plans failed today: the market is chopping both ways.",
             "scenario_b": ""}
+
+
+_COUNT_WORD = {2: "Two", 3: "Three", 4: "Four"}
+
+
+def wire_line(plan: dict) -> str:
+    """The one-sentence directive for the top panel and the bot: the AI's checked sentence when there is
+    one, else the code's Scenario A without its 'Higher:' / 'Lower:' / 'Range:' tag."""
+    w = plan.get("writeup") or {}
+    if w.get("summary"):
+        return w["summary"]
+    a = plan.get("scenario_a") or ""
+    if plan.get("regime") == "locked" or ": " not in a:
+        return a
+    rest = a.split(": ", 1)[1]
+    return rest[:1].upper() + rest[1:]
 
 
 def _money(x) -> str:
@@ -347,58 +392,66 @@ def directive(plan: dict, at) -> str:
                    f"{_money(inv['below'])}.")
     else:
         side, level = next(iter(inv.items()))
-        out.append(f"The plan is wrong if a 4-hour candle closes {side} {_money(level)}, or an hourly candle closes "
-                   f"well {side} it.")
+        out.append(f"The plan is wrong if a 4-hour candle closes {side} {_money(level)}.")
     return " ".join(out)
 
 
 # ---------- invalidation, read from the candles ----------
 
 def invalidation_hit(plan: dict, h1: pd.DataFrame, now_ms: int) -> dict | None:
-    """The first close beyond the plan's invalidation since it was made: a 4h candle close, or an hourly
-    close more than EMERGENCY_ATR 1h ATRs beyond it. None while it holds."""
+    """The first 4-hour candle close beyond the plan's invalidation since it was made; None while it holds.
+
+    Strictly the 4h close (Hammad, 28 Oct): an hourly close beyond the line, however far, is a wick on the
+    4h candle until that candle closes. The CAUTION tier covers the hours in between."""
     inv = plan.get("invalidation") or {}
     if not inv:
         return None
     rows = h1[(h1["timestamp"].astype("int64") >= plan["created_ms"] - plan["created_ms"] % HOUR_MS)
               & (h1["timestamp"].astype("int64") + HOUR_MS <= min(now_ms, plan["end_ms"]))]
-    extra = EMERGENCY_ATR * float(plan.get("atr_1h") or 0.0)
     for t, close in zip(rows["timestamp"].astype("int64"), rows["close"].astype(float)):
         close_ms = int(t) + HOUR_MS
-        if close_ms <= plan["created_ms"]:
+        if close_ms <= plan["created_ms"] or close_ms % FOUR_H_MS != 0:
             continue
-        four_h = close_ms % FOUR_H_MS == 0
         for side, level in inv.items():
             beyond = close - level if side == "above" else level - close
-            if beyond > 0 and (four_h or (extra > 0 and beyond >= extra)):
+            if beyond > 0:
                 return {"side": side, "level": level, "close": round(close, 2), "close_ms": close_ms,
-                        "basis": "4-hour close" if four_h else f"hourly close more than {_money(extra)} beyond"}
+                        "basis": "4-hour close"}
     return None
 
 
 # ---------- scoring ----------
 
-def score_plan(plan: dict, h1: pd.DataFrame) -> dict | None:
-    """How the plan did over its window, from the hourly candles. None until its window has closed."""
+def score_plan(plan: dict, h1: pd.DataFrame, until_ms: int | None = None) -> dict | None:
+    """How the plan did over its window, from the hourly candles. None until the window has closed on the
+    feed; {"scored": False} when more than MISSING_HOURS_TOLERATED of its candles never arrived, so a gap
+    in the feed is recorded once instead of retried forever. `until_ms` shortens the window to when the
+    plan was replaced, so an invalidated plan is judged on the hours it was live."""
     if plan.get("regime") == "locked" or not plan.get("available"):
         return {"scored": False, "reason": "no forecast to score"}
     start = plan["created_ms"] - plan["created_ms"] % HOUR_MS
-    rows = h1[(h1["timestamp"].astype("int64") >= start) & (h1["timestamp"].astype("int64") + HOUR_MS <= plan["end_ms"])]
-    expected = math.ceil((plan["end_ms"] - start) / HOUR_MS)
-    if len(rows) < expected:
+    end = min(plan["end_ms"], until_ms) if until_ms else plan["end_ms"]
+    end = max(end, start + HOUR_MS)
+    ts = h1["timestamp"].astype("int64")
+    if ts.empty or int(ts.max()) + HOUR_MS < end:
         return None
+    rows = h1[(ts >= start) & (ts + HOUR_MS <= end)]
+    expected = math.ceil((end - start) / HOUR_MS)
+    if len(rows) < expected - MISSING_HOURS_TOLERATED or rows.empty:
+        return {"scored": False, "reason": f"{expected - len(rows)} of {expected} hourly candles missing"}
     i_hi, i_lo = int(rows["high"].astype(float).values.argmax()), int(rows["low"].astype(float).values.argmin())
     high, low = float(rows["high"].iloc[i_hi]), float(rows["low"].iloc[i_lo])
     hi_t = int(rows["timestamp"].iloc[i_hi]) + HOUR_MS // 2
     lo_t = int(rows["timestamp"].iloc[i_lo]) + HOUR_MS // 2
     close = float(rows["close"].iloc[-1])
-    inv = invalidation_hit(plan, h1, plan["end_ms"])
+    inv = invalidation_hit(plan, h1, end)
     regime = plan["regime"]
     direction = (close > plan["origin"] if regime == "bullish" else close < plan["origin"] if regime == "bearish"
                  else inv is None)
     ph, pl = plan["projected_high"], plan["projected_low"]
     tol = HIGH_LOW_TOL * (ph["price"] - pl["price"])
-    last = plan["hours"][-1] if plan.get("hours") else None
+    hours = plan.get("hours") or []
+    last = next((h for h in hours if h["t_ms"] >= end), hours[-1] if hours else None)
     return {"scored": True, "regime": regime, "high": round(high, 2), "high_ms": hi_t, "low": round(low, 2), "low_ms": lo_t,
             "close": round(close, 2), "direction_hit": bool(direction), "invalidated": inv is not None,
             "scenario_a_right": bool(direction) and inv is None,
