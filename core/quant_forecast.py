@@ -49,7 +49,10 @@ DAY_START_HOUR_UTC = 0
 LOCK_AFTER_INVALIDATIONS = 2     # one re-forecast a day; the second failed plan locks the rest of it (Hammad, message 5)
 SUSTAINED_CLOSES = 2             # ...or this many hourly closes in a row beyond the level ("sustained price action")
 CASCADE_ATR = 1.0                # ...or one hourly close this many 1h ATRs beyond it ("a violent cascade")
+FIRM_ATR = 0.5                   # ...or one hourly close this far beyond it with the hour's taker flow against the plan (message 6)
 MISSING_HOURS_TOLERATED = 2      # a day is still scored with this many hourly candles missing from the feed
+ABSORPTION_X = 1.5               # magnitude scaler: an hour's taker delta this many times the usual hour's widens the target
+SCALE_LEVELS = ("call wall", "put wall", "gamma flip", "est. liquidation zone", "air pocket")   # ...to the next of these
 
 CHOP_X, EXPAND_X = 0.85, 1.15
 NEUTRAL_SCORE = 0.20             # a lean weaker than this is no lean
@@ -394,29 +397,36 @@ def directive(plan: dict, at) -> str:
     inv = plan["invalidation"]
     if plan["regime"] == "neutral":
         out.append(f"The range breaks if price holds above {_money(inv['above'])} or below {_money(inv['below'])}: "
-                   "a 4-hour close, two hourly closes in a row, or one violent hourly close.")
+                   "a 4-hour close, two hourly closes in a row, one violent hourly close, or a firm hourly close "
+                   "with the order flow behind it.")
     else:
         side, level = next(iter(inv.items()))
         out.append(f"The plan is wrong if price holds {side} {_money(level)}: a 4-hour close, two hourly closes "
-                   "in a row, or one violent hourly close.")
+                   "in a row, one violent hourly close, or a firm hourly close with the order flow behind it.")
     return " ".join(out)
 
 
 # ---------- invalidation, read from the candles ----------
 
-def invalidation_hit(plan: dict, h1: pd.DataFrame, now_ms: int) -> dict | None:
+def invalidation_hit(plan: dict, h1: pd.DataFrame, now_ms: int, flow: pd.DataFrame | None = None) -> dict | None:
     """The first decisive breach of the plan's whole-day invalidation level since it was made; None while it
     holds. The level is the day's (fixed at session open); what counts as "decisively breached by sustained
-    price action, or a violent cascade" (Hammad, message 5) is made exact here, in three tests on closed
-    hourly candles: a 4-hour candle close beyond the level, SUSTAINED_CLOSES hourly closes in a row beyond
-    it, or one hourly close CASCADE_ATR 1h ATRs beyond it. A single hourly close just past the line is a
-    wick on the day, and the CAUTION tier covers it."""
+    price action, or a violent cascade" (Hammad, message 5) and "an hourly candle closes firmly outside
+    boundaries with opposing CVD" (message 6) is made exact here, in four tests on closed hourly candles: a
+    4-hour candle close beyond the level, SUSTAINED_CLOSES hourly closes in a row beyond it, one hourly close
+    CASCADE_ATR 1h ATRs beyond it, or one hourly close FIRM_ATR ATRs beyond it on an hour whose taker delta
+    (`flow`, the 1h taker-flow frame) went the breach's way. A single hourly close just past the line with no
+    flow behind it is a wick on the day, and the CAUTION tier covers it."""
     inv = plan.get("invalidation") or {}
     if not inv:
         return None
     rows = h1[(h1["timestamp"].astype("int64") >= plan["created_ms"] - plan["created_ms"] % HOUR_MS)
               & (h1["timestamp"].astype("int64") + HOUR_MS <= min(now_ms, plan["end_ms"]))]
-    cascade = CASCADE_ATR * float(plan.get("atr_1h") or 0.0)
+    atr_ = float(plan.get("atr_1h") or 0.0)
+    cascade, firm = CASCADE_ATR * atr_, FIRM_ATR * atr_
+    deltas: dict[int, float] = {}
+    if flow is not None and not flow.empty and "delta" in flow:
+        deltas = dict(zip(flow["timestamp"].astype("int64").tolist(), flow["delta"].astype(float).tolist()))
     run: dict[str, int] = {side: 0 for side in inv}
     for t, close in zip(rows["timestamp"].astype("int64"), rows["close"].astype(float)):
         close_ms = int(t) + HOUR_MS
@@ -425,12 +435,79 @@ def invalidation_hit(plan: dict, h1: pd.DataFrame, now_ms: int) -> dict | None:
         for side, level in inv.items():
             beyond = close - level if side == "above" else level - close
             run[side] = run[side] + 1 if beyond > 0 else 0
+            delta = deltas.get(int(t), 0.0)
+            opposing = (delta > 0) if side == "above" else (delta < 0)
             basis = ("4-hour close" if beyond > 0 and close_ms % FOUR_H_MS == 0 else
                      f"{SUSTAINED_CLOSES} hourly closes in a row" if run[side] >= SUSTAINED_CLOSES else
-                     f"hourly close more than {_money(cascade)} beyond" if cascade > 0 and beyond >= cascade else None)
+                     f"hourly close more than {_money(cascade)} beyond" if cascade > 0 and beyond >= cascade else
+                     f"hourly close {_money(beyond)} beyond with {abs(delta):,.0f} BTC of taker flow behind it"
+                     if firm > 0 and beyond >= firm and opposing else None)
             if basis:
                 return {"side": side, "level": level, "close": round(close, 2), "close_ms": close_ms, "basis": basis}
     return None
+
+
+# ---------- the dynamic magnitude scaler (Hammad, message 6) ----------
+
+def magnitude_scale(plan: dict, h1: pd.DataFrame, flow: pd.DataFrame | None, now_ms: int) -> dict | None:
+    """Widen a directional plan's target once, in place, when the market shows more force than the simulation
+    gave it (Hammad: "fixing the underestimation of breakout velocity"). Two triggers, read on the last closed
+    hourly candle since the plan was made:
+
+    * open interest surged (an hourly rise OI_SURGE_Z standard deviations above the usual) on an hour that
+      closed through the value area's far edge in the plan's direction, or
+    * that hour's taker delta ran the plan's way at more than ABSORPTION_X times the usual hour's gross delta
+      over the 24 hours before the plan (the model's absorption rate).
+
+    The target moves to the next SCALE_LEVELS level beyond it in the plan's direction (a gamma wall or a
+    liquidity cluster); with none, nothing changes. Returns the record of the change - also kept on
+    plan["magnitude"] - or None. A plan is scaled at most once a day, so the chart moves one badge once."""
+    if plan.get("regime") not in ("bullish", "bearish") or plan.get("magnitude") or h1 is None or h1.empty:
+        return None
+    up = plan["regime"] == "bullish"
+    rows = closed_hours(h1, min(now_ms, plan["end_ms"]))
+    rows = rows[rows["timestamp"].astype("int64") + HOUR_MS > plan["created_ms"]]
+    if rows.empty:
+        return None
+    last = rows.iloc[-1]
+    t, close, open_ = int(last["timestamp"]), float(last["close"]), float(last["open"])
+    trigger = None
+    va = plan.get("value_area") or {}
+    edge = va.get("high") if up else va.get("low")
+    broke = bool(edge) and ((open_ <= edge < close) if up else (open_ >= edge > close))
+    if flow is not None and not flow.empty and "delta" in flow:
+        ts = flow["timestamp"].astype("int64")
+        before = flow[ts + HOUR_MS <= plan["created_ms"]].tail(24)
+        here = flow[ts == t]
+        if len(before) >= 12 and len(here):
+            absorption = float(before["delta"].astype(float).abs().mean())
+            delta = float(here["delta"].iloc[0])
+            if absorption > 0 and (delta if up else -delta) > ABSORPTION_X * absorption:
+                trigger = f"taker flow {delta:+,.0f} BTC in the hour, {abs(delta) / absorption:.1f}x the usual hour's"
+        if broke and trigger is None and "oi_btc" in flow:
+            oi = flow[["timestamp", "oi_btc"]].dropna().reset_index(drop=True)
+            d = oi["oi_btc"].astype(float).diff()
+            sd = float(d.std()) if len(d) > 10 else 0.0
+            pos = oi.index[oi["timestamp"].astype("int64") == t]
+            if sd > 0 and len(pos) and float(d.iloc[pos[0]]) > OI_SURGE_Z * sd:
+                trigger = (f"open interest surged {float(d.iloc[pos[0]]):+,.0f} BTC on the hourly close through the "
+                           f"value area {'high' if up else 'low'} {_money(edge)}")
+    if trigger is None:
+        return None
+    key = "projected_high" if up else "projected_low"
+    old = plan[key]["price"]
+    beyond = [lv for lv in plan.get("levels") or [] if lv["label"] in SCALE_LEVELS
+              and ((lv["price"] > old) if up else (lv["price"] < old))]
+    if not beyond:
+        return None
+    nxt = min(beyond, key=lambda lv: abs(lv["price"] - old))
+    plan[key] = {**plan[key], "price": nxt["price"]}
+    plan["magnitude"] = {"scaled": True, "from": old, "to": nxt["price"], "level": nxt["label"], "trigger": trigger,
+                         "t_ms": t + HOUR_MS}
+    plan["scenario_a"], plan["scenario_b"] = scenarios(plan)
+    if (plan.get("writeup") or {}).get("summary"):
+        plan["writeup"] = {"rejected": "target widened by the magnitude scaler after the write-up; the code's text is used"}
+    return plan["magnitude"]
 
 
 # ---------- scoring ----------

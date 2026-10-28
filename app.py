@@ -1281,8 +1281,8 @@ if screen == "qf":
     panels.render(panels.engine_hero_html(
         9, "Quant Forecast",
         "The day's plan at 00:00 UTC (05:00 PKT): direction or range, the one-line directive, the low and high "
-        "with their times, the hard invalidation on a 4-hour close. Set your levels and walk away; the bot "
-        "watches every minute and re-maps the plan if a 4-hour candle breaks it."))
+        "with their times, the whole-day invalidation. Set your levels and walk away; the bot watches every "
+        "minute and lights up Scenario B if the day's structure breaks."))
     _qf_day = qf_alerts.qf.day_start(now_ms)
     _qf_today = store.qf_plans(_qf_day)
     _qf_active = next((r for r in reversed(_qf_today) if r["status"] == "active"), None)
@@ -1295,28 +1295,40 @@ if screen == "qf":
         _flow = m.taker_flow.frames if getattr(m.taker_flow, "available", False) else {}
         _qf_problem = None
         try:
-            _qf_audit = qf_alerts.audit(_qf_plan, m.spot.frames, _flow.get("15m"), now_ms)
+            _qf_audit = qf_alerts.audit(_qf_plan, m.spot.frames, _flow.get("15m"), now_ms, _flow.get("1h"))
         except Exception as e:  # noqa: BLE001 - the plan still shows without its audit
             _qf_audit = {"status": "on track", "cautions": [], "holds": []}
             _qf_problem = f"Audit unavailable this refresh: {e}"
         _qf_live = qf_alerts.live_record(store)
         _qf_sent = store.market_alerts_keyed(f"qf:{_qf_day}:", limit=6)
-        # the main screen: the pure-forecasting chart, with the layman summary and the volatility schedule
-        # on side panels (Hammad, message 5); on a phone the panels follow the chart
+        # the main screen (Hammad, message 6): the pure-forecasting chart on the left - the morning plan stays
+        # on it; once that plan is voided, Scenario B lights up on a second chart below it - with the master
+        # overview, the timeline tree and the trade directive on the side; on a phone the panels follow
+        _qf_first = _qf_today[0]["payload"] if _qf_today else _qf_plan
+        _qf_scenario_b = _qf_plan["version"] >= 1 and _qf_first is not _qf_plan
         _qf_main, _qf_side = st.columns([5, 3], gap="large")
         with _qf_main:
             if _h1 is not None:
                 with st.container(key="ti_chart_qf"):
-                    render_qf_chart(_qf_plan, _h1, dark, height=560, signal=signal, now_ms=now_ms)
+                    if _qf_scenario_b:
+                        st.caption(f"Scenario A · plan #{_qf_first['version']} · voided "
+                                   f"{qf_alerts.at_label(_qf_today[0].get('closed_ms') or now_ms)}")
+                        render_qf_chart(_qf_first, _h1, dark, height=380, signal=signal, now_ms=now_ms)
+                        st.caption(f"Scenario B · plan #{_qf_plan['version']} · active")
+                        render_qf_chart(_qf_plan, _h1, dark, height=380, signal=signal, now_ms=now_ms)
+                    else:
+                        render_qf_chart(_qf_plan, _h1, dark, height=560, signal=signal, now_ms=now_ms)
         with _qf_side:
             panels.render(panels.qf_wire_html(_qf_plan, _qf_audit["status"], live=_qf_live))
-            panels.render(panels.qf_schedule_html(_qf_plan, now_ms))
+            panels.render(panels.qf_directive_html(_qf_plan))
+            panels.render(panels.qf_timeline_html(_qf_plan, now_ms, _h1))
         # the raw data and audit drawer, closed by default
-        with st.expander("Raw data & audit (odds, record, levels, the lean, the bot's messages, JSON payload)",
+        with st.expander("Raw data & audit (odds, record, levels, the lean, the schedule, the bot's messages, JSON payload)",
                          expanded=False):
             if _qf_problem:
                 st.caption(_qf_problem)
             panels.render(panels.qf_gameplan_html(_qf_plan, _qf_live))
+            panels.render(panels.qf_schedule_html(_qf_plan, now_ms))
             _c1, _c2 = st.columns(2, gap="large")
             with _c1:
                 panels.render(panels.qf_levels_html(_qf_plan))
@@ -1329,15 +1341,17 @@ if screen == "qf":
             st.download_button("Download today's JSON payload (the agent's output schema)",
                                data=json.dumps(qf_payload.payload(_qf_plan, _qf_audit["status"], _qf_today,
                                                                   _qf_sent[0]["headline"] if _qf_sent else "",
-                                                                  _qf_live, now_ms), indent=1, ensure_ascii=False),
+                                                                  _qf_live, now_ms, _h1), indent=1, ensure_ascii=False),
                                file_name=f"quant-forecast-{_qf_day}-plan{_qf_plan['version']}.json",
                                mime="application/json", key="qf_payload_dl")
-            st.caption("Alerts (Discord): the daily plan at 00:00 UTC (05:00 PKT); TIER 1 CAUTION when a 15-minute "
-                       "candle moves 2x its usual size against the plan or buyer/seller flow flips against it; TIER 2 "
-                       "MODEL HELD when half of a shock is taken back within the hour; TIER 3 INVALIDATED when the "
-                       "whole-day level is decisively breached (a 4-hour close, two hourly closes in a row, or one "
-                       "violent hourly close), with the new plan; LOCKOUT MODE after the second failed plan. The AI "
-                       "writes the words once per plan and never sets a number.")
+            st.caption("Alerts (Discord): the daily plan at 00:00 UTC (05:00 PKT) with the trade figures and the "
+                       "timeline; TIER 1 CAUTION when a 15-minute candle moves 2x its usual size against the plan or "
+                       "buyer/seller flow flips against it; TIER 2 MODEL HELD when half of a shock is taken back within "
+                       "the hour; TIER 3 INVALIDATED when the whole-day level is decisively breached (a 4-hour close, "
+                       "two hourly closes in a row, one violent hourly close, or a firm hourly close with the order flow "
+                       "behind it), with Scenario B; LOCKOUT MODE after the second failed plan. The target widens once "
+                       "when open interest or taker flow shows more force than the simulation gave it. The AI writes "
+                       "the words once per plan and never sets a number.")
 
 # ---------- phone footer: the feed list, which lives in the folded-away sidebar on a desktop ----------
 with st.container(key="ti_mobile_foot"):

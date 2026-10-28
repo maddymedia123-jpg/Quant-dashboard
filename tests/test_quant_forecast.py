@@ -147,6 +147,14 @@ def test_invalidation_is_a_decisive_breach_of_the_whole_day_level():
     hit = qf.invalidation_hit(plan, cascade, DAY0 + 4 * H)
     assert hit and hit["basis"].startswith("hourly close more than $200") and hit["close_ms"] == DAY0 + 2 * H
     assert "two hourly closes in a row" in qf.directive(plan, qa.at_label)
+    # message 6: one firm hourly close (half an ATR) with the hour's taker flow behind the break
+    firm = candles([80_000, 78_880, 80_000, 80_000])                             # 120 below on the 02:00 close
+    assert qf.invalidation_hit(plan, firm, DAY0 + 4 * H) is None, "firm but no flow: a wick"
+    sellers = pd.DataFrame({"timestamp": [DAY0, DAY0 + H], "delta": [10.0, -250.0]})
+    hit = qf.invalidation_hit(plan, firm, DAY0 + 4 * H, sellers)
+    assert hit and hit["close_ms"] == DAY0 + 2 * H and "250 BTC of taker flow behind it" in hit["basis"]
+    buyers = pd.DataFrame({"timestamp": [DAY0, DAY0 + H], "delta": [10.0, 250.0]})
+    assert qf.invalidation_hit(plan, firm, DAY0 + 4 * H, buyers) is None, "buyers on a break below is not opposing CVD"
 
 
 def test_a_shock_against_the_plan_is_a_caution_and_taking_half_back_is_model_held():
@@ -258,8 +266,11 @@ def test_one_pass_makes_the_day_plan_once_and_replaces_it_when_broken(tmp_path, 
     now = DAY0 + 60_000
     ev = qa.run(store, _M(hist), now)
     assert [e.kind for e in ev] == ["qf_plan"] and qa.run(store, _M(hist), now + 1) == []
+    assert "Next 🎯" in ev[0].headline, "the morning post carries the compact timeline (message 6)"
     plan = store.qf_plans(DAY0)[0]["payload"]
     assert plan["backtest"]["days"] >= 1
+    if plan["regime"] != "neutral":
+        assert "Trade: " in ev[0].headline and "stop " in ev[0].headline
 
     # force the regime and break the line on the 04:00 close
     level = plan["invalidation"].get("below") or plan["invalidation"]["above"]
@@ -267,9 +278,9 @@ def test_one_pass_makes_the_day_plan_once_and_replaces_it_when_broken(tmp_path, 
     away = level * (0.99 if side == "below" else 1.01)
     later = pd.concat([hist, candles([plan["origin"]] * 3 + [away], start=DAY0)], ignore_index=True)
     ev = qa.run(store, _M(later, price=away), DAY0 + 4 * H + 60_000)
-    assert [e.kind for e in ev] == ["qf_invalid"] and "NEW FORECAST #1" in ev[0].headline
+    assert [e.kind for e in ev] == ["qf_invalid"] and "SCENARIO B · FORECAST #1" in ev[0].headline
     assert ev[0].headline.startswith("🔴 WHOLE-DAY PLAN INVALIDATED: Macro structure breached at"), "Hammad's words"
-    assert "issued a NEW intraday projection" in ev[0].headline
+    assert "Original roadmap voided. Scenario B secondary chart activated with new targets." in ev[0].headline
     rows = store.qf_plans(DAY0)
     assert [(r["version"], r["status"]) for r in rows] == [(0, "invalidated"), (1, "active")]
     assert rows[1]["payload"]["replaces"]["version"] == 0
@@ -298,7 +309,7 @@ def test_a_day_left_with_no_active_plan_gets_its_replacement_on_the_next_pass(tm
     hit = {"side": "below", "level": 1.0, "close": 0.5, "close_ms": DAY0 + 4 * H, "basis": "4-hour close"}
     assert store.close_qf_plan(row["id"], "invalidated", json.dumps(hit), DAY0 + 4 * H)
     ev = qa.run(store, _M(hist), DAY0 + 4 * H + 120_000)
-    assert [e.kind for e in ev] == ["qf_invalid"] and "NEW FORECAST #1" in ev[0].headline
+    assert [e.kind for e in ev] == ["qf_invalid"] and "SCENARIO B · FORECAST #1" in ev[0].headline
     assert [(r["version"], r["status"]) for r in store.qf_plans(DAY0)] == [(0, "invalidated"), (1, "active")]
     assert qa.run(store, _M(hist), DAY0 + 4 * H + 180_000) == []
     store.close()
@@ -363,6 +374,14 @@ def test_the_chart_and_panels_build_from_a_plan():
         assert markup.startswith("<div class=\"ti-card")
     assert "the 2nd locks the day" in panels.qf_status_html("on track", None, [])
     assert "Volatility schedule" in panels.qf_schedule_html(p, DAY0) and "bps" in panels.qf_schedule_html(p, DAY0)
+    # message 6: the timeline tree fades what passed and glows on what is active; the directive is pure figures
+    tl = panels.qf_timeline_html(p, DAY0 + 5 * H, df)
+    assert "ti-tl-done" in tl and "ti-tl-active" in tl and "ti-tl-pending" in tl and "🔥 Active Focus" in tl
+    assert "<em>Why:</em>" in tl and "GARCH volatility" in tl
+    box = panels.qf_directive_html(p)
+    assert "INTRADAY TRADE DIRECTIVE" in box and "Stop Loss (Whole-Day Invalidation)" in box
+    assert ("Direction: LONG" in box or "Direction: SHORT" in box or "Direction: NONE" in box)
+    assert "Direction: NONE" in panels.qf_directive_html(qf.locked_plan(DAY0, DAY0 + qf.DAY_MS, 1.0, 2, None, None))
     locked = qf.locked_plan(DAY0, DAY0 + qf.DAY_MS, 80_000.0, 3, 81_000.0, 79_000.0)
     assert "Stand aside" in panels.qf_gameplan_html(locked, live) and "Stand aside" in panels.qf_wire_html(locked, "locked")
     lp = qf_chart_payload(locked, df, now_ms=DAY0 + 12 * H)
@@ -526,39 +545,147 @@ def test_the_volatility_schedule_and_the_payload_follow_the_plan():
         assert all(b["low"] <= lv["price"] <= b["high"] for lv in b["levels"])
     assert qf.volatility_schedule(qf.locked_plan(DAY0, DAY0 + qf.DAY_MS, 1.0, 2, None, None), DAY0) == {"next": [], "blocks": []}
 
-    out = qf_payload.payload(p, "caution", [{"version": 0, "status": "active"}], "⚠️ x", {"days": 0}, DAY0 + 5 * H)
-    assert set(out) == {"audit_and_alert_status", "layman_summary_sideways", "hourly_and_four_hour_volatility_schedule",
-                        "tradingview_chart_payload", "collapsible_raw_math_drawer"}
+    out = qf_payload.payload(p, "caution", [{"version": 0, "status": "active"}], "⚠️ x", {"days": 0}, DAY0 + 5 * H, df)
+    assert set(out) == {"audit_and_alert_status", "layman_summary_and_timeline_tree", "tradingview_chart_payload",
+                        "collapsible_raw_math_drawer"}, "Hammad's message-6 schema"
     a = out["audit_and_alert_status"]
     assert a["tier_status"] == "TIER-1 CAUTION" and a["re_forecast_count"] == 0 and a["bot_message"] == "⚠️ x"
-    lay = out["layman_summary_sideways"]
+    assert a["magnitude_scaler"] == {"scaled": False} and "Now ⚡" in a["timeline_status"]
+    lay = out["layman_summary_and_timeline_tree"]
     assert lay["master_regime"] == qa.REGIME_WORD[p["regime"]] and lay["daily_coordinates"]["predicted_high"]["pkt_time"]
     assert lay["daily_coordinates"]["whole_day_macro_invalidation"] == p["invalidation"]
+    nodes = lay["timeline_tree_nodes"]
+    assert nodes and {n["state"] for n in nodes} <= {"COMPLETED_FADED", "ACTIVE_HIGHLIGHTED", "PENDING"}
+    assert sum(1 for n in nodes if n["state"] == "ACTIVE_HIGHLIGHTED") == 1 and nodes[0]["time_window_utc"].startswith("00:01")
+    assert all(n["summary_oneliner"] and n["rationale_why"] and n["price_levels"]["low"] < n["price_levels"]["high"] for n in nodes)
+    box = lay["trade_directive_box"]
+    assert set(box) >= {"direction", "stop_loss_invalidation", "entry_zone", "tp1", "tp2", "tp3"}
     traj = out["tradingview_chart_payload"]["hourly_trajectory_24h"]
     assert len(traj) == 24 and traj[0]["hour_index"] == 1 and traj[0]["projected_open"] == p["origin"]
     assert traj[1]["projected_open"] == traj[0]["projected_close"] and traj[0]["timestamp_pkt"] == "06:00"
     assert {t["regime_type"] for t in traj} <= {"CHOP_BOX", "EXPANSION_VECTOR", "NORMAL"}
-    badges = out["tradingview_chart_payload"]["visual_overlays"]["right_axis_badges"]
+    ov = out["tradingview_chart_payload"]["visual_overlays"]
+    assert ov["scenario_b_secondary_chart_active"] is False
+    badges = ov["right_axis_badges"]
     assert badges["predicted_high"] == p["projected_high"]["price"] and "lvn_air_pockets" in badges
-    assert len(out["hourly_and_four_hour_volatility_schedule"]) == 6
-    assert out["hourly_and_four_hour_volatility_schedule"][1]["block_window_utc"] == "04:00 - 08:00"
     raw = out["collapsible_raw_math_drawer"]
     assert raw["garch_alpha"] == p["garch"]["alpha"] and "hurst_exponent" in raw and raw["backtest_summary_stats"] == {}
+    assert len(raw["volatility_schedule_4h"]) == 6
     import json
     json.dumps(out)
+    b = qf_payload.payload({**p, "version": 1}, "on track", [{"version": 0, "status": "invalidated"},
+                                                               {"version": 1, "status": "active"}], "", {}, DAY0 + 5 * H)
+    assert b["tradingview_chart_payload"]["visual_overlays"]["scenario_b_secondary_chart_active"] is True
+
+
+def test_the_timeline_tree_and_the_trade_directive_follow_the_clock_and_the_plan():
+    from core import qf_tree
+    p = _plan_fixed()                                           # bullish, 24 normal hours: one node
+    p["levels"] = [{"label": "value low", "price": 79_650.0, "side": "below", "p_touch": 0.5},
+                   {"label": "POC", "price": 80_200.0, "side": "above", "p_touch": 0.6},
+                   {"label": "call wall", "price": 80_500.0, "side": "above", "p_touch": 0.3}]
+    nodes = qf_tree.timeline_tree(p, DAY0)
+    assert len(nodes) == 1 and nodes[0]["state"] == "ACTIVE_HIGHLIGHTED" and nodes[0]["emoji"] == "⚡"
+    assert "Pullback floor near $79,600" in nodes[0]["summary"] and "Day's high near $80,800" in nodes[0]["summary"]
+    assert nodes[0]["why"].startswith("normal GARCH volatility") and "levels inside: value low $79,650" in nodes[0]["why"]
+    assert qf_tree.timeline_tree(p, DAY0 - 1)[0]["state"] == "PENDING"
+    done = qf_tree.timeline_tree(p, DAY0 + qf.DAY_MS, candles([80_000, 80_300, 79_700], start=DAY0))
+    assert done[0]["state"] == "COMPLETED_FADED" and done[0]["actual_low"] == 79_695.0 and "Traded $79,695 to $80,305" in done[0]["summary"]
+    # three phases make three nodes, in order, each spanning its own hours
+    p3 = _plan_fixed()
+    for h in p3["hours"][:6]:
+        h["phase"] = "chop"
+    for h in p3["hours"][13:16]:
+        h["phase"] = "expansion"
+    n3 = qf_tree.timeline_tree(p3, DAY0 + 7 * H)
+    assert [n["phase"] for n in n3] == ["chop", "normal", "expansion", "normal"]
+    assert [n["state"] for n in n3] == ["COMPLETED_FADED", "ACTIVE_HIGHLIGHTED", "PENDING", "PENDING"]
+    assert n3[0]["start_ms"] == DAY0 and n3[0]["end_ms"] == DAY0 + 6 * H and n3[2]["start_ms"] == DAY0 + 13 * H
+    assert n3[0]["summary"].startswith("Quiet consolidation") and "push toward $80,800" in n3[2]["summary"]
+    assert qa.timeline_line(p3, DAY0 + 7 * H).startswith("Now ⚡ 06:00–13:00 UTC (11:00–18:00 PKT) normal")
+    assert "Next 🎯 13:00–16:00 UTC" in qa.timeline_line(p3, DAY0 + 7 * H) and "1 of 4 windows passed" in qa.timeline_line(p3, DAY0 + 7 * H)
+    assert qa.window_state(p3, DAY0 + 14 * H) == "13:00–16:00 UTC (18:00–21:00 PKT) expansion window"
+    assert qf_tree.timeline_tree(qf.locked_plan(DAY0, DAY0 + qf.DAY_MS, 1.0, 2, None, None), DAY0) == []
+
+    d = qf_tree.trade_directive(p)
+    assert d["direction"] == "LONG" and d["stop_loss_invalidation"] == 79_000.0
+    assert d["entry_zone"] == [79_600.0, 80_000.0], "from the projected low to the median path at its hour"
+    assert (d["tp1"], d["tp2"], d["tp3"]) == (80_200.0, 80_500.0, 80_800.0), "the levels between, then the projected high"
+    assert d["setup_type"] == "Value Area Low retest" and d["active_start_ms"] == DAY0 + 3 * H and d["active_end_ms"] == DAY0 + 14 * H
+    assert d["risk_reward"] == round((80_800 - 79_800) / (79_800 - 79_000), 1)
+    p["levels"] = []
+    d = qf_tree.trade_directive(p)
+    assert (d["tp1"], d["tp2"], d["tp3"]) == (80_266.67, 80_533.33, 80_800.0) and d["setup_type"] == "Pullback into the projected low"
+    bear = _plan_fixed(regime="bearish", above=81_000.0)
+    bear["projected_high"], bear["projected_low"] = {"price": 80_400.0, "t_ms": DAY0 + 3 * H}, {"price": 79_200.0, "t_ms": DAY0 + 14 * H}
+    d = qf_tree.trade_directive(bear)
+    assert d["direction"] == "SHORT" and d["entry_zone"] == [80_000.0, 80_400.0] and d["tp3"] == 79_200.0 and d["tp1"] > d["tp2"] > d["tp3"]
+    assert qf_tree.trade_directive({**p, "regime": "neutral"})["direction"] == "NONE"
+    assert "Trade: LONG · entry $79,600–$80,000 · stop $79,000 · TP $80,267 / $80,533 / $80,800" == qa.directive_line(p)
+
+
+def test_the_magnitude_scaler_widens_the_target_once_on_force_the_simulation_did_not_have():
+    p = _plan_fixed()
+    p["value_area"] = {"poc": 79_900.0, "high": 80_100.0, "low": 79_700.0}
+    p["levels"] = [{"label": "call wall", "price": 81_200.0, "side": "above", "p_touch": 0.2},
+                   {"label": "air pocket", "price": 81_500.0, "side": "above", "p_touch": 0.1},
+                   {"label": "POC", "price": 81_000.0, "side": "above", "p_touch": 0.3}]
+    quiet = pd.DataFrame({"timestamp": [DAY0 - (24 - k) * H for k in range(24)], "delta": [20.0, -20.0] * 12,
+                          "oi_btc": [10_000.0 + k for k in range(24)]})
+    h1 = candles([80_000, 80_050, 80_300], start=DAY0)                           # the 02:00 hour opens 80,050, closes 80,300: through VAH
+    now = DAY0 + 3 * H                                                           # ...and has closed
+    t2 = [DAY0 + H, DAY0 + 2 * H]
+    # 1. a loud hour of taker flow the plan's way: 1.5x the usual hour's gross delta
+    loud = pd.concat([quiet, pd.DataFrame({"timestamp": t2, "delta": [5.0, 40.0], "oi_btc": [10_024.0, 10_025.0]})])
+    plan = {**p, "hours": [dict(h) for h in p["hours"]]}
+    mg = qf.magnitude_scale(plan, h1, loud, now)
+    assert mg and mg["to"] == 81_200.0 and mg["level"] == "call wall" and mg["from"] == 80_800.0 and mg["t_ms"] == now
+    assert "2.0x the usual hour's" in mg["trigger"] and plan["projected_high"]["price"] == 81_200.0
+    assert "81,200" in plan["scenario_a"] and plan["magnitude"] is mg
+    assert qf.magnitude_scale(plan, h1, loud, now + H) is None, "once a day"
+    # 2. no force: 1.4x is under the line; nothing moves
+    mild = pd.concat([quiet, pd.DataFrame({"timestamp": t2, "delta": [5.0, 28.0], "oi_btc": [10_024.0, 10_025.0]})])
+    plan = {**p, "hours": [dict(h) for h in p["hours"]]}
+    assert qf.magnitude_scale(plan, h1, mild, now) is None and plan["projected_high"]["price"] == 80_800.0
+    # 3. open interest surging on the hour that closed through the value area high
+    jump = pd.concat([quiet, pd.DataFrame({"timestamp": t2, "delta": [5.0, 5.0], "oi_btc": [10_024.0, 10_399.0]})])
+    plan = {**p, "hours": [dict(h) for h in p["hours"]]}
+    mg = qf.magnitude_scale(plan, h1, jump, now)
+    assert mg and mg["trigger"].startswith("open interest surged +375 BTC on the hourly close through the value area high $80,100")
+    flat = candles([80_000, 80_050, 80_090], start=DAY0)                         # the same surge, no break of the VAH
+    plan = {**p, "hours": [dict(h) for h in p["hours"]]}
+    assert qf.magnitude_scale(plan, flat, jump, now) is None
+    assert qf.magnitude_scale({**p, "hours": list(p["hours"])}, h1, jump, now - H) is None, "the break hour has not closed yet"
+    # 4. no level beyond the target: nothing to widen to
+    plan = {**p, "hours": [dict(h) for h in p["hours"]], "levels": []}
+    assert qf.magnitude_scale(plan, h1, loud, now) is None
+    assert qf.magnitude_scale({**p, "regime": "neutral"}, h1, loud, now) is None
+    # the write-up is dropped when its numbers no longer hold, and the panel says what moved
+    from ui import panels
+    plan = {**p, "hours": [dict(h) for h in p["hours"]], "writeup": {"summary": "old words", "model": "x"}}
+    qf.magnitude_scale(plan, h1, loud, now)
+    assert "rejected" in plan["writeup"] and "Target widened $80,800 → $81,200 (call wall)" in panels.qf_wire_html(plan)
 
 
 def test_the_tier_messages_use_hammads_words():
     p = _plan_fixed()
     c = {"t_ms": DAY0 + H, "why": "move", "sigmas": 2.5, "from": 80_000.0, "to": 79_500.0}
     text = qa.caution_headline(p, c)
-    assert text.startswith("⚠️ CAUTION: Order flow metrics are moving differently than baseline projection")
-    assert "Whole-Day Invalidation below $79,000 has NOT been breached. Plan remains active." in text
-    held = qa.held_headline(p, {"t_ms": 0, "shock_ms": 0, "from": 80_000.0, "to": 79_500.0})
-    assert held.startswith("🟢 MODEL HELD: Intraday shock to $79,500 absorbed successfully")
-    assert "Baseline 1-day forecast path remains active." in held
+    assert text.startswith("⚠️ CAUTION [00:00–00:00 UTC (05:00–05:00 PKT) normal window]: Order flow metrics are moving "
+                           "differently than baseline projection. Volatility spike detected: a 15-minute candle moved 2.5x")
+    assert "Whole-Day Invalidation at below $79,000 has NOT been breached. Plan remains active.\nNow ⚡" in text
+    assert "CVD divergence detected" in qa.caution_headline(p, {**c, "why": "flow", "delta_btc": -300.0})
+    held = qa.held_headline(p, {"t_ms": DAY0 + H, "shock_ms": 0, "from": 80_000.0, "to": 79_500.0})
+    assert held.startswith("🟢 MODEL HELD: Intraday shock to $79,500 absorbed successfully above whole-day invalidation "
+                           "boundary $79,000. Baseline 1-day forecast path remains active.\nNow ⚡")
+    bear = _plan_fixed(regime="bearish", above=81_000.0)
+    assert "below whole-day invalidation boundary $81,000" in qa.held_headline(bear, {"t_ms": DAY0 + H, "shock_ms": 0, "from": 1.0, "to": 2.0})
     hit = {"side": "below", "level": 79_000.0, "close": 78_900.0, "close_ms": DAY0 + 4 * H, "basis": "4-hour close"}
     assert qa.invalidated_headline(p, hit, None).startswith(
-        "🔴 WHOLE-DAY PLAN INVALIDATED: Macro structure breached at $78,900 (4-hour close, below the $79,000 line")
+        "🔴 WHOLE-DAY PLAN INVALIDATED: Macro structure breached at $78,900 (4-hour close, below the $79,000 line, "
+        "04:00 UTC (09:00 PKT)). Original roadmap voided. Scenario B secondary chart activated with new targets.")
+    b = {**_plan_fixed(created=DAY0 + 4 * H), "version": 1}
+    b["scenario_a"], b["scenario_b"] = qf.scenarios(b)
+    assert "SCENARIO B · FORECAST #1" in qa.invalidated_headline(p, hit, b)
     locked = qf.locked_plan(DAY0 + 4 * H, DAY0 + qf.DAY_MS, 78_900.0, 2, 80_100.0, 78_800.0)
     assert "LOCKOUT MODE: HIGH CHOP / STAND ASIDE" in qa.invalidated_headline(p, hit, locked)

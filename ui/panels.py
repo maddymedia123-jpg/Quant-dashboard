@@ -2353,6 +2353,10 @@ def qf_wire_html(plan: dict, status: str = "on track", trap: str | None = None, 
              + "</div>")
     if windows_line(plan):
         body += f"<p class='muted'>{html.escape(windows_line(plan))}</p>"
+    mg = plan.get("magnitude")
+    if mg:
+        body += (f"<p class='muted'>Target widened {money(mg['from'])} → {money(mg['to'])} ({html.escape(mg['level'])}) "
+                 f"at {html.escape(at_label(mg['t_ms']))}: {html.escape(mg['trigger'])}.</p>")
     return card_html(f"1-Day master overview · plan #{plan['version']} · {at_label(plan['created_ms'])}", body, tone)
 
 
@@ -2384,6 +2388,51 @@ def qf_schedule_html(plan: dict, now_ms: int) -> str:
              "<table><thead><tr><th>Block (UTC / PKT)</th><th>Move</th><th>Character</th><th>Range</th>"
              f"<th>Levels</th></tr></thead><tbody>{rows}</tbody></table>")
     return card_html("Volatility schedule", body)
+
+
+def qf_timeline_html(plan: dict, now_ms: int, h1=None) -> str:
+    """The interactive timeline tree side panel (Hammad, message 6, panel B): one node per window of the
+    day, passed nodes faded, the active one glowing, the rest pending; each with its summary, its why and
+    the prices it spans."""
+    from core.qf_tree import timeline_tree
+    from core.qf_alerts import _clock
+    money = lambda x: fmt_num(x, 0, "$")  # noqa: E731
+    nodes = timeline_tree(plan, now_ms, h1)
+    if not nodes:
+        return card_html("Timeline", "<p class='muted'>No windows on a locked day: stand aside until the next session.</p>")
+    cls = {"COMPLETED_FADED": "done", "ACTIVE_HIGHLIGHTED": "active", "PENDING": "pending"}
+    body = ""
+    for n in nodes:
+        (us, ks), (ue, ke) = _clock(n["start_ms"]), _clock(n["end_ms"])
+        word = {"chop": "Chop box", "expansion": "Expansion", "normal": "Normal"}[n["phase"]]
+        body += (f"<div class='ti-tl ti-tl-{cls[n['state']]}'>"
+                 f"<p class='ti-tl-head'>{n['emoji']} <strong>[ {us} – {ue} UTC ] / [ {ks} – {ke} PKT ]</strong> "
+                 f"<span class='muted'>{html.escape(word)} · {n['bps']} bps</span></p>"
+                 f"<p class='ti-tl-status'>{html.escape(n['status'])}</p>"
+                 f"<p><em>Summary:</em> {html.escape(n['summary'])}</p>"
+                 f"<p class='muted'><em>Why:</em> {html.escape(n['why'])}</p>"
+                 f"<p class='muted'>{money(n['low'])} – {money(n['high'])}</p></div>")
+    return card_html("Timeline", body)
+
+
+def qf_directive_html(plan: dict) -> str:
+    """The standalone trade directive (Hammad, message 6, panel C): pure figures, no prose."""
+    from core.qf_tree import trade_directive
+    from core.qf_alerts import window_label
+    money = lambda x: fmt_num(x, 0, "$")  # noqa: E731
+    d = trade_directive(plan)
+    if d["direction"] == "NONE":
+        text = f" ── INTRADAY TRADE DIRECTIVE ──\n• Asset: {d['asset']}\n• Direction: NONE\n• {d['setup_type']}"
+        return card_html("Trade directive", f"<pre class='ti-directive'>{html.escape(text)}</pre>", "neutral")
+    lo, hi = d["entry_zone"]
+    text = (f" ── INTRADAY TRADE DIRECTIVE ──\n• Asset: {d['asset']}\n• Direction: {d['direction']}\n"
+            f"• Setup Type: {d['setup_type']}\n\n📍 KEY PRICE LEVELS & TARGETS:\n"
+            f"• Stop Loss (Whole-Day Invalidation): {money(d['stop_loss_invalidation'])}\n"
+            f"• Entry Zone: {money(lo)} – {money(hi)}\n• TP1: {money(d['tp1'])}\n• TP2: {money(d['tp2'])}\n"
+            f"• TP3: {money(d['tp3'])}" + (f"\n• R:R to TP3: {d['risk_reward']}" if d["risk_reward"] else "")
+            + f"\n\n⏰ EXECUTION TIMELINE (UTC & PKT):\n• Active Window: {window_label(d['active_start_ms'], d['active_end_ms'])}")
+    tone = "up" if d["direction"] == "LONG" else "down"
+    return card_html("Trade directive", f"<pre class='ti-directive'>{html.escape(text)}</pre>", tone)
 
 
 def qf_status_html(status: str, messages: list[str] | str | None, plans_today: list[dict]) -> str:

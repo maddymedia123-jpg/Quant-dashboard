@@ -8,10 +8,13 @@ The tiers, as agreed with Hammad (28 Oct):
   one caution an hour.
 * MODEL HELD (tier 2B) - after a shock like that, price takes back at least half of it within
   HOLD_WINDOW_MS without breaking invalidation.
-* INVALIDATED (tier 2A) - strictly a 4-hour candle close beyond the invalidation level
-  (core.quant_forecast.invalidation_hit). "Plan invalidated. Re-mapping intraday forecast." and the plan is
-  replaced by a new one for the rest of the day; the LOCK_AFTER_INVALIDATIONS-th failure locks the day into
-  range mode instead (two re-forecasts a day).
+* INVALIDATED (tier 3) - a decisive breach of the whole-day invalidation level
+  (core.quant_forecast.invalidation_hit: a 4h close, two hourly closes in a row, a cascade close, or a firm
+  close with opposing CVD). The plan is replaced by Scenario B - a new forecast for the rest of the day, drawn
+  on a secondary chart under the voided one; the LOCK_AFTER_INVALIDATIONS-th failure locks the day instead.
+* The magnitude scaler (core.quant_forecast.magnitude_scale) runs on every pass that finds the plan intact
+  and widens its target once when open interest or taker flow shows more force than the simulation gave it.
+  Every message carries the compact timeline (which window is active, which is next) - message 6.
 
 Detection is read from the candles each pass, so it holds no state of its own; what is new is decided by
 the alert ledger's unique keys, and who replaces a plan by the one-statement update in the store. A plan's
@@ -145,13 +148,14 @@ def held_after(shock: dict, m15: pd.DataFrame | None, now_ms: int, invalidated_m
     return None
 
 
-def audit(plan: dict, frames: dict, flow15: pd.DataFrame | None, now_ms: int) -> dict:
+def audit(plan: dict, frames: dict, flow15: pd.DataFrame | None, now_ms: int,
+          flow1h: pd.DataFrame | None = None) -> dict:
     """Where the active plan stands now: status, the cautions and holds since it was made, and the
-    invalidation if price has broken it."""
+    invalidation if price has broken it (`flow1h`, the hourly taker flow, for the opposing-CVD test)."""
     if plan.get("regime") == "locked":
         return {"status": "locked", "cautions": [], "holds": [], "invalidation": None}
     h1, m15 = frames.get("1h"), frames.get("15m")
-    inv = qf.invalidation_hit(plan, h1, now_ms) if h1 is not None else None
+    inv = qf.invalidation_hit(plan, h1, now_ms, flow1h) if h1 is not None else None
     inv_ms = inv["close_ms"] if inv else None
     cautions = []
     for s in shocks(plan, m15, now_ms):
@@ -230,10 +234,50 @@ def coordinates_line(plan: dict) -> str:
             f"{at_label(ph['t_ms'])}")
 
 
+def _node_label(n: dict) -> str:
+    return f"{n['emoji']} {window_label(n['start_ms'], n['end_ms'])} {n['phase']} {_money(n['low'])}–{_money(n['high'])}"
+
+
+def timeline_line(plan: dict, now_ms: int | None = None) -> str:
+    """The compact timeline tree for a message (Hammad, message 6): 'Now ⚡ 12:00–16:00 UTC (…) expansion
+    $80,200–$81,000 · Next 🎯 16:00–20:00 UTC (…) normal $80,400–$81,200', or '' on a locked plan."""
+    from core.qf_tree import current_and_next, timeline_tree
+    nodes = timeline_tree(plan, plan["created_ms"] if now_ms is None else now_ms)
+    active, nxt = current_and_next(nodes)
+    bits = []
+    if active:
+        bits.append("Now " + _node_label(active))
+    if nxt:
+        bits.append("Next " + _node_label(nxt))
+    done = sum(1 for n in nodes if n["state"] == "COMPLETED_FADED")
+    if nodes and done:
+        bits.append(f"{done} of {len(nodes)} windows passed")
+    return " · ".join(bits)
+
+
+def window_state(plan: dict, now_ms: int) -> str:
+    """'12:00–16:00 UTC (17:00–21:00 PKT) expansion window' - the active window for a tier message's tag."""
+    from core.qf_tree import current_and_next, timeline_tree
+    active, nxt = current_and_next(timeline_tree(plan, now_ms))
+    n = active or nxt
+    return f"{window_label(n['start_ms'], n['end_ms'])} {n['phase']} window" if n else "no window"
+
+
+def directive_line(plan: dict) -> str:
+    """'Trade: LONG · entry $79,600–$79,900 · stop $79,000 · TP $80,200 / $80,500 / $80,800' or ''."""
+    from core.qf_tree import trade_directive
+    d = trade_directive(plan)
+    if d["direction"] == "NONE":
+        return ""
+    return (f"Trade: {d['direction']} · entry {_money(d['entry_zone'][0])}–{_money(d['entry_zone'][1])} · "
+            f"stop {_money(d['stop_loss_invalidation'])} · TP {_money(d['tp1'])} / {_money(d['tp2'])} / {_money(d['tp3'])}")
+
+
 def plan_headline(plan: dict, live: dict | None = None, title: str = "QUANT FORECAST",
-                  trap: str | None = None) -> str:
+                  trap: str | None = None, now_ms: int | None = None) -> str:
     """The day's plan as the bot sends it: the layman wire plan - regime, the one-sentence directive, the
-    coordinates, the windows, the hard invalidation. The record stays on the dashboard's drawer."""
+    coordinates, the windows, the hard invalidation, the trade figures and the compact timeline (message 6).
+    The record stays on the dashboard's drawer."""
     d = datetime.fromtimestamp(plan["day_ms"] / 1000, timezone.utc)
     lines = [f"📊 {title} · {d:%a %d %b} · BTC {_money(plan['origin'])}", f"Regime: {regime_line(plan, trap, live)}"]
     if plan["regime"] == "locked":
@@ -245,36 +289,46 @@ def plan_headline(plan: dict, live: dict | None = None, title: str = "QUANT FORE
     lines.append(coordinates_line(plan))
     if windows_line(plan):
         lines.append(windows_line(plan))
+    if directive_line(plan):
+        lines.append(directive_line(plan))
+    if timeline_line(plan, now_ms):
+        lines.append(timeline_line(plan, now_ms))
     lines.append(f"Whole-day invalidation: {_inv_text(plan)}")
     return "\n".join(lines)
 
 
 def caution_headline(plan: dict, c: dict) -> str:
-    why = (f"a 15-minute candle moved {c['sigmas']}x its usual size ({_money(c['from'])} → {_money(c['to'])})"
-           if c["why"] == "move" else
-           f"the last hour's taker flow turned against the plan ({c['delta_btc']:+,.0f} BTC)")
-    return (f"⚠️ CAUTION: Order flow metrics are moving differently than baseline projection: {why}. "
-            f"Exercise caution. Whole-Day Invalidation {_inv_text(plan)} has NOT been breached. Plan remains active.")
+    """Tier 1, in Hammad's words (message 6), tagged with the active window and carrying the timeline."""
+    what, why = (("Volatility spike", f"a 15-minute candle moved {c['sigmas']}x its usual size "
+                                      f"({_money(c['from'])} → {_money(c['to'])})") if c["why"] == "move" else
+                 ("CVD divergence", f"the last hour's taker flow turned against the plan ({c['delta_btc']:+,.0f} BTC)"))
+    return (f"⚠️ CAUTION [{window_state(plan, c['t_ms'])}]: Order flow metrics are moving differently than baseline "
+            f"projection. {what} detected: {why}. Whole-Day Invalidation at {_inv_text(plan)} has NOT been breached. "
+            f"Plan remains active.\n{timeline_line(plan, c['t_ms'])}")
 
 
 def held_headline(plan: dict, h: dict) -> str:
-    return (f"🟢 MODEL HELD: Intraday shock to {_money(h['to'])} absorbed successfully inside the whole-day "
-            f"invalidation boundary ({_inv_text(plan)}). Baseline 1-day forecast path remains active.")
+    inv = plan.get("invalidation") or {}
+    where = (f"above whole-day invalidation boundary {_money(inv['below'])}" if list(inv) == ["below"] else
+             f"below whole-day invalidation boundary {_money(inv['above'])}" if list(inv) == ["above"] else
+             f"inside whole-day invalidation boundary {_inv_text(plan)}")
+    return (f"🟢 MODEL HELD: Intraday shock to {_money(h['to'])} absorbed successfully {where}. "
+            f"Baseline 1-day forecast path remains active.\n{timeline_line(plan, h['t_ms'])}")
 
 
 def invalidated_headline(plan: dict, hit: dict, new: dict | None) -> str:
-    """Tier 3, in Hammad's words (message 5), then what replaces the plan."""
+    """Tier 3, in Hammad's words (message 6), then Scenario B - the plan that replaces it."""
     where = (f"{hit['basis']}, {hit['side']} the {_money(hit['level'])} line, {at_label(hit['close_ms'])}")
     head = (f"🔴 WHOLE-DAY PLAN INVALIDATED: Macro structure breached at {_money(hit['close'])} ({where}). "
-            "Original 1-day roadmap voided.")
+            "Original roadmap voided.")
     if new is not None and new["regime"] == "locked":
         return (head + f" Invalidated {_TIMES.get(qf.LOCK_AFTER_INVALIDATIONS, qf.LOCK_AFTER_INVALIDATIONS)} today: "
                 "LOCKOUT MODE: HIGH CHOP / STAND ASIDE for the remainder of the 24-hour cycle.\n"
                 + plan_headline(new, title="LOCKOUT MODE"))
-    head += " AI Agent has re-simulated market metrics and issued a NEW intraday projection."
+    head += " Scenario B secondary chart activated with new targets."
     if new is None:
-        return head + "\nThe new projection follows on the next pass."
-    return head + "\n" + plan_headline(new, title=f"NEW FORECAST #{new['version']}")
+        return head + "\nThe new targets follow on the next pass."
+    return head + "\n" + plan_headline(new, title=f"SCENARIO B · FORECAST #{new['version']}", now_ms=new["created_ms"])
 
 
 _TIMES = {2: "twice", 3: "three times"}
@@ -415,9 +469,11 @@ def run(store, m, now_ms: int, gamma: dict | None = None) -> list[Event]:
                                     invalidated_headline(last["payload"], hit, new), hit.get("close")))
         return events
     plan = active["payload"]
-    a = audit(plan, frames, flow.get("15m"), now_ms)
+    a = audit(plan, frames, flow.get("15m"), now_ms, flow.get("1h"))
     hit = a["invalidation"]
     if hit is None:
+        if qf.magnitude_scale(plan, h1, flow.get("1h"), now_ms):
+            store.set_qf_payload(active["id"], plan)      # the target widened once; the chart's badge follows
         return events + audit_events(plan, a, now_ms)
     if not store.close_qf_plan(active["id"], "invalidated", json.dumps(hit), now_ms):
         return events                               # another process replaced it first, and sent the alert

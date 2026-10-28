@@ -248,6 +248,13 @@ section[data-testid="stSidebar"] * {{ color: {p['text']}; }}
 .ti-note {{ font-size: 0.8rem; margin-top: 8px !important; }}
 .ti-wire-head {{ font-family: {_HEADING}; font-size: 1.35rem; letter-spacing: 0.03em; text-transform: uppercase; margin: 0 0 4px 0 !important; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }}
 .ti-wire-line {{ font-size: 1.125rem !important; line-height: 1.6rem !important; margin: 0 0 10px 0 !important; max-width: 820px; }}
+.ti-tl {{ border-left: 3px solid {p['border']}; padding: 6px 0 6px 12px; margin: 0 0 10px 0; }} .ti-tl p {{ margin: 0 0 3px 0 !important; font-size: 0.9rem; }}
+.ti-tl-head {{ font-size: 0.95rem !important; }} .ti-tl-status {{ font-size: 0.8rem !important; letter-spacing: 0.04em; }}
+.ti-tl-done {{ opacity: 0.4; }}
+.ti-tl-active {{ border-left-color: {p['up']}; animation: ti-pulse 2.2s ease-in-out infinite; }}
+.ti-tl-pending {{ border-left-style: dashed; }}
+@keyframes ti-pulse {{ 0%, 100% {{ box-shadow: 0 0 0 0 rgba(79,184,115,0); }} 50% {{ box-shadow: -6px 0 16px -6px rgba(79,184,115,0.9); }} }}
+.ti-directive {{ font-family: {_BODY}; font-variant-numeric: tabular-nums; font-size: 0.92rem; line-height: 1.5; white-space: pre-wrap; margin: 0; background: transparent; border: 0; padding: 0; color: {p['text']}; }}
 .ti-section {{ display: flex; align-items: center; gap: 14px; margin: 34px 0 4px 0; }}
 .ti-rule {{ flex: 1; height: 1px; background: {p['border']}; }}
 .ti-head-summary {{ display: flex; flex-direction: column; gap: 8px; max-width: 900px; margin: 30px 0 10px 0; }}
