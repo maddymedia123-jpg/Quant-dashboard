@@ -39,9 +39,17 @@ if (P.path.length > 1) {
     s.setData(P[k]);
   });
 }
-// right-axis badges: the price lines carry no title, only their axis label
-P.lines.forEach(l => real.createPriceLine({ price: l.price, color: l.color, lineWidth: l.style === 'solid' ? 2 : 1,
-  lineStyle: l.style === 'solid' ? LW.LineStyle.Solid : LW.LineStyle.Dotted, axisLabelVisible: true, title: '' }));
+// right-axis badges: the price lines carry no title, only their axis label. A price line does not stretch
+// the scale, so each badge also gets an invisible series across the forecast, which keeps it on screen.
+const lastT = P.whitespace.length ? P.whitespace[P.whitespace.length - 1].time : (P.candles.length ? P.candles[P.candles.length - 1].time : P.origin);
+P.lines.forEach(l => {
+  real.createPriceLine({ price: l.price, color: l.color, lineWidth: l.style === 'solid' ? 2 : 1,
+    lineStyle: l.style === 'solid' ? LW.LineStyle.Solid : LW.LineStyle.Dotted, axisLabelVisible: true, title: '' });
+  if (['invalidation', 'high', 'low', 'range'].includes(l.kind) && lastT > P.origin) {
+    const keep = chart.addSeries(LW.LineSeries, { color: 'rgba(0,0,0,0)', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+    keep.setData([{ time: P.origin, value: l.price }, { time: lastT, value: l.price }]);
+  }
+});
 // boxes: grey chop windows, green expansion windows, the air pockets and estimated liquidation zones as faint bands
 const FILL = { chop: [T.muted, 0.16], expansion: [T.up, 0.13], liq: [T.down, 0.10], lvn: [T.muted, 0.07] };
 class BoxRenderer {

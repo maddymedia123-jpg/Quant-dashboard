@@ -2409,7 +2409,28 @@ def qf_gameplan_html(plan: dict, live: dict) -> str:
     elif plan.get("day_range"):
         body += (f"<p class='muted'>Today's range so far: {money(plan['day_range'][0])} – "
                  f"{money(plan['day_range'][1])}.</p>")
+    body += qf_preflight_html(plan)
     return card_html(f"Plan detail · #{plan['version']} · made {at_label(plan['created_ms'])}", body, tone)
+
+
+def qf_preflight_html(plan: dict) -> str:
+    """Drawer: what the Trap Head and Economic Data checks found before this plan was built."""
+    from core.qf_alerts import at_label
+    pre = plan.get("preflight")
+    if not pre:
+        return ""
+    bits = [pre.get("trap", {}).get("label") or "Trap Agent: not checked"]
+    if plan.get("preflight_override") == "trap":
+        bits.append("direction overridden to NEUTRAL / RANGE-BOUND")
+    for w in pre.get("macro") or []:
+        bits.append(f"{w['title']} at {at_label(w['t_ms'])}: forced chop window "
+                    f"{at_label(w['start_ms'])} – {at_label(w['end_ms'])}")
+    if not pre.get("macro"):
+        bits.append("no high-impact USD release in the window")
+    out = f"<p class='muted ti-note'>Pre-flight: {html.escape(' · '.join(bits))}.</p>"
+    if pre.get("errors"):
+        out += f"<p class='muted ti-note'>Not checked: {html.escape('; '.join(pre['errors']))}.</p>"
+    return out
 
 
 def qf_words_html(plan: dict) -> str:

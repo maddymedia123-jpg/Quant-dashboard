@@ -480,3 +480,26 @@ def test_the_plan_carries_the_write_up_into_the_message_and_the_screen(tmp_path,
     plan["writeup"] = {"rejected": "price $1 is not in the plan"}
     assert "was not used (price $1 is not in the plan)" in panels.qf_gameplan_html(plan, {"days": 0})
     store.close()
+
+
+def test_an_active_4h_trap_forces_the_day_neutral_and_the_wire_says_so(tmp_path):
+    """Pre-flight (Hammad, 28 Oct): an engineered trap active on the 4h overrides the lean; the top line of
+    the plan and the bot's message carry the Trap Agent's word for it."""
+    from ui import panels
+    store = Store(tmp_path / "s.sqlite")
+    hist = hourly(800, DAY0 - 800 * H, drift=0.0008, seed=4)        # a strong up-drift: a bullish lean
+    assert _plan(hist, DAY0 + 60_000)["regime"] == "bullish", "the fixture leans without the trap"
+    store.put_trap("live", "bull_trap", "4h", 80_500.0, 80_900.0, 79_000.0, DAY0 - H, 0.8, "ENGINEERED_TRAP", ["x"])
+    ev = qa.run(store, _M(hist), DAY0 + 60_000)
+    plan = store.qf_plans(DAY0)[0]["payload"]
+    assert plan["regime"] == "neutral" and plan["preflight_override"] == "trap"
+    assert plan["preflight"]["trap"]["label"] == "Trap Agent: BULL TRAP active (4H)"
+    assert "NEUTRAL / RANGE-BOUND" in ev[0].headline and "| Trap Agent: BULL TRAP active (4H)" in ev[0].headline
+    wire = panels.qf_wire_html(plan, "on track")
+    assert "Trap Agent: BULL TRAP active (4H)" in wire
+    assert "overridden to NEUTRAL" in panels.qf_gameplan_html(plan, {"days": 0})
+    store.close()
+    clear = Store(tmp_path / "c.sqlite")
+    ev = qa.run(clear, _M(hist), DAY0 + 60_000)
+    assert "| Trap Agent: Clear" in ev[0].headline and clear.qf_plans(DAY0)[0]["payload"]["regime"] == "bullish"
+    clear.close()

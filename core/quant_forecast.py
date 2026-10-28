@@ -226,6 +226,7 @@ def build_plan(h1: pd.DataFrame, now_ms: int, end_ms: int, price: float, *, vers
             if begin < we and times[k] > ws and phases[k] != "macro":
                 phases[k] = "macro"                     # marked once, scaled once, renamed below
                 sigmas[k] *= MACRO_SIGMA_X
+                full_sigmas[k] *= MACRO_SIGMA_X         # the caution test is as wide as the hour it judges
     phases = ["chop" if ph == "macro" else ph for ph in phases]
 
     parts = lean_parts(closed, price, flow, now_ms, price_only)

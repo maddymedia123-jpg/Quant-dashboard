@@ -27,6 +27,7 @@ from datetime import datetime, timezone
 
 import pandas as pd
 
+from core import qf_preflight
 from core import quant_forecast as qf
 from core.alerts import Event
 
@@ -192,10 +193,16 @@ def record_words(plan: dict, live: dict | None) -> list[str]:
     return out
 
 
+def trap_label(plan: dict) -> str | None:
+    """'Trap Agent: Clear' or 'Trap Agent: BULL TRAP active (4H)', from the pre-flight the plan was built with."""
+    return ((plan.get("preflight") or {}).get("trap") or {}).get("label")
+
+
 def regime_line(plan: dict, trap: str | None = None) -> str:
     """'BULLISH EXPANSION (62%) | Trap Agent: Clear' - the top line of the wire plan. No record, no decimals."""
     p = plan.get("p_scenario_a")
     out = REGIME_WORD[plan["regime"]] + ("" if p is None else f" ({p:.0%})")
+    trap = trap or trap_label(plan)
     return out + (f" | {trap}" if trap else "")
 
 
@@ -325,7 +332,7 @@ def _publish(store, plan: dict) -> bool:
 
 
 def _replacement(store, plans: list[dict], prev: dict, hit: dict, h1, price: float, now_ms: int,
-                 flow: dict, gamma: dict | None) -> dict | None:
+                 flow: dict, gamma: dict | None, pre: dict) -> dict | None:
     """The plan that follows an invalidated one: a fresh forecast, or the locked rest of the day once
     LOCK_AFTER_INVALIDATIONS plans have failed. None when it could not be built or was built elsewhere."""
     day, end = prev["day_ms"], prev["end_ms"]
@@ -337,10 +344,12 @@ def _replacement(store, plans: list[dict], prev: dict, hit: dict, h1, price: flo
                              float(h_since["high"].max()) if len(h_since) else None,
                              float(h_since["low"].min()) if len(h_since) else None)
     else:
-        new = qf.build_plan(h1, now_ms, end, float(price), version=version, flow=flow.get("1h"), gamma=gamma)
+        new = qf.build_plan(h1, now_ms, end, float(price), version=version, flow=flow.get("1h"), gamma=gamma,
+                            **qf_preflight.plan_kwargs(pre))
         if not new.get("available"):
             return None
         new["backtest"] = prev.get("backtest")
+        new["preflight"] = pre
     new["replaces"] = {"version": prev["version"], "invalidation": hit}
     return new if _publish(store, new) else None
 
@@ -364,11 +373,14 @@ def run(store, m, now_ms: int, gamma: dict | None = None) -> list[Event]:
             store.score_qf_plan(row["id"], outcome, now_ms)
 
     plans = store.qf_plans(day)
+    pre = qf_preflight.preflight(store, m, now_ms, end)     # Trap Head and Economic Data, before any plan is built
     if not plans:
-        plan = qf.build_plan(h1, now_ms, end, float(price), version=0, flow=flow.get("1h"), gamma=gamma)
+        plan = qf.build_plan(h1, now_ms, end, float(price), version=0, flow=flow.get("1h"), gamma=gamma,
+                             **qf_preflight.plan_kwargs(pre))
         if not plan.get("available"):
             return events
         plan["backtest"] = qf.backtest(h1, now_ms)
+        plan["preflight"] = pre
         if _publish(store, plan):
             events.append(Event("qf_plan", _key(plan, "plan"), plan_headline(plan), plan["origin"]))
         plans = store.qf_plans(day)
@@ -384,7 +396,7 @@ def run(store, m, now_ms: int, gamma: dict | None = None) -> list[Event]:
             except ValueError:
                 hit = {"basis": "4-hour close", "close": last["payload"]["origin"], "side": "beyond",
                        "level": 0.0, "close_ms": last.get("closed_ms") or now_ms}
-            new = _replacement(store, plans, last["payload"], hit, h1, float(price), now_ms, flow, gamma)
+            new = _replacement(store, plans, last["payload"], hit, h1, float(price), now_ms, flow, gamma, pre)
             if new is not None:
                 events.append(Event("qf_invalid", _key(last["payload"], "invalidated"),
                                     invalidated_headline(last["payload"], hit, new), hit.get("close")))
@@ -397,6 +409,6 @@ def run(store, m, now_ms: int, gamma: dict | None = None) -> list[Event]:
     if not store.close_qf_plan(active["id"], "invalidated", json.dumps(hit), now_ms):
         return events                               # another process replaced it first, and sent the alert
     plans = store.qf_plans(day)
-    new = _replacement(store, plans, plan, hit, h1, float(price), now_ms, flow, gamma)
+    new = _replacement(store, plans, plan, hit, h1, float(price), now_ms, flow, gamma, pre)
     events.append(Event("qf_invalid", _key(plan, "invalidated"), invalidated_headline(plan, hit, new), hit["close"]))
     return events
