@@ -59,7 +59,25 @@ def one_pass(store: Store, now_ms: int | None = None, market=None) -> pipeline.P
     r = pipeline.ledger(store, m, analyses, now, classification)
     pipeline.market_alerts(store, m, analyses, now, _secrets(), may_send, r)
     pipeline.all_trade_alerts(store, m.spot.last, now, _secrets(), may_send, r)
+    book_report(store, now, r)
     return r
+
+
+def book_report(store: Store, now_ms: int, r: pipeline.PassResult) -> None:
+    """The last hour of the recorded order book (book_collector.py, this machine's file) as the scoop/sweep
+    report on the shared store, for the dashboard. A machine with no recorder (the dashboard host, a dev
+    box) writes nothing and says nothing: that is normal there. A recorder that has gone quiet is a
+    problem, logged once per pass; a broken book file never fails the pass."""
+    from core import book_metrics
+    try:
+        rep = book_metrics.report(now_ms)
+    except Exception as e:  # noqa: BLE001 - a broken book file must not stop the alerts
+        r.problems.append(f"order book report failed: {type(e).__name__}: {e}")
+        return
+    if rep.get("available"):
+        store.put_book_report(now_ms, rep)
+    elif rep.get("recorder") == "stale":
+        r.problems.append(f"order book: {rep.get('reason')}")
 
 
 def _on_signal(signum, _frame):

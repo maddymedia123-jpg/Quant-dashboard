@@ -99,6 +99,8 @@ CREATE TABLE IF NOT EXISTS qf_plans (
     created_ms INTEGER NOT NULL, end_ms INTEGER NOT NULL, regime TEXT NOT NULL, payload TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'active', closed_ms INTEGER, closed_reason TEXT, scored_ms INTEGER,
     outcome TEXT, UNIQUE (day_ms, version));
+CREATE TABLE IF NOT EXISTS book_reports (
+    ts_ms INTEGER PRIMARY KEY, payload TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_calls_open ON calls (scored_ms, ts_ms);
 CREATE INDEX IF NOT EXISTS idx_signals_cat ON signals (category, ts_ms);
 """
@@ -760,6 +762,24 @@ class Store:
               " ORDER BY ts_ms, id LIMIT ?"
         with self._lock:
             return _rows(self._conn.execute(sql, (limit,)))
+
+    # ---- the order-book report (core.book_metrics), written by the worker, read by the dashboard ----
+    BOOK_REPORTS_KEPT = 48
+
+    def put_book_report(self, ts_ms: int, payload: dict) -> None:
+        """Keep the latest scoop/sweep report, and the last BOOK_REPORTS_KEPT before it."""
+        with self._lock:
+            self._conn.execute("INSERT OR REPLACE INTO book_reports (ts_ms, payload) VALUES (?, ?)",
+                               (int(ts_ms), json.dumps(payload)))
+            self._conn.execute("DELETE FROM book_reports WHERE ts_ms NOT IN (SELECT ts_ms FROM book_reports "
+                               "ORDER BY ts_ms DESC LIMIT ?)", (self.BOOK_REPORTS_KEPT,))
+            self._conn.commit()
+
+    def book_report(self) -> dict | None:
+        """The latest report, with its `ts_ms`; None before the worker has written one."""
+        with self._lock:
+            r = self._conn.execute("SELECT ts_ms, payload FROM book_reports ORDER BY ts_ms DESC LIMIT 1").fetchone()
+        return {**json.loads(r["payload"]), "ts_ms": int(r["ts_ms"])} if r else None
 
     def market_alerts_keyed(self, prefix: str, limit: int = 20) -> list[dict]:
         """The alerts whose key starts with `prefix`, newest first (one Quant Forecast day's, say)."""

@@ -28,7 +28,7 @@ def _window(start_ms: int, end_ms: int) -> tuple[str, str]:
 
 
 def payload(plan: dict, status: str, plans_today: list[dict], bot_message: str, live: dict | None,
-            now_ms: int, h1=None) -> dict:
+            now_ms: int, h1=None, book: dict | None = None) -> dict:
     from core.qf_alerts import REGIME_WORD, _clock, timeline_line, trap_label
     from ui.panels import QF_STATUS
     hours = plan.get("hours") or []
@@ -106,5 +106,6 @@ def payload(plan: dict, status: str, plans_today: list[dict], bot_message: str, 
             "funding_rate_8h": (parts.get("funding") or {}).get("rate"),
             "lean_score": plan.get("score"), "lean_parts": {k: v.get("value") for k, v in parts.items()},
             "volatility_schedule_4h": qf.volatility_schedule(plan, now_ms)["blocks"],
+            "order_book_scoop_and_sweep": book or {"available": False, "reason": "no report"},
             "backtest_summary_stats": plan.get("backtest") or {}},
     }
