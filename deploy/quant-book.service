@@ -1,0 +1,16 @@
+[Unit]
+Description=Quant dashboard order-book recorder (Gate.io BTC_USDT perpetual, one snapshot every 5 s)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=quant-worker
+WorkingDirectory=/opt/quant/app
+Environment=TI_DATA_DIR=/opt/quant/data PYTHONUNBUFFERED=1
+ExecStart=/opt/quant/venv/bin/python book_collector.py
+Restart=always
+RestartSec=10
+MemoryMax=200M
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,17 @@
+[Unit]
+Description=Quant dashboard 24/7 worker (alerts, scoring, Market Pulse)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=quant-worker
+WorkingDirectory=/opt/quant/app
+EnvironmentFile=/opt/quant/.env
+Environment=TI_DATA_DIR=/opt/quant/data PYTHONUNBUFFERED=1
+ExecStart=/opt/quant/venv/bin/python worker.py
+Restart=always
+RestartSec=15
+MemoryMax=700M
+
+[Install]
+WantedBy=multi-user.target

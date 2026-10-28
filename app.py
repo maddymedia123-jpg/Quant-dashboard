@@ -1329,6 +1329,8 @@ if screen == "qf":
                 st.caption(_qf_problem)
             panels.render(panels.qf_gameplan_html(_qf_plan, _qf_live))
             panels.render(panels.qf_schedule_html(_qf_plan, now_ms))
+            _qf_book = store.book_report() if hasattr(store, "book_report") else None
+            panels.render(panels.qf_book_html(_qf_book, now_ms))
             _c1, _c2 = st.columns(2, gap="large")
             with _c1:
                 panels.render(panels.qf_levels_html(_qf_plan))
@@ -1341,7 +1343,7 @@ if screen == "qf":
             st.download_button("Download today's JSON payload (the agent's output schema)",
                                data=json.dumps(qf_payload.payload(_qf_plan, _qf_audit["status"], _qf_today,
                                                                   _qf_sent[0]["headline"] if _qf_sent else "",
-                                                                  _qf_live, now_ms, _h1), indent=1, ensure_ascii=False),
+                                                                  _qf_live, now_ms, _h1, _qf_book), indent=1, ensure_ascii=False),
                                file_name=f"quant-forecast-{_qf_day}-plan{_qf_plan['version']}.json",
                                mime="application/json", key="qf_payload_dl")
             st.caption("Alerts (Discord): the daily plan at 00:00 UTC (05:00 PKT) with the trade figures and the "

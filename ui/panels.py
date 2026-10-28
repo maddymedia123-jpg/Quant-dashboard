@@ -2442,6 +2442,53 @@ def qf_directive_html(plan: dict) -> str:
     return card_html("Intraday trade directive", body, tone)
 
 
+def qf_book_html(report: dict | None, now_ms: int) -> str:
+    """Drawer: the recorded order book's last hour - depth now, sweeps, scoops - from the worker's report
+    (core.book_metrics). Says plainly when nothing is recorded or the report is stale."""
+    from core.qf_alerts import at_label
+    money = lambda x: fmt_num(x, 0, "$")  # noqa: E731
+    title = "Order book · scoop & sweep (provisional)"
+    if not report:
+        return card_html(title, "<p class='muted'>No order-book report yet: the recorder writes one a minute once it "
+                                "is running on the server.</p>")
+    age_min = (now_ms - report["ts_ms"]) / 60_000
+    if age_min > 15:
+        return card_html(title, f"<p class='muted'>Last report {age_min:.0f} min ago ({html.escape(at_label(report['ts_ms']))}): "
+                                "the recorder or the worker is not running.</p>", "down")
+    d = report.get("depth") or {}
+    body = ("<div class='ti-grid3'>"
+            + _kv("Resting within 25 bps", f"{d.get('bid_025', 0):.1f} / {d.get('ask_025', 0):.1f} BTC "
+                                           "<span class='muted'>bids / asks</span>")
+            + _kv("Within 100 bps", f"{d.get('bid_100', 0):.1f} / {d.get('ask_100', 0):.1f} BTC")
+            + _kv("Imbalance (25 bps)", f"{d.get('imbalance_025', 0):+.2f}",
+                  "up" if d.get("imbalance_025", 0) > 0.2 else "down" if d.get("imbalance_025", 0) < -0.2 else "")
+            + "</div>")
+    sw = report.get("sweeps") or []
+    if sw:
+        rows = "".join(f"<tr><td>{html.escape(at_label(s['t_ms']))}</td><td>{html.escape(s['side'])} {html.escape(s['direction'])}</td>"
+                       f"<td>{money(s['from'])} → {money(s['to'])} ({s['move_bps']:+.0f} bps in {s['seconds']}s)</td>"
+                       f"<td><strong>{s['cleared_btc']:.1f} BTC</strong> cleared</td></tr>" for s in reversed(sw))
+        body += ("<p class='muted'>Sweeps in the last hour (resting size price ran through within a minute):</p>"
+                 f"<table><tbody>{rows}</tbody></table>")
+    else:
+        body += "<p class='muted'>No sweep in the last hour.</p>"
+    sc = report.get("scoops") or []
+    if sc:
+        rows = "".join(f"<tr><td>{html.escape(s['side'])} wall {money(s['price'])}</td><td><strong>{s['wall_btc']:.1f} BTC</strong>"
+                       f" <span class='muted'>now {s['now_btc']:.1f}</span></td><td>tested {s['tested_minutes']} min</td>"
+                       f"<td>{html.escape(s['outcome'])}</td></tr>" for s in reversed(sc))
+        body += ("<p class='muted'>Scoops (walls price tested without going through):</p>"
+                 f"<table><tbody>{rows}</tbody></table>")
+    else:
+        body += "<p class='muted'>No wall tested in the last hour.</p>"
+    rec = report.get("recorded") or {}
+    since = at_label(rec["since_ms"]) if rec.get("since_ms") else "—"
+    body += (f"<p class='muted ti-note'>Gate.io BTC_USDT perpetual, one snapshot every 5 s, recorded since {html.escape(since)} "
+             f"({rec.get('rows', 0):,} rows, {rec.get('mb', 0)} MB). {html.escape(report.get('method', ''))} "
+             "These thresholds are ours and provisional; nothing gates on them yet.</p>")
+    return card_html(title, body)
+
+
 def qf_status_html(status: str, messages: list[str] | str | None, plans_today: list[dict]) -> str:
     """Drawer: where the plan stands and the messages the bot has sent about today."""
     from core import quant_forecast as qf
