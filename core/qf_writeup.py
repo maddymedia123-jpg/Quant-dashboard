@@ -68,7 +68,7 @@ def facts(plan: dict, live: dict | None, at) -> dict:
         "odds_alternative": f"{1 - plan['p_scenario_a']:.0%}",
         "likely_high": f"{money(plan['projected_high']['price'])} around {at(plan['projected_high']['t_ms'])}",
         "likely_low": f"{money(plan['projected_low']['price'])} around {at(plan['projected_low']['t_ms'])}",
-        "cancelled_if": [f"a 4-hour candle closes {side} {money(v)}" for side, v in plan["invalidation"].items()],
+        "cancelled_if": [f"price holds {side} {money(v)}" for side, v in plan["invalidation"].items()],
         "quiet_windows": [f"{window_label(w['start_ms'], w['end_ms'])}, range {money(w['lower'])} to {money(w['upper'])}"
                           for w in plan.get("windows") or [] if w["phase"] == "chop"],
         "busy_windows": [window_label(w["start_ms"], w["end_ms"]) for w in plan.get("windows") or []

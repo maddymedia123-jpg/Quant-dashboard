@@ -2323,37 +2323,67 @@ def sine_experimental_html(warning, ny_now: bool, record, history_note: str = ""
 
 # ---------- Quant Forecast (Hammad's AI Quant Master Agent) ----------
 QF_STATUS = {"on track": ("ON-TRACK", "up"), "caution": ("TIER-1 CAUTION", "warn"),
-             "model held": ("MODEL HELD", "up"), "invalidated": ("INVALIDATED & RE-MAPPED", "down"),
-             "locked": ("SYSTEM LOCKED", "down")}
+             "model held": ("TIER-2 MODEL HELD", "up"), "invalidated": ("TIER-3 INVALIDATED", "down"),
+             "locked": ("LOCKOUT MODE", "down")}
 _ORDINAL = {2: "2nd", 3: "3rd", 4: "4th"}
 
 
-def qf_wire_html(plan: dict, status: str = "on track", trap: str | None = None) -> str:
-    """Part A, the layman wire plan (Hammad, 28 Oct): the regime and where the plan stands, the one-sentence
-    directive, the low and high with their times in UTC and PKT, the hard invalidation on a 4H close, and
-    the chop / expansion windows. No odds decimals, no record, no model names, no math."""
+def qf_wire_html(plan: dict, status: str = "on track", trap: str | None = None, live: dict | None = None) -> str:
+    """The layman summary side panel (Hammad, message 5): the regime, its confidence and hit rate, where the
+    plan stands, the one-sentence directive, the low and high with their times in UTC and PKT, the whole-day
+    invalidation level, and the chop / expansion windows. No model names, no math."""
     from core import quant_forecast as qf
     from core.qf_alerts import at_label, regime_line, windows_line
     money = lambda x: fmt_num(x, 0, "$")  # noqa: E731
     tone = {"bullish": "up", "bearish": "down", "locked": "down"}.get(plan["regime"], "neutral")
     label, s_tone = QF_STATUS.get(status, (status.upper(), ""))
-    head = (f"<p class='ti-wire-head'><strong>{html.escape(regime_line(plan, trap))}</strong> "
+    head = (f"<p class='ti-wire-head'><strong>{html.escape(regime_line(plan, trap, live))}</strong> "
             f"{chip(label, s_tone)}</p>")
     body = head + f"<p class='ti-wire-line'>{html.escape(qf.wire_line(plan))}</p>"
     if plan["regime"] == "locked":
         if plan.get("day_range"):
             body += (f"<p class='muted'>Today's range so far: {money(plan['day_range'][0])} – "
                      f"{money(plan['day_range'][1])} · next plan at {html.escape(at_label(plan['end_ms']))}</p>")
-        return card_html("Today's plan", body, tone)
+        return card_html("1-Day master overview", body, tone)
     ph, pl, inv = plan["projected_high"], plan["projected_low"], plan["invalidation"]
     body += ("<div class='ti-grid3'>"
-             + _kv("Predicted low / pullback", f"{money(pl['price'])} <span class='muted'>{html.escape(at_label(pl['t_ms']))}</span>")
-             + _kv("Predicted high target", f"{money(ph['price'])} <span class='muted'>{html.escape(at_label(ph['t_ms']))}</span>")
-             + _kv("Hard invalidation (4H close)", " / ".join(f"{side} {money(v)}" for side, v in inv.items()), "down")
+             + _kv("Predicted daily low", f"{money(pl['price'])} <span class='muted'>{html.escape(at_label(pl['t_ms']))}</span>")
+             + _kv("Predicted daily high", f"{money(ph['price'])} <span class='muted'>{html.escape(at_label(ph['t_ms']))}</span>")
+             + _kv("Whole-day invalidation", " / ".join(f"{side} {money(v)}" for side, v in inv.items()), "down")
              + "</div>")
     if windows_line(plan):
         body += f"<p class='muted'>{html.escape(windows_line(plan))}</p>"
-    return card_html(f"Today's plan · #{plan['version']} · made {at_label(plan['created_ms'])}", body, tone)
+    return card_html(f"1-Day master overview · plan #{plan['version']} · {at_label(plan['created_ms'])}", body, tone)
+
+
+def qf_schedule_html(plan: dict, now_ms: int) -> str:
+    """The volatility schedule side panel (Hammad, message 5): no prose. The next three hours one by one,
+    then the day in 4-hour blocks, each with its expected move in basis points, its character, its 68%
+    range and the levels inside it."""
+    from core import quant_forecast as qf
+    from core.qf_alerts import _clock, window_label
+    money = lambda x: fmt_num(x, 0, "$")  # noqa: E731
+    sched = qf.volatility_schedule(plan, now_ms)
+    if not sched["blocks"]:
+        return card_html("Volatility schedule", "<p class='muted'>Nothing scheduled on a locked day.</p>")
+    body = ""
+    if sched["next"]:
+        rows = "".join(f"<tr><td>{'–'.join(_clock(h['t_ms']))}</td><td><strong>{h['bps']} bps</strong></td>"
+                       f"<td class='muted'>{money(h['low'])} – {money(h['high'])}</td>"
+                       f"<td>{html.escape(h['character'].title())}</td></tr>" for h in sched["next"])
+        body += ("<p class='muted'>Next hours (to, UTC–PKT) · expected move · one-sigma range · character</p>"
+                 f"<table><tbody>{rows}</tbody></table>")
+    rows = ""
+    for b in sched["blocks"]:
+        lv = ", ".join(f"{money(x['price'])}" for x in b["levels"]) or "—"
+        cls = " class='muted'" if b["done"] else ""
+        rows += (f"<tr{cls}><td>{html.escape(window_label(b['start_ms'], b['end_ms']))}</td>"
+                 f"<td><strong>{b['bps']} bps</strong></td><td>{html.escape(b['character'].title())}</td>"
+                 f"<td>{money(b['low'])} – {money(b['high'])}</td><td class='muted'>{html.escape(lv)}</td></tr>")
+    body += ("<p class='muted'>4-hour blocks · expected move · character · 68% range · levels inside it</p>"
+             "<table><thead><tr><th>Block (UTC / PKT)</th><th>Move</th><th>Character</th><th>Range</th>"
+             f"<th>Levels</th></tr></thead><tbody>{rows}</tbody></table>")
+    return card_html("Volatility schedule", body)
 
 
 def qf_status_html(status: str, messages: list[str] | str | None, plans_today: list[dict]) -> str:
