@@ -22,6 +22,7 @@ import pandas as pd
 from core import quant_forecast as qf
 
 HOUR_MS = qf.HOUR_MS
+MIN_NODE_HOURS = 2                # a shorter run of hours joins the node before it: 11 nodes a day read as noise
 STATE_EMOJI = {"COMPLETED_FADED": "🕒", "ACTIVE_HIGHLIGHTED": "⚡", "PENDING": "🎯"}
 STATUS_WORD = {"COMPLETED_FADED": "🫥 Passed", "ACTIVE_HIGHLIGHTED": "🔥 Active Focus", "PENDING": "⏳ Pending"}
 SETUP_TOL = 0.003                 # a level within 0.3% of the entry zone names the setup
@@ -49,11 +50,38 @@ def _actual(h1: pd.DataFrame | None, start_ms: int, end_ms: int) -> tuple[float,
     return float(rows["low"].min()), float(rows["high"].max())
 
 
+def _runs(hours: list[dict]) -> list[tuple[int, int, str]]:
+    """(first index, last index, phase) for each run of same-phase hours, runs shorter than MIN_NODE_HOURS
+    folded into the run before them (the first into the one after), neighbours of one phase then joined."""
+    runs: list[list] = []
+    for k, h in enumerate(hours):
+        if runs and runs[-1][2] == h["phase"]:
+            runs[-1][1] = k
+        else:
+            runs.append([k, k, h["phase"]])
+    k = 0
+    while len(runs) > 1 and k < len(runs):
+        i, j, _ = runs[k]
+        if j - i + 1 >= MIN_NODE_HOURS:
+            k += 1
+            continue
+        if k == 0:
+            runs[1][0] = i
+        else:
+            runs[k - 1][1] = j
+        runs.pop(k)
+        if 0 < k < len(runs) and runs[k - 1][2] == runs[k][2]:     # the fold made two neighbours one phase
+            runs[k - 1][1] = runs[k][1]
+            runs.pop(k)
+    return [(i, j, ph) for i, j, ph in runs]
+
+
 def timeline_tree(plan: dict, now_ms: int, h1: pd.DataFrame | None = None) -> list[dict]:
     """The day's nodes in time order. Each: start_ms, end_ms, phase, state, emoji, status, bps (the window's
-    expected move, its hours' sigmas added in variance), low/high (its 68% band), levels inside that band,
-    summary (one line), why (the numbers behind it), and - for a window that has passed, with candles -
-    actual_low/actual_high. A locked plan has no nodes."""
+    expected move, its hours' sigmas added in variance), low/high (the window's own range: the projected path
+    where it starts, +- its hours' 68% move - the chart's box, not the day's cumulative band), levels inside
+    that range, summary (one line), why (the numbers behind it), and - for a window that has passed, with
+    candles - actual_low/actual_high. A locked plan has no nodes."""
     hours = plan.get("hours") or []
     if not hours or plan.get("regime") == "locked":
         return []
@@ -63,16 +91,13 @@ def timeline_tree(plan: dict, now_ms: int, h1: pd.DataFrame | None = None) -> li
     parts = plan.get("parts") or {}
     macro = plan.get("macro_windows") or []
     out: list[dict] = []
-    i = 0
-    while i < len(hours):
-        j = i
-        while j + 1 < len(hours) and hours[j + 1]["phase"] == hours[i]["phase"]:
-            j += 1
+    for i, j, phase in _runs(hours):
         hs = hours[i:j + 1]
         start = plan["created_ms"] if i == 0 else hours[i - 1]["t_ms"]
         end = hs[-1]["t_ms"]
-        phase = hs[0]["phase"]
-        lo, hi = min(h["band_low"] for h in hs), max(h["band_high"] for h in hs)
+        centre = plan["origin"] if i == 0 else hours[i - 1]["median"]
+        half = qf.Z84 * math.sqrt(sum((h["sigma_pct"] / 100) ** 2 for h in hs))
+        lo, hi = centre * math.exp(-half), centre * math.exp(half)
         var = sum((h.get("sigma_full_pct", h["sigma_pct"]) / 100) ** 2 for h in hs)
         bps = qf._bps(math.sqrt(var) * 100)
         inside = [lv for lv in levels if lo <= lv["price"] <= hi]
@@ -117,7 +142,6 @@ def timeline_tree(plan: dict, now_ms: int, h1: pd.DataFrame | None = None) -> li
         if actual:
             node["actual_low"], node["actual_high"] = round(actual[0], 2), round(actual[1], 2)
         out.append(node)
-        i = j + 1
     return out
 
 

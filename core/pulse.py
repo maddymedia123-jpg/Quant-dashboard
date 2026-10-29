@@ -167,10 +167,14 @@ def _news(m, now_ms: int) -> str:
 
 
 def text(read: dict, m, now_ms: int, basis: str) -> str:
-    from core.indicators.turn_window import next_window
+    from core.indicators.turn_window import PKT_S, next_window
     w = next_window(now_ms)
+    # the window names a PKT day: once today's has passed, "tomorrow" has to be said, or a 21:00 PKT
+    # message reading "between 17:00 and 21:00 PKT" names hours that have just ended (29 Oct)
+    pkt_day = lambda ms: (ms + PKT_S * 1000) // 86_400_000  # noqa: E731
+    when = "Tomorrow, between" if pkt_day(w.start_ms) > pkt_day(now_ms) else "Later today, between"
     turn = (f"NOW, until {_pkt(w.end_ms)} (the busiest turning hours of the day)" if w.active
-            else f"Between {_pkt(w.start_ms)} and {_pkt(w.end_ms)}")
+            else f"{when} {_pkt(w.start_ms)} and {_pkt(w.end_ms)}")
     return "\n".join([
         RULE, f"🤖 MARKET PULSE DISPATCH · {basis}", f"⏰ Time: {_when(now_ms)}", RULE, "",
         f"🎯 MARKET DIRECTION: {read['direction']}",

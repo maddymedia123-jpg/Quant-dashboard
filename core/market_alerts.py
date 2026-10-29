@@ -129,16 +129,32 @@ def trap_events(traps: list[dict], now_ms: int) -> list[Event]:
 # 20 Oct), and a flicker is not news.
 IMPORTANT_STATES = ("A", "C")
 HOLD_MS = {"live": 5 * 60_000, "intraday": 15 * 60_000, "weekly": 60 * 60_000, "monthly": 4 * 60 * 60_000}
+# A desk that leaves A or C and comes back within this long is in the same episode, not a new one: on
+# 29 Oct the Live desk went C at 16:00, 16:17 and 18:55, flapping through B and N between, and each return
+# outlasted the 5-minute hold - three identical "Downtrend losing control" messages in three hours.
+REPEAT_MS = {"live": 3 * 3_600_000, "intraday": 6 * 3_600_000, "weekly": 24 * 3_600_000, "monthly": 72 * 3_600_000}
+
+
+def same_episode(recent: list[dict] | None, desk: str, state: str, now_ms: int) -> bool:
+    """Whether this desk already alerted into `state` within REPEAT_MS. `recent`: market_alerts rows (ts_ms,
+    dedup_key) whose key starts with 'cascade:{desk}:'."""
+    limit = REPEAT_MS.get(desk, 6 * 3_600_000)
+    return any(str(r.get("dedup_key", "")).startswith(f"cascade:{desk}:") and f"->{state}:" in str(r.get("dedup_key", ""))
+               and 0 <= now_ms - int(r.get("ts_ms") or 0) < limit for r in recent or [])
 
 
 def important_cascade_event(desk: str, label: str, track: dict, cascade, now_ms: int,
-                            price: float | None = None) -> Event | None:
-    """The alert for a desk that moved into A or C and has held it, once per episode, or None."""
+                            price: float | None = None, recent: list[dict] | None = None) -> Event | None:
+    """The alert for a desk that moved into A or C and has held it, once per episode, or None. `recent`
+    (the desk's past cascade alerts) makes a return to the same state within REPEAT_MS part of the last
+    episode: silent."""
     state, prior = track.get("state"), track.get("prior_state")
     if track.get("first") or state not in IMPORTANT_STATES or prior is None or prior == state:
         return None
     since = int(track.get("since_ms") or now_ms)
     if now_ms - since < HOLD_MS.get(desk, 15 * 60_000):
+        return None
+    if same_episode(recent, desk, state, now_ms):
         return None
     # keyed on when the state began: the same episode is one message, a new one later is another
     return cascade_event(desk, label, prior, cascade, since, price)

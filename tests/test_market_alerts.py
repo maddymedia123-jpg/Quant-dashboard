@@ -254,6 +254,29 @@ def test_pauses_and_no_trend_stay_quiet_and_a_control_shift_does_not(store):
     assert e is not None and e.urgent and "Uptrend losing control" in e.headline
 
 
+def test_a_return_to_the_same_state_within_hours_is_the_same_episode(store):
+    """29 Oct: Live went C at 16:00, 16:17 and 18:55, flapping through B and N, and the identical message
+    went out three times. The second and third are now the first's episode."""
+    store.track_cascade("live", "B", NOW)
+    t = store.track_cascade("live", "C", NOW + MIN)
+    e = ma.important_cascade_event("live", "Live Recon", t, cascade("C"), NOW + 6 * MIN, recent=[])
+    assert e is not None
+    sent = [{"ts_ms": NOW + 6 * MIN, "dedup_key": e.dedup_key}]
+    store.track_cascade("live", "N", NOW + 10 * MIN)
+    t = store.track_cascade("live", "C", NOW + 17 * MIN)
+    assert ma.important_cascade_event("live", "Live Recon", t, cascade("C"), NOW + 23 * MIN, recent=sent) is None
+    store.track_cascade("live", "B", NOW + 60 * MIN)
+    t = store.track_cascade("live", "C", NOW + 175 * MIN)
+    assert ma.important_cascade_event("live", "Live Recon", t, cascade("C"), NOW + 181 * MIN, recent=sent) is None, "under 3h"
+    t = store.track_cascade("live", "C", NOW + 190 * MIN)
+    assert ma.important_cascade_event("live", "Live Recon", t, cascade("C"), NOW + 190 * MIN, recent=sent) is not None, "a new episode after 3h"
+    # a different state is not the same episode, nor is another desk's alert
+    t = store.track_cascade("live", "A", NOW + 30 * MIN)
+    assert ma.important_cascade_event("live", "Live Recon", t, cascade("A"), NOW + 36 * MIN, recent=sent) is not None
+    assert not ma.same_episode(sent, "intraday", "C", NOW + 10 * MIN)
+    assert ma.same_episode(sent, "live", "C", NOW + 10 * MIN) and not ma.same_episode(None, "live", "C", NOW + 10 * MIN)
+
+
 def test_the_first_reading_after_a_reboot_is_not_news(store):
     t = store.track_cascade("live", "A", NOW)
     assert ma.important_cascade_event("live", "Live Recon", t, cascade("A"), NOW + 99 * MIN) is None
