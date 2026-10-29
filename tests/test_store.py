@@ -46,3 +46,18 @@ def test_signals_last_before():
     assert s.last_signal("weekly")["squeeze_score"] == 55
     assert s.last_signal("weekly", before_ms=200)["squeeze_score"] == 45
     assert s.last_signal("monthly") is None
+
+
+def test_a_report_body_is_kept_and_the_newest_of_each_pipeline_comes_back():
+    """A report run in one browser was only ever in that browser's session: the other reader saw 'No report
+    yet' and ran another. The body is kept on the row now."""
+    s = Store(":memory:")
+    assert s.add_report("TIR1-A", 10, "NO_TRAP", 1.0, 1.0, "NEUTRAL", mode="1-agent", payload='{"a": 1}')
+    assert s.add_report("TIR1-B", 20, "NO_TRAP", 1.0, 1.0, "NEUTRAL", mode="1-agent", payload='{"b": 2}')
+    assert s.add_report("TIR-C", 30, "NO_TRAP", 1.0, 1.0, "NEUTRAL", mode="15-agent", payload='{"c": 3}')
+    assert s.add_report("TIR-OLD", 40, "NO_TRAP", 1.0, 1.0, "NEUTRAL")             # before bodies were kept
+    latest = s.latest_report_payloads()
+    assert {k: v["report_id"] for k, v in latest.items()} == {"1-agent": "TIR1-B", "15-agent": "TIR-C"}
+    assert latest["1-agent"]["payload"] == '{"b": 2}'
+    assert "payload" not in s.reports()[0], "the summary rows stay light"
+    assert Store(":memory:").latest_report_payloads() == {}

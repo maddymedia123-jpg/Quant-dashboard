@@ -1142,9 +1142,18 @@ if screen == "trade":
 if screen == "director":
     labels = {k: c.label for k, c in CATEGORIES.items()}
     tfs = {k: c.chart_tf for k, c in CATEGORIES.items()}
-    reports = st.session_state.get("director_reports") or {}
+    reports = dict(st.session_state.get("director_reports") or {})
     if report is not None and report.mode not in reports:
         reports[report.mode] = report          # a report from before this screen kept both
+    # the newest saved report of each pipeline, whoever ran it: one report for both readers, not one each
+    try:
+        from core.accuracy import stored_reports
+        for _mode, _rep in stored_reports(store).items():
+            _mine = reports.get(_mode)
+            if _mine is None or _rep.generated_at > _mine.generated_at:
+                reports[_mode] = _rep
+    except Exception as _e:  # noqa: BLE001 - the ledger being unreachable must not blank the tab
+        st.warning(f"Saved reports unavailable: {_e}")
     panels.render(panels.engine_hero_html(
         7, "Director report",
         "Two ways to write the same report: one model reading the whole state (1-agent), or the classic chain "

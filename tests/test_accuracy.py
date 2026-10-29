@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 from core.accuracy import DAY_MS, WEEK_MS, HitRate, call_hit, report_hit, score_due_calls, score_reports, summary
 from core.agents.schemas import DirectorReport, Scenario, TradePlan, TrapReport
-from core.accuracy import record_report
+from core.accuracy import record_report, stored_reports
 from core.store import Store
 
 
@@ -88,3 +88,16 @@ def test_record_and_score_reports_at_both_horizons():
     sm = summary(s)
     assert sm["by_classification_24h"]["BULL_TRAP"].hits == 1 and sm["by_classification_7d"]["BULL_TRAP"].hits == 0
     assert record_report(s, None, 1.0, 1.0, "NEUTRAL", 0) is False
+
+
+def test_a_recorded_report_comes_back_whole_for_the_other_reader():
+    s = Store(":memory:")
+    r = _report("TIR1-SHARED", "RANGE_TRAP")
+    r.mode = "1-agent"
+    assert record_report(s, r, 100.0, 1.0, "NEUTRAL", 0)
+    back = stored_reports(s)
+    assert list(back) == ["1-agent"] and back["1-agent"] == r, "the same report, not a summary of it"
+    assert back["1-agent"].generated_at.tzinfo is not None, "comparable with a report this session ran"
+    # a body that no longer parses is skipped, not raised
+    s.add_report("TIR-BAD", 5, "NO_TRAP", 1.0, 1.0, "NEUTRAL", mode="15-agent", payload="{not json")
+    assert list(stored_reports(s)) == ["1-agent"]
