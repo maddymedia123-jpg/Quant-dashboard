@@ -75,7 +75,8 @@ def market_events(store, m, analyses: dict, now_ms: int) -> list[Event]:
         bias_tf, anchor_tf, engine_tfs = PROFILES[key].cascade
         c = classify(m.spot.frames, bias_tf, anchor_tf, engine_tfs)
         track = store.track_cascade(key, c.state, now_ms)
-        e = ma.important_cascade_event(key, PROFILES[key].label, track, c, now_ms, m.spot.last)
+        e = ma.important_cascade_event(key, PROFILES[key].label, track, c, now_ms, m.spot.last,
+                                       recent=store.market_alerts_keyed(f"cascade:{key}:", limit=20))
         if e is not None:
             events.append(e)
         if key in ("live", "intraday") and c.state not in ma.SILENT_STATES:

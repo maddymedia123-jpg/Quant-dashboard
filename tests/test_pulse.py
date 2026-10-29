@@ -41,6 +41,16 @@ def test_the_message_follows_his_template_in_order():
     assert len(t) < alerts.MAX_CHARS
 
 
+def test_the_turning_window_says_which_day_it_is_on():
+    """29 Oct: the 16:00 UTC (21:00 PKT) dispatch read 'Between 17:00 PKT and 21:00 PKT' - tomorrow's window,
+    read as one that had just ended."""
+    day = CLOSE - CLOSE % (24 * H)
+    line = lambda ms: pulse.close_event(live(), market(), ms).headline.split("Next Turning Window:")[1].splitlines()[0]  # noqa: E731
+    assert line(day + 16 * H).strip() == "Tomorrow, between 17:00 PKT and 21:00 PKT"
+    assert line(day + 8 * H).strip() == "Later today, between 17:00 PKT and 21:00 PKT"
+    assert line(day + 12 * H).strip().startswith("NOW, until 21:00 PKT")
+
+
 def test_no_jargon_reaches_the_reader():
     for d in ("BULLISH", "BEARISH", "NEUTRAL"):
         t = pulse.close_event(live(d), market(), CLOSE).headline.lower()

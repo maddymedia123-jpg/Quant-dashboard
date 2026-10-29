@@ -12,6 +12,7 @@ os.environ.setdefault("TI_OFFLINE_FIXTURES", "1")
 
 from core import qf_alerts as qa  # noqa: E402
 from core import quant_forecast as qf  # noqa: E402
+from core import qf_tree  # noqa: E402
 from core.indicators import garch  # noqa: E402
 from core.indicators.liquidity import low_volume_nodes  # noqa: E402
 from core.store import Store  # noqa: E402
@@ -266,7 +267,10 @@ def test_one_pass_makes_the_day_plan_once_and_replaces_it_when_broken(tmp_path, 
     now = DAY0 + 60_000
     ev = qa.run(store, _M(hist), now)
     assert [e.kind for e in ev] == ["qf_plan"] and qa.run(store, _M(hist), now + 1) == []
-    assert "Next 🎯" in ev[0].headline, "the morning post carries the compact timeline (message 6)"
+    # the morning post carries the compact timeline (message 6); this day is normal with lone chop and
+    # expansion hours, which fold into one node, so the line names the active node and no next one
+    assert ("Now ⚡" in ev[0].headline or "Next 🎯" in ev[0].headline), ev[0].headline
+    assert len(qf_tree.timeline_tree(store.qf_plans(DAY0)[0]["payload"], now)) <= 6, "no fragmented day"
     plan = store.qf_plans(DAY0)[0]["payload"]
     assert plan["backtest"]["days"] >= 1
     if plan["regime"] != "neutral":
@@ -609,6 +613,23 @@ def test_the_timeline_tree_and_the_trade_directive_follow_the_clock_and_the_plan
     assert "Next 🎯 13:00–16:00 UTC" in qa.timeline_line(p3, DAY0 + 7 * H) and "1 of 4 windows passed" in qa.timeline_line(p3, DAY0 + 7 * H)
     assert qa.window_state(p3, DAY0 + 14 * H) == "13:00–16:00 UTC (18:00–21:00 PKT) expansion window"
     assert qf_tree.timeline_tree(qf.locked_plan(DAY0, DAY0 + qf.DAY_MS, 1.0, 2, None, None), DAY0) == []
+    # a node's range is the window's own (the chart's box), not the day's cumulative band: 29 Oct the bot
+    # read "chop $80,176–$82,912", a 3.4% "chop box", from the band at hour 16
+    import math
+    half = qf.Z84 * 0.004 * math.sqrt(6)
+    assert (n3[0]["low"], n3[0]["high"]) == (round(80_000 * math.exp(-half), 2), round(80_000 * math.exp(half), 2))
+    assert n3[0]["high"] - n3[0]["low"] < 1_600
+    assert all(n["high"] - n["low"] < 0.05 * 80_000 for n in n3)
+    # runs shorter than two hours fold into the node before them, so a lone normal hour between two chop
+    # runs does not make three nodes of one
+    p4 = _plan_fixed()
+    for k, h in enumerate(p4["hours"]):
+        h["phase"] = "chop" if k < 3 or 4 <= k < 8 else "normal"
+    n4 = qf_tree.timeline_tree(p4, DAY0)
+    assert [(n["phase"], n["start_ms"], n["end_ms"]) for n in n4] == [("chop", DAY0, DAY0 + 8 * H), ("normal", DAY0 + 8 * H, DAY0 + 24 * H)]
+    p5 = _plan_fixed()
+    p5["hours"][0]["phase"] = "expansion"                      # a lone first hour joins the node after it
+    assert [n["phase"] for n in qf_tree.timeline_tree(p5, DAY0)] == ["normal"]
 
     d = qf_tree.trade_directive(p)
     assert d["direction"] == "LONG" and d["stop_loss_invalidation"] == 79_000.0
