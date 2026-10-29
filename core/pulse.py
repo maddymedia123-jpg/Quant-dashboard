@@ -52,6 +52,17 @@ def _floor_ceiling(a) -> tuple[float | None, float | None]:
     return (sups[0] if sups else a.vol.exp_low), (ceils[0] if ceils else a.vol.exp_high)
 
 
+def _target(a, up: bool, floor: float | None, ceiling: float | None) -> str:
+    """The farther of the first level in the way and the 4-hour expected-range edge. The first level alone
+    read as the target (29 Oct: a 'target' 0.4% away) when it is only the first obstacle."""
+    edge = a.vol.exp_high if up else a.vol.exp_low
+    first = ceiling if up else floor
+    cands = [x for x in (first, edge) if x is not None]
+    if not cands:
+        return "—"
+    return _money(max(cands) if up else min(cands))
+
+
 def desk_read(a) -> dict:
     """Direction, the two sentences, target and safety line, from the Live desk's own analysis."""
     d = a.direction
@@ -60,11 +71,11 @@ def desk_read(a) -> dict:
     if direction == "BULLISH":
         happening = (f"BTC is {_money(a.price)} and leaning higher ({CONF_WORD(d.confidence)}) for the next 4 hours. "
                      f"The nearest ceiling is {_money(ceiling)}; holding above {_money(floor)} keeps buyers in control.")
-        target = _money(ceiling)
+        target = _target(a, True, floor, ceiling)
     elif direction == "BEARISH":
         happening = (f"BTC is {_money(a.price)} and leaning lower ({CONF_WORD(d.confidence)}) for the next 4 hours. "
                      f"The nearest floor is {_money(floor)}; staying below {_money(ceiling)} keeps sellers in control.")
-        target = _money(floor)
+        target = _target(a, False, floor, ceiling)
     else:
         happening = (f"BTC is {_money(a.price)} with no clear side for the next 4 hours. "
                      f"It is stuck between {_money(floor)} and {_money(ceiling)} until one of them breaks.")
@@ -78,13 +89,31 @@ def desk_read(a) -> dict:
     return {"direction": direction, "happening": happening, "target": target, "safety": safety}
 
 
-def plan_read(report_row: dict, price: float | None) -> dict | None:
-    """The same fields from a report's plan, when it has one with a side."""
+def _plan(report_row: dict | None) -> dict | None:
     try:
-        plan = json.loads(report_row.get("plan") or "null")
+        plan = json.loads((report_row or {}).get("plan") or "null")
     except (TypeError, ValueError):
         return None
-    if not plan or plan.get("side") not in ("LONG", "SHORT"):
+    return plan if plan and plan.get("side") in ("LONG", "SHORT") else None
+
+
+def plan_live(report_row: dict | None, now_ms: int) -> bool:
+    """Whether a report's plan is still the one being traded: it has a side, its hours have not run out,
+    and the ledger has not closed it (target, stop, not triggered). While it is, every pulse speaks from it,
+    so the 4h-close message and the report message name the same target and the same safety line."""
+    plan = _plan(report_row)
+    if plan is None:
+        return False
+    if (report_row.get("plan_outcome") or "open") != "open":
+        return False
+    expires = int(report_row.get("ts_ms") or 0) + int(float(plan.get("expires_hours") or 24) * 3_600_000)
+    return now_ms < expires
+
+
+def plan_read(report_row: dict, price: float | None, now_ms: int | None = None) -> dict | None:
+    """The same fields from a report's plan, when it has one with a side."""
+    plan = _plan(report_row)
+    if plan is None:
         return None
     from core.plan_alerts import TF_WORDS
 
@@ -185,26 +214,33 @@ def text(read: dict, m, now_ms: int, basis: str) -> str:
         "⚠️ IMPORTANT NEWS / EVENT WARNINGS:", _news(m, now_ms), RULE])
 
 
-def close_event(live, m, now_ms: int) -> Event | None:
-    """The pulse for the 4h candle that just closed, while that close is still fresh."""
-    if live is None:
-        return None
+def close_event(live, m, now_ms: int, plan_row: dict | None = None) -> Event | None:
+    """The pulse for the 4h candle that just closed, while that close is still fresh. With a live plan it
+    speaks from the plan (the report's zone, target and stop); otherwise from the Live desk."""
     close = now_ms - now_ms % CLOSE_MS
     if now_ms - close > SEND_WITHIN_MS:
+        return None
+    price = getattr(m.spot, "last", None)
+    if plan_live(plan_row, now_ms):
+        read = plan_read(plan_row, price if price is not None else getattr(live, "price", None))
+        if read is not None:
+            basis = f"4h candle close · plan from report {plan_row.get('report_id', '')}".strip()
+            return Event("pulse", f"pulse:4h:{close}", text(read, m, now_ms, basis), price)
+    if live is None:
         return None
     return Event("pulse", f"pulse:4h:{close}", text(desk_read(live), m, now_ms, "4h candle close · Live desk"),
                  live.price)
 
 
 def report_event(report_row: dict | None, live, m, now_ms: int) -> Event | None:
-    """The pulse for the newest report, once, while it is fresh."""
+    """The pulse for a new report that carries a plan with a side, once, while it is fresh. A report
+    without one (the 15-agent report, or a 1-agent 'stand aside') adds nothing the 4h-close pulse does not
+    already say, so it sends nothing: a compare run is one dispatch, not two."""
     if not report_row or now_ms - int(report_row.get("ts_ms") or 0) > SEND_WITHIN_MS:
         return None
     price = getattr(m.spot, "last", None)
     read = plan_read(report_row, price)
-    basis = f"new report {report_row.get('report_id', '')}".strip()
     if read is None:
-        if live is None:
-            return None
-        read, basis = desk_read(live), basis + " · Live desk"
+        return None
+    basis = f"new report {report_row.get('report_id', '')}".strip()
     return Event("pulse", f"pulse:report:{report_row.get('report_id')}", text(read, m, now_ms, basis), price)

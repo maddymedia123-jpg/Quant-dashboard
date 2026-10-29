@@ -82,14 +82,16 @@ def market_events(store, m, analyses: dict, now_ms: int) -> list[Event]:
         if key in ("live", "intraday") and c.state not in ma.SILENT_STATES:
             trend = c.bias.direction if c.bias is not None else None
             context.append(f"{PROFILES[key].label} {ma.state_name(c.state, trend).lower()}")
-    events += pa.events(pa.latest_plan_report(store), m.spot.frames,
+    plan_row = pa.latest_plan_report(store)
+    events += pa.events(plan_row, m.spot.frames,
                         m.taker_flow.frames if m.taker_flow.available else None, now_ms, m.spot.last,
                         context="; ".join(context))
     events += ma.trap_events(store.traps(limit=200), now_ms)
     latest = store.reports(limit=1)
     rep_pulse = pulse.report_event(latest[0] if latest else None, analyses.get("live"), m, now_ms)
-    # a fresh report's pulse stands in for the close's: one dispatch, not two back to back
-    p = rep_pulse or pulse.close_event(analyses.get("live"), m, now_ms)
+    # a fresh report's pulse stands in for the close's: one dispatch, not two back to back; a close while
+    # the plan is live speaks from the plan, so both messages name the same target and safety line
+    p = rep_pulse or pulse.close_event(analyses.get("live"), m, now_ms, plan_row=plan_row)
     if p is not None:
         events.append(p)
     return events
