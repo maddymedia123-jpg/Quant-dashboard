@@ -23,6 +23,21 @@ def test_report_hit_rules():
     assert report_hit("NO_TRAP", 0.2, 1.0, "NEUTRAL", "24h")
 
 
+def test_the_chance_rate_is_what_a_coin_flip_scores_under_the_hit_rule():
+    from core.accuracy import chance_rate
+    assert round(chance_rate("BULLISH"), 3) == 0.401 and chance_rate("BEARISH") == chance_rate("BULLISH")
+    assert round(chance_rate("NEUTRAL"), 3) == 0.383
+    from core.anchors import horizon_ms_for
+    H = horizon_ms_for("live")
+    s = Store(":memory:")
+    for d in ("BULLISH", "BULLISH", "NEUTRAL"):
+        s.add_call(0, "live", d, 0.5, 100.0, 1.0, H)
+    score_due_calls(s, now_ms=H, price=101.0)
+    h = summary(s)["by_category"]["live"]
+    assert h.n == 3 and h.hits == 2 and round(h.chance, 3) == round((2 * 0.401 + 0.383) / 3, 3)
+    assert HitRate(3, 2).chance is None, "a report hit rate has no chance figure"
+
+
 def test_score_due_calls_and_summary():
     from core.anchors import horizon_ms_for
 

@@ -13,16 +13,38 @@ from core.config import CATEGORIES
 DAY_MS = 86_400_000
 WEEK_MS = 7 * DAY_MS
 MIN_SAMPLE = 10
+# a directional call is a hit past this many sigmas its way; a neutral one within this band either side
+DIR_THRESHOLD = 0.25
+NEUTRAL_BAND = 0.5
+
+
+def _phi(x: float) -> float:
+    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
+
+def chance_rate(direction: str) -> float:
+    """What a coin flip scores under call_hit's rule, with the move a standard normal in sigmas: a
+    directional call needs more than DIR_THRESHOLD sigma its way (about 40%), a neutral one needs the move
+    inside NEUTRAL_BAND either side (about 38%). The screen shows it beside the hit rate: a 24% hit rate
+    reads as a disaster against 50% and as a weak signal against 40%."""
+    if direction in ("BULLISH", "BEARISH"):
+        return 1.0 - _phi(DIR_THRESHOLD)
+    return 2.0 * _phi(NEUTRAL_BAND) - 1.0
 
 
 @dataclass
 class HitRate:
     n: int = 0
     hits: int = 0
+    chance_sum: float = 0.0          # the chance rate of each counted call, added up
 
     @property
     def rate(self) -> float | None:
         return (self.hits / self.n) if self.n else None
+
+    @property
+    def chance(self) -> float | None:
+        return (self.chance_sum / self.n) if self.n and self.chance_sum else None
 
     @property
     def small(self) -> bool:
@@ -43,10 +65,10 @@ def _move_pct(price_now: float, price_then: float) -> float:
 def call_hit(direction: str, move_pct: float, sigma_pct: float | None) -> bool:
     s = sigma_pct if sigma_pct and sigma_pct > 0 else 1.0
     if direction == "BULLISH":
-        return move_pct > 0.25 * s
+        return move_pct > DIR_THRESHOLD * s
     if direction == "BEARISH":
-        return move_pct < -0.25 * s
-    return abs(move_pct) <= 0.5 * s
+        return move_pct < -DIR_THRESHOLD * s
+    return abs(move_pct) <= NEUTRAL_BAND * s
 
 
 def score_due_calls(store, now_ms: int, price: float) -> int:
@@ -213,6 +235,7 @@ def summary(store) -> dict:
         h = by_cat.setdefault(c["category"], HitRate())
         h.n += 1
         h.hits += int(c["hit"] or 0)
+        h.chance_sum += chance_rate(c["direction"])
     by_cls: dict[str, HitRate] = {}
     by_cls_7d: dict[str, HitRate] = {}
     for r in store.reports(limit=500):

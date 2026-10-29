@@ -27,6 +27,9 @@ def test_no_trigger_when_nothing_changed():
 def test_each_trigger_fires_alone():
     p = _ctx()
     assert evaluate_triggers(p, replace(p, funding_sign=-1), H) == ["funding_flip"]
+    assert evaluate_triggers(p, replace(p, funding_sign=0), H) == [], "fading to the dead band is not a flip"
+    assert evaluate_triggers(_ctx(funding_sign=0), replace(p, funding_sign=-1), H) == [], "nor is leaving it"
+    assert evaluate_triggers(p, replace(p, long_short_ratio=0.99), H) == [], "1.2 to 0.99 is a wobble about 1.0"
     assert evaluate_triggers(p, replace(p, oi_change_24h_pct=6.5), H) == ["oi_shift"]
     assert evaluate_triggers(p, replace(p, long_short_ratio=0.9), H) == ["long_short_cross"]
     assert evaluate_triggers(p, replace(p, squeeze_score=65), H) == ["squeeze"]
@@ -69,4 +72,22 @@ def test_anchor_step_initial_then_hold_then_reanchor():
     a2 = analyze_category(CATEGORIES["live"], m2.spot.frames, m2.futures)
     v3 = anchor_step(s, "live", a2, m2, None, now_ms=3_000)
     assert v3.changed and "funding_flip" in v3.triggers_fired and v3.since_ms == 3_000
-    assert len(s.anchor_log()) == 2 and len(s.calls()) == 2 and s.last_signal("live")["ts_ms"] == 3_000
+    assert len(s.anchor_log()) == 2 and s.last_signal("live")["ts_ms"] == 3_000
+    same_dir = a2.direction.direction == a.direction.direction
+    assert len(s.calls()) == (1 if same_dir else 2), "a re-anchor that keeps the direction is not a new call"
+
+
+def test_funding_near_zero_has_no_sign_and_a_held_direction_is_scored_once_per_horizon():
+    """29 Oct: funding at +0.002% wobbled through zero; nine funding_flip re-anchors in 33 minutes each
+    added a scored call for the same bullish view. The dead band nulls the sign, and a held direction
+    gets one call per horizon however many triggers fire."""
+    from core.anchors import FUNDING_DEADBAND, _sign, call_due
+    assert _sign(0.000021, FUNDING_DEADBAND) == 0 and _sign(-0.000021, FUNDING_DEADBAND) == 0
+    assert _sign(0.0001, FUNDING_DEADBAND) == 1 and _sign(-0.00005, FUNDING_DEADBAND) == -1
+    assert _sign(None, FUNDING_DEADBAND) is None
+    s = Store(":memory:")
+    s.add_call(1_000, "live", "BULLISH", 0.5, 100.0, 1.0, H)
+    assert call_due(s, "live", "BULLISH", "BULLISH", 1_000 + 5 * 60_000, H) is False
+    assert call_due(s, "live", "BULLISH", "BULLISH", 1_000 + H, H) is True, "once per horizon"
+    assert call_due(s, "live", "BEARISH", "BULLISH", 1_000 + 5 * 60_000, H) is True, "a change of view is a new call"
+    assert call_due(s, "intraday", "BULLISH", "BULLISH", 2_000, H) is True, "a desk with no call yet"
