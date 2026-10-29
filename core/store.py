@@ -95,6 +95,8 @@ CREATE TABLE IF NOT EXISTS market_alerts (
     claimed_ms INTEGER);
 CREATE TABLE IF NOT EXISTS cascade_states (
     category TEXT PRIMARY KEY, state TEXT NOT NULL, ts_ms INTEGER NOT NULL, since_ms INTEGER, prior_state TEXT);
+CREATE TABLE IF NOT EXISTS qf_weeks (
+    week_ms INTEGER PRIMARY KEY, created_ms INTEGER NOT NULL, payload TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS qf_plans (
     id INTEGER PRIMARY KEY AUTOINCREMENT, day_ms INTEGER NOT NULL, version INTEGER NOT NULL,
     created_ms INTEGER NOT NULL, end_ms INTEGER NOT NULL, regime TEXT NOT NULL, payload TEXT NOT NULL,
@@ -903,6 +905,23 @@ class Store:
         out = dict(r)
         out["payload"] = json.loads(out["payload"]) if out.get("payload") else {}
         out["outcome"] = json.loads(out["outcome"]) if out.get("outcome") else None
+        return out
+
+    def put_qf_week(self, plan: dict) -> bool:
+        """The week's master plan, once: the first writer's stands for the week."""
+        with self._lock:
+            cur = self._conn.execute("INSERT OR IGNORE INTO qf_weeks (week_ms, created_ms, payload) VALUES (?,?,?)",
+                                     (int(plan["week_ms"]), int(plan["created_ms"]), json.dumps(plan)))
+            self._conn.commit()
+            return cur.rowcount == 1
+
+    def qf_week(self, week_ms: int) -> dict | None:
+        with self._lock:
+            r = self._conn.execute("SELECT * FROM qf_weeks WHERE week_ms=?", (int(week_ms),)).fetchone()
+        if not r:
+            return None
+        out = dict(r)
+        out["payload"] = json.loads(out["payload"])
         return out
 
     def put_qf_plan(self, plan: dict) -> int | None:

@@ -265,8 +265,13 @@ def test_one_pass_makes_the_day_plan_once_and_replaces_it_when_broken(tmp_path, 
     store = Store(tmp_path / "s.sqlite")
     hist = hourly(800, DAY0 - 800 * H)
     now = DAY0 + 60_000
-    ev = qa.run(store, _M(hist), now)
+    from types import SimpleNamespace as NS
+    weekly = NS(price=float(hist["close"].iloc[-1]), direction=NS(direction="BULLISH", confidence=0.5, invalidation=1.0, drivers=[]),
+                levels=[], vol=NS(exp_low=1.0, exp_high=2.0))
+    ev = qa.run(store, _M(hist), now, weekly=weekly, weekly_gamma={"put_wall": 1.0, "call_wall": 2.0})
     assert [e.kind for e in ev] == ["qf_plan"] and qa.run(store, _M(hist), now + 1) == []
+    from core import qf_weekly
+    assert store.qf_week(qf_weekly.week_start(now))["payload"]["weekly_gex_walls"] == [1.0, 2.0], "the week's plan is written on the pass"
     # the morning post carries the compact timeline (message 6); this day is normal with lone chop and
     # expansion hours, which fold into one node, so the line names the active node and no next one
     assert ("Now ⚡" in ev[0].headline or "Next 🎯" in ev[0].headline), ev[0].headline
@@ -359,7 +364,14 @@ def test_the_chart_and_panels_build_from_a_plan():
     p = _plan(df, DAY0)
     payload = qf_chart_payload(p, df, dark=False, now_ms=DAY0)
     assert len(payload["path"]) == 25 and payload["now"] == DAY0 // 1000
-    assert {b["kind"] for b in payload["boxes"]} & {"chop", "expansion"}
+    # message 8: the forecast is solid 1-hour candles, chop windows are faint bands, expansion has no box
+    proj = payload["proj"]
+    assert len(proj) == 24 and proj[0]["open"] == p["origin"] and proj[1]["open"] == proj[0]["close"]
+    assert all(c["high"] >= max(c["open"], c["close"]) >= min(c["open"], c["close"]) >= c["low"] for c in proj)
+    assert [c["close"] for c in proj] == [h["median"] for h in p["hours"]]
+    assert {b["kind"] for b in payload["boxes"]} <= {"chop", "liq", "lvn"}, "no expansion boxes"
+    cs = qf.projected_candles(p)
+    assert {c["color"] for c in cs} <= {"GREEN", "RED"} and all(c["color"] == ("GREEN" if c["close"] >= c["open"] else "RED") for c in cs)
     # right-axis badges only: the high, the low, the invalidation and the air pockets, no text on the chart
     kinds = [ln["kind"] for ln in payload["lines"]]
     assert kinds.count("high") == 1 and kinds.count("low") == 1 and kinds.count("invalidation") == len(p["invalidation"])
@@ -368,6 +380,7 @@ def test_the_chart_and_panels_build_from_a_plan():
     html_dark = build_qf_chart_html(p, df, dark=False, now_ms=DAY0)
     assert "__PAYLOAD__" not in html_dark and "#16181A" in html_dark, "the chart is the dark terminal in light mode too"
     assert "fillText(b.label" not in html_dark and "title: ''" in html_dark
+    assert "P.proj" in html_dark and "glow" not in html_dark and "expansion" not in html_dark
     live = {"days": 0}
     for markup in (panels.qf_wire_html(p, "on track"), panels.qf_gameplan_html(p, live), panels.qf_levels_html(p),
                    panels.qf_status_html("caution", ["⚠️ CAUTION", "📊 plan"], [{"version": 0, "status": "active"}]),
@@ -381,7 +394,8 @@ def test_the_chart_and_panels_build_from_a_plan():
     # message 6: the timeline tree fades what passed and glows on what is active; the directive is pure figures
     tl = panels.qf_timeline_html(p, DAY0 + 5 * H, df)
     assert "ti-tl-done" in tl and "ti-tl-active" in tl and "ti-tl-pending" in tl and "🔥 Active Focus" in tl
-    assert "<em>Why:</em>" in tl and "GARCH volatility" in tl
+    assert "<em>Why:</em>" in tl and "GARCH" not in tl and "bps" not in tl, "zero raw math on the main screen (message 8)"
+    assert any(w in tl for w in ("quiet", "normal", "busy"))
     box = panels.qf_directive_html(p)
     assert "Intraday trade directive" in box and "Stop loss (whole-day invalidation)" in box and "TP3" in box
     assert any(f">{w}<" in box for w in ("LONG", "SHORT", "NONE"))
@@ -552,37 +566,52 @@ def test_the_volatility_schedule_and_the_payload_follow_the_plan():
         assert all(b["low"] <= lv["price"] <= b["high"] for lv in b["levels"])
     assert qf.volatility_schedule(qf.locked_plan(DAY0, DAY0 + qf.DAY_MS, 1.0, 2, None, None), DAY0) == {"next": [], "blocks": []}
 
-    out = qf_payload.payload(p, "caution", [{"version": 0, "status": "active"}], "⚠️ x", {"days": 0}, DAY0 + 5 * H, df)
-    assert set(out) == {"audit_and_alert_status", "layman_summary_and_timeline_tree", "tradingview_chart_payload",
-                        "collapsible_raw_math_drawer"}, "Hammad's message-6 schema"
+    week = {"week_ms": DAY0, "weekly_bias": "BULLISH", "weekly_gex_walls": [76_000.0, 86_000.0],
+            "macro_baseline_summary": "The weekly chart leans bullish."}
+    audit = {"note": "🔍 SELF-AUDIT REPORT: High projection missed by 2.0%. Root cause: x. System multipliers: y."}
+    out = qf_payload.payload(p, "caution", [{"version": 0, "status": "active"}], "⚠️ x", {"days": 0}, DAY0 + 5 * H, df,
+                             week=week, self_audit=audit)
+    assert set(out) == {"audit_and_alert_status", "monday_master_plan_sticky", "layman_summary_and_timeline_tree",
+                        "tradingview_chart_payload", "collapsible_raw_math_drawer"}, "Hammad's message-9 schema plus the drawer"
     a = out["audit_and_alert_status"]
-    assert a["tier_status"] == "TIER-1 CAUTION" and a["re_forecast_count"] == 0 and a["bot_message"] == "⚠️ x"
-    assert a["magnitude_scaler"] == {"scaled": False} and "Now ⚡" in a["timeline_status"]
+    assert set(a) == {"plan_id", "tier_status", "self_audit_correction_note", "bot_message"}
+    assert a["tier_status"] == "TIER-1 CAUTION" and a["bot_message"] == "⚠️ x" and a["self_audit_correction_note"].startswith("🔍")
+    mon = out["monday_master_plan_sticky"]
+    assert mon == {"weekly_bias": "BULLISH", "weekly_gex_walls": [76_000.0, 86_000.0],
+                   "macro_baseline_summary": "The weekly chart leans bullish."}
     lay = out["layman_summary_and_timeline_tree"]
-    assert lay["master_regime"] == qa.REGIME_WORD[p["regime"]] and lay["daily_coordinates"]["predicted_high"]["pkt_time"]
-    assert lay["daily_coordinates"]["whole_day_macro_invalidation"] == p["invalidation"]
+    assert set(lay) == {"master_regime", "confidence_odds", "timeline_tree_nodes", "trade_directive_box"}
+    assert lay["master_regime"] == qa.REGIME_WORD[p["regime"]]
     nodes = lay["timeline_tree_nodes"]
     assert nodes and {n["state"] for n in nodes} <= {"COMPLETED_FADED", "ACTIVE_HIGHLIGHTED", "PENDING"}
     assert sum(1 for n in nodes if n["state"] == "ACTIVE_HIGHLIGHTED") == 1 and nodes[0]["time_window_utc"].startswith("00:01")
     assert all(n["summary_oneliner"] and n["rationale_why"] and n["price_levels"]["low"] < n["price_levels"]["high"] for n in nodes)
+    assert all("GARCH" not in n["rationale_why"] and "bps" not in n["rationale_why"] for n in nodes)
     box = lay["trade_directive_box"]
     assert set(box) >= {"direction", "stop_loss_invalidation", "entry_zone", "tp1", "tp2", "tp3"}
-    traj = out["tradingview_chart_payload"]["hourly_trajectory_24h"]
-    assert len(traj) == 24 and traj[0]["hour_index"] == 1 and traj[0]["projected_open"] == p["origin"]
-    assert traj[1]["projected_open"] == traj[0]["projected_close"] and traj[0]["timestamp_pkt"] == "06:00"
-    assert {t["regime_type"] for t in traj} <= {"CHOP_BOX", "EXPANSION_VECTOR", "NORMAL"}
-    ov = out["tradingview_chart_payload"]["visual_overlays"]
-    assert ov["scenario_b_secondary_chart_active"] is False
+    tv = out["tradingview_chart_payload"]
+    cs = tv["projected_candles_24h"]
+    assert len(cs) == 24 and cs[0]["hour_index"] == 1 and cs[0]["open"] == p["origin"] and cs[1]["open"] == cs[0]["close"]
+    assert cs[0]["timestamp_pkt"] == "06:00" and {c["color"] for c in cs} <= {"GREEN", "RED"}
+    assert {c["regime_type"] for c in cs} <= {"CHOP_BOX", "EXPANSION_VECTOR", "NORMAL"} and "not a simulated candle" in tv["note"]
+    ov = tv["visual_overlays"]
+    assert set(ov) == {"transparent_chop_bands", "right_axis_badges"} and isinstance(ov["transparent_chop_bands"], list)
     badges = ov["right_axis_badges"]
-    assert badges["predicted_high"] == p["projected_high"]["price"] and "lvn_air_pockets" in badges
+    assert set(badges) == {"predicted_high", "predicted_low", "whole_day_invalidation_level", "liquidation_cluster_levels"}
+    assert badges["predicted_high"] == p["projected_high"]["price"]
+    assert badges["whole_day_invalidation_level"] == (next(iter(p["invalidation"].values())) if len(p["invalidation"]) == 1 else p["invalidation"])
     raw = out["collapsible_raw_math_drawer"]
     assert raw["garch_alpha"] == p["garch"]["alpha"] and "hurst_exponent" in raw and raw["backtest_summary_stats"] == {}
-    assert len(raw["volatility_schedule_4h"]) == 6
+    assert len(raw["volatility_schedule_4h"]) == 6 and raw["re_forecast_count"] == 0 and "Now ⚡" in raw["timeline_status"]
+    assert raw["magnitude_scaler"] == {"scaled": False} and raw["timeline_expected_move_bps"][0]["bps"] > 0
     import json
     json.dumps(out)
+    bare = qf_payload.payload(p, "on track", [], "", {}, DAY0 + 5 * H)
+    assert bare["monday_master_plan_sticky"] == {"weekly_bias": None, "weekly_gex_walls": [None, None], "macro_baseline_summary": None}
+    assert bare["audit_and_alert_status"]["self_audit_correction_note"] is None
     b = qf_payload.payload({**p, "version": 1}, "on track", [{"version": 0, "status": "invalidated"},
                                                                {"version": 1, "status": "active"}], "", {}, DAY0 + 5 * H)
-    assert b["tradingview_chart_payload"]["visual_overlays"]["scenario_b_secondary_chart_active"] is True
+    assert b["collapsible_raw_math_drawer"]["scenario_b_secondary_chart_active"] is True
 
 
 def test_the_timeline_tree_and_the_trade_directive_follow_the_clock_and_the_plan():
@@ -594,7 +623,8 @@ def test_the_timeline_tree_and_the_trade_directive_follow_the_clock_and_the_plan
     nodes = qf_tree.timeline_tree(p, DAY0)
     assert len(nodes) == 1 and nodes[0]["state"] == "ACTIVE_HIGHLIGHTED" and nodes[0]["emoji"] == "⚡"
     assert "Pullback floor near $79,600" in nodes[0]["summary"] and "Day's high near $80,800" in nodes[0]["summary"]
-    assert nodes[0]["why"].startswith("normal GARCH volatility") and "levels inside: value low $79,650" in nodes[0]["why"]
+    assert nodes[0]["why"].startswith("An ordinary stretch for the day") and "price meets the value low at $79,650" in nodes[0]["why"]
+    assert nodes[0]["tempo"] == "normal" and nodes[0]["bps"] > 0
     assert qf_tree.timeline_tree(p, DAY0 - 1)[0]["state"] == "PENDING"
     done = qf_tree.timeline_tree(p, DAY0 + qf.DAY_MS, candles([80_000, 80_300, 79_700], start=DAY0))
     assert done[0]["state"] == "COMPLETED_FADED" and done[0]["actual_low"] == 79_695.0 and "Traded $79,695 to $80,305" in done[0]["summary"]

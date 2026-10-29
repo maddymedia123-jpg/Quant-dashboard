@@ -25,6 +25,7 @@ skipped: an hour-old caution is not news."""
 from __future__ import annotations
 
 import json
+import logging
 import math
 from datetime import datetime, timezone
 
@@ -33,6 +34,8 @@ import pandas as pd
 from core import qf_preflight
 from core import quant_forecast as qf
 from core.alerts import Event
+
+log = logging.getLogger(__name__)
 
 HOUR_MS = qf.HOUR_MS
 M15_MS = 900_000
@@ -421,14 +424,21 @@ def _replacement(store, plans: list[dict], prev: dict, hit: dict, h1, price: flo
     return new if _publish(store, new) else None
 
 
-def run(store, m, now_ms: int, gamma: dict | None = None) -> list[Event]:
+def run(store, m, now_ms: int, gamma: dict | None = None, weekly=None, weekly_gamma: dict | None = None) -> list[Event]:
     """Make today's plan if there is none, replace it when invalidated, audit it, score what has ended.
-    Returns the alert events this pass found; the caller logs them in the ledger, which keeps them once."""
+    Returns the alert events this pass found; the caller logs them in the ledger, which keeps them once.
+    `weekly` (the Weekly desk's analysis) writes the Sticky Monday Master Plan on the week's first pass."""
     frames = m.spot.frames or {}
     h1 = frames.get("1h")
     price = m.spot.last
     if h1 is None or h1.empty or not price:
         return []
+    if weekly is not None:
+        from core import qf_weekly
+        try:
+            qf_weekly.ensure(store, weekly, weekly_gamma, now_ms, float(price))
+        except Exception as e:  # noqa: BLE001 - the week's note must not stop the day's plan
+            log.warning("quant forecast: weekly plan not written: %s", e)
     flow = m.taker_flow.frames if getattr(m.taker_flow, "available", False) else {}
     day = qf.day_start(now_ms)
     end = day + qf.DAY_MS

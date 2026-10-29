@@ -5,8 +5,9 @@
 <script>
 const P = __PAYLOAD__;
 (function(){
-// The pure-forecasting chart: candles to the "now" line, the green path after it, grey chop boxes, green
-// expansion boxes, and the levels as right-axis badges only. Nothing is written over the candles.
+// The pure-forecasting chart: candles to the "now" line, the forecast as solid 1-hour candles after it
+// (green up-hours, red down-hours), faint chop bands, and the levels as right-axis badges only. Nothing
+// is written over the candles.
 const T = P.theme, LW = LightweightCharts, el = document.getElementById('chart');
 // every time on this chart reads UTC first, PKT (UTC+5, no daylight saving) after it
 const pad = n => String(n).padStart(2, '0');
@@ -28,14 +29,13 @@ const chart = LW.createChart(el, {
 });
 const real = chart.addSeries(LW.CandlestickSeries, { upColor: T.panel, downColor: T.down, borderVisible: true, borderUpColor: T.up, borderDownColor: T.down, wickUpColor: T.up, wickDownColor: T.down, priceLineVisible: false, lastValueVisible: false });
 real.setData(P.candles.concat(P.whitespace));
-// the path: a soft glow under a solid green line, no label of its own
-if (P.path.length > 1) {
-  const glow = chart.addSeries(LW.LineSeries, { color: rgba(T.up, 0.28), lineWidth: 6, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
-  glow.setData(P.path);
-  const path = chart.addSeries(LW.LineSeries, { color: T.up, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
-  path.setData(P.path);
+// the forecast: solid 1-hour candles (the median path, hour by hour), the 68% envelope faint and dashed
+if (P.proj && P.proj.length) {
+  const proj = chart.addSeries(LW.CandlestickSeries, { upColor: T.up, downColor: T.down, borderVisible: false,
+    wickUpColor: T.up, wickDownColor: T.down, priceLineVisible: false, lastValueVisible: false });
+  proj.setData(P.proj);
   ['bandHigh', 'bandLow'].forEach(k => {
-    const s = chart.addSeries(LW.LineSeries, { color: rgba(T.up, 0.45), lineWidth: 1, lineStyle: LW.LineStyle.Dashed, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+    const s = chart.addSeries(LW.LineSeries, { color: rgba(T.up, 0.3), lineWidth: 1, lineStyle: LW.LineStyle.Dashed, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
     s.setData(P[k]);
   });
 }
@@ -50,8 +50,8 @@ P.lines.forEach(l => {
     keep.setData([{ time: P.origin, value: l.price }, { time: lastT, value: l.price }]);
   }
 });
-// boxes: grey chop windows, green expansion windows, the air pockets and estimated liquidation zones as faint bands
-const FILL = { chop: [T.muted, 0.16], expansion: [T.up, 0.13], liq: [T.down, 0.10], lvn: [T.muted, 0.07] };
+// bands: chop windows, the air pockets and estimated liquidation zones - all faint, all behind the candles
+const FILL = { chop: [T.muted, 0.11], liq: [T.down, 0.10], lvn: [T.muted, 0.07] };
 class BoxRenderer {
   constructor(b) { this._b = b; }
   draw(target) {
@@ -60,9 +60,7 @@ class BoxRenderer {
       const ctx = s.context, hr = s.horizontalPixelRatio, vr = s.verticalPixelRatio;
       const x = Math.min(b.x1, b.x2) * hr, y = Math.min(b.y1, b.y2) * vr, w = Math.abs(b.x2 - b.x1) * hr, h = Math.abs(b.y2 - b.y1) * vr;
       const [c, a] = FILL[b.kind] || [T.muted, 0.1];
-      ctx.save(); ctx.fillStyle = rgba(c, a); ctx.fillRect(x, y, w, h);
-      if (b.kind === 'chop' || b.kind === 'expansion') { ctx.strokeStyle = rgba(c, 0.55); ctx.lineWidth = hr; ctx.strokeRect(x, y, w, h); }
-      ctx.restore();
+      ctx.save(); ctx.fillStyle = rgba(c, a); ctx.fillRect(x, y, w, h); ctx.restore();
     });
   }
 }
