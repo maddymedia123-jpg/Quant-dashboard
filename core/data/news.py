@@ -27,6 +27,7 @@ from email.utils import parsedate_to_datetime
 
 import httpx
 
+from core.data import blocklist
 from core.data.types import NewsSnapshot
 
 log = logging.getLogger(__name__)
@@ -262,16 +263,18 @@ async def fetch_news(client: httpx.AsyncClient) -> NewsSnapshot:
 
     Concurrent, not sequential: awaited one after another, this single leg could hold the page for three
     read timeouts in a row - 36 s measured - while every other provider in fetch_context caps at one."""
-    legs = [(source, _one_feed(client, source, url)) for source, url in FEEDS]
-    legs.append((AGGREGATOR[0], _aggregator(client, AGGREGATOR[1])))
+    problems: list[str] = [blocklist.skipped(s) for s, _ in (*FEEDS, AGGREGATOR) if blocklist.blocked(s)]
+    legs = [(source, _one_feed(client, source, url)) for source, url in FEEDS if not blocklist.blocked(source)]
+    if not blocklist.blocked(AGGREGATOR[0]):
+        legs.append((AGGREGATOR[0], _aggregator(client, AGGREGATOR[1])))
     results = await asyncio.gather(*(coro for _, coro in legs), return_exceptions=True)
 
     collected: list[list[dict]] = []
-    problems: list[str] = []
     ok_sources: list[str] = []
     for (name, _), outcome in zip(legs, results):
         if isinstance(outcome, BaseException):
-            log.warning("news source %s unavailable: %s", name, outcome)
+            if not blocklist.note_failure(name, outcome):    # a refusal is logged once, by the blocklist
+                log.warning("news source %s unavailable: %s", name, outcome)
             problems.append(f"{name}: {_reason(outcome)}")
         elif outcome:
             collected.append(outcome)

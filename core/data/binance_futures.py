@@ -9,6 +9,7 @@ import statistics
 import httpx
 
 from core.config import SYMBOLS
+from core.data import blocklist
 from core.data.types import FuturesSnapshot, HyperliquidSnapshot, WhalesSnapshot
 
 log = logging.getLogger(__name__)
@@ -97,10 +98,14 @@ async def fetch_futures(client: httpx.AsyncClient) -> FuturesSnapshot:
     from core.data.gate_futures import fetch_gate_futures  # local import keeps module load light
     errors = []
     for name, fn in (("binance", _binance), ("bybit", _bybit)):
+        if blocklist.blocked(name):
+            errors.append(blocklist.skipped(name))
+            continue
         try:
             return await fn(client)
         except Exception as e:  # noqa: BLE001 - provider boundary
-            log.warning("futures via %s failed: %s", name, e)
+            if not blocklist.note_failure(name, e):          # a refusal is logged once, by the blocklist
+                log.warning("futures via %s failed: %s", name, e)
             errors.append(f"{name}: {e}")
     gate = await fetch_gate_futures(client)
     if gate.available:
