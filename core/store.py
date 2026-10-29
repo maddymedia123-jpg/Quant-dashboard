@@ -41,7 +41,8 @@ CREATE TABLE IF NOT EXISTS reports (
     id INTEGER PRIMARY KEY AUTOINCREMENT, report_id TEXT UNIQUE NOT NULL, ts_ms INTEGER NOT NULL,
     classification TEXT NOT NULL, price REAL NOT NULL, sigma24_pct REAL, majority_dir TEXT,
     move_24h_pct REAL, hit_24h INTEGER, move_7d_pct REAL, hit_7d INTEGER,
-    mode TEXT NOT NULL DEFAULT '15-agent', snapshot_id TEXT, plan TEXT, plan_outcome TEXT, plan_scored_ms INTEGER);
+    mode TEXT NOT NULL DEFAULT '15-agent', snapshot_id TEXT, plan TEXT, plan_outcome TEXT, plan_scored_ms INTEGER,
+    payload TEXT);
 CREATE TABLE IF NOT EXISTS live_anchors (
     window_open_ms INTEGER PRIMARY KEY, window_close_ms INTEGER NOT NULL, published_ms INTEGER NOT NULL,
     bias TEXT NOT NULL, margin REAL, confidence REAL, trap TEXT, price REAL, payload TEXT NOT NULL);
@@ -274,7 +275,7 @@ class Store:
         "market_alerts": {"claimed_ms": "INTEGER"},
         "cascade_states": {"since_ms": "INTEGER", "prior_state": "TEXT"},
         "reports": {"mode": "TEXT NOT NULL DEFAULT '15-agent'", "snapshot_id": "TEXT", "plan": "TEXT",
-                    "plan_outcome": "TEXT", "plan_scored_ms": "INTEGER"},
+                    "plan_outcome": "TEXT", "plan_scored_ms": "INTEGER", "payload": "TEXT"},
     }
 
     def _add_missing_columns(self) -> None:
@@ -349,18 +350,38 @@ class Store:
     # ---- reports ----
     def add_report(self, report_id: str, ts_ms: int, classification: str, price: float, sigma24_pct: float | None,
                    majority_dir: str | None, mode: str = "15-agent", snapshot_id: str | None = None,
-                   plan: str | None = None) -> bool:
+                   plan: str | None = None, payload: str | None = None) -> bool:
+        """`payload` is the whole report as JSON, so a report run in one browser can be read in another.
+        Without it the row carries only what the worker needs to alert on and score the report."""
         with self._lock:
             cur = self._conn.execute(
                 "INSERT OR IGNORE INTO reports (report_id, ts_ms, classification, price, sigma24_pct, majority_dir, "
-                "mode, snapshot_id, plan) VALUES (?,?,?,?,?,?,?,?,?)",
-                (report_id, int(ts_ms), classification, float(price), sigma24_pct, majority_dir, mode, snapshot_id, plan))
+                "mode, snapshot_id, plan, payload) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (report_id, int(ts_ms), classification, float(price), sigma24_pct, majority_dir, mode, snapshot_id,
+                 plan, payload))
             self._conn.commit()
             return cur.rowcount == 1
 
     def reports(self, limit: int = 50) -> list[dict]:
+        """Newest first, without the report bodies: a body can run to 100 KB, and the callers here read the
+        summary columns only."""
         with self._lock:
-            return _rows(self._conn.execute("SELECT * FROM reports ORDER BY ts_ms DESC LIMIT ?", (int(limit),)))
+            return _rows(self._conn.execute(
+                "SELECT id, report_id, ts_ms, classification, price, sigma24_pct, majority_dir, move_24h_pct, hit_24h, "
+                "move_7d_pct, hit_7d, mode, snapshot_id, plan, plan_outcome, plan_scored_ms FROM reports "
+                "ORDER BY ts_ms DESC LIMIT ?", (int(limit),)))
+
+    def latest_report_payloads(self) -> dict[str, dict]:
+        """The newest report of each pipeline that was saved whole: {mode: {report_id, ts_ms, mode, payload}}.
+        Reports from before bodies were kept have no payload and are not here."""
+        with self._lock:
+            rows = _rows(self._conn.execute(
+                "SELECT report_id, ts_ms, mode, payload FROM reports WHERE payload IS NOT NULL "
+                "ORDER BY ts_ms DESC LIMIT 20"))
+        out: dict[str, dict] = {}
+        for r in rows:
+            out.setdefault(str(r["mode"]), r)
+        return out
 
     def set_plan_outcome(self, row_id: int, outcome: str, scored_ms: int | None) -> None:
         """`open` keeps a plan live (scored_ms None); anything else is final."""

@@ -62,9 +62,25 @@ def record_report(store, report, price: float, sigma24_pct: float | None, majori
     if report is None or report.director is None:
         return False
     plan = report.plan.model_dump_json() if getattr(report, "plan", None) is not None else None
+    # the whole report too, so the other reader (Hammad's browser, or this one after a refresh) sees the
+    # same report instead of running another
+    payload = report.model_dump_json() if hasattr(report, "model_dump_json") else None
     return store.add_report(report.report_id, now_ms, report.director.trap_classification, price, sigma24_pct,
                             majority_dir, mode=getattr(report, "mode", "15-agent"),
-                            snapshot_id=getattr(report, "snapshot_id", None), plan=plan)
+                            snapshot_id=getattr(report, "snapshot_id", None), plan=plan, payload=payload)
+
+
+def stored_reports(store) -> dict:
+    """The newest saved report of each pipeline, rebuilt from the ledger: {mode: TrapReport}. A row whose
+    body no longer parses is skipped, never raised: the page must still render."""
+    from core.agents.schemas import TrapReport
+    out = {}
+    for mode, row in store.latest_report_payloads().items():
+        try:
+            out[mode] = TrapReport.model_validate_json(row["payload"])
+        except Exception:  # noqa: BLE001 - an old or hand-edited row must not blank the Director tab
+            continue
+    return out
 
 
 # ---------- plan outcomes ----------

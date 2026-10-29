@@ -440,3 +440,31 @@ def test_one_range_per_desk_and_the_strip_reads_the_desk_window(app):
     plain = re.search(r"Normal range for the next 4 hours \(where it ends two times in three\): (\$[\d,]+) to (\$[\d,]+)", md)
     assert fc and plain and fc.groups() == plain.groups(), (fc and fc.groups(), plain and plain.groups())
     assert "Liq 4h" in md and "Taker delta 4h" in md and "Liq 24h" not in md
+
+
+def test_a_report_run_in_another_browser_shows_on_the_director_tab(tmp_path, monkeypatch):
+    """29 Oct: Hammad ran TIR1-20261029-201531, Discord carried its pulse, and the other browser's Director
+    tab read 'No report yet'. The newest saved report of each pipeline now renders for whoever opens the tab."""
+    from datetime import datetime, timezone
+
+    from core.accuracy import record_report
+    from core.agents.schemas import DirectorReport, Scenario, TradePlan, TrapReport
+
+    store = _fresh_store(tmp_path, monkeypatch)
+    d = DirectorReport(executive_summary="Range holds into the US open.", trap_classification="RANGE_TRAP",
+                       classification_rationale="r",
+                       scenarios=[Scenario(name="a", probability=50, path="p", invalidation="i"),
+                                  Scenario(name="b", probability=50, path="p", invalidation="i")],
+                       trade_plan=TradePlan(existing_position_management="h", new_entry_conditions="n",
+                                            position_sizing="s", stop_loss="l", max_leverage="3x"))
+    rep = TrapReport(report_id="TIR1-ELSEWHERE", generated_at=datetime.now(timezone.utc), window="w",
+                     provider="fake", director=d, mode="1-agent")
+    assert record_report(store, rep, 80_000.0, 1.0, "NEUTRAL", int(time.time() * 1000))
+    store.close()
+
+    at = visit(pytest.importorskip("streamlit.testing.v1").AppTest.from_file(APP, default_timeout=180).run(), "director")
+    assert not at.exception, [e.value for e in at.exception]
+    markdown = " ".join(m.value for m in at.markdown)
+    assert "No report yet" not in markdown
+    assert "Range holds into the US open." in markdown
+    assert any("TIR1-ELSEWHERE" in t.label for t in at.tabs) if hasattr(at, "tabs") else True
