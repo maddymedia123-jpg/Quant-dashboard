@@ -333,6 +333,12 @@ class Store:
             self._conn.commit()
             return int(cur.lastrowid)
 
+    def last_call(self, category: str) -> dict | None:
+        with self._lock:
+            r = self._conn.execute("SELECT * FROM calls WHERE category=? ORDER BY ts_ms DESC, id DESC LIMIT 1",
+                                   (category,)).fetchone()
+        return dict(r) if r else None
+
     def due_calls(self, now_ms: int) -> list[dict]:
         with self._lock:
             return _rows(self._conn.execute("SELECT * FROM calls WHERE scored_ms IS NULL AND ts_ms + horizon_ms <= ? ORDER BY ts_ms", (int(now_ms),)))

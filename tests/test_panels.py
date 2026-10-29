@@ -107,7 +107,7 @@ def test_anchored_direction_early_warning_and_accuracy_panels():
     assert "BULL TRAP FORMING" in ew and "ti-card warn" in ew
     empty = panels.accuracy_html({"total_scored": 0, "open_calls": 3})
     assert "No scored calls yet" in empty and "waiting: 3" in empty
-    full = panels.accuracy_html({"total_scored": 3, "open_calls": 0, "by_category": {"live": HitRate(3, 2)},
+    full = panels.accuracy_html({"total_scored": 3, "open_calls": 0, "by_category": {"live": HitRate(3, 2, 1.2)},
                                  "by_classification_24h": {"BULL_TRAP": HitRate(1, 1)}, "by_classification_7d": {},
                                  "recent_calls": [{"category": "live", "direction": "BULLISH", "price": 78000.0, "realised_pct": 0.4, "hit": 1}],
                                  "recent_reports": []})

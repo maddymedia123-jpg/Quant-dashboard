@@ -311,12 +311,14 @@ def early_warning_html(ws) -> str | None:
                  f"{html.escape(w.kind.replace('_', ' '))}</span><strong>{html.escape(w.level)}</strong></div>"
                  + "<div class='ti-early-drivers'>" + "".join(f"<span>— {html.escape(d)}</span>" for d in w.drivers) + "</div>")
     return f"<div class='ti-early blueprint ti-card warn'>{CORNERS}{body}</div>"
-def _rate_rows(d: dict) -> str:
+def _rate_rows(d: dict, chance: bool = False) -> str:
     rows = ""
     for k, h in sorted(d.items()):
         rate = f"{h.rate:.0%}" if h.rate is not None else "—"
         flag = " (small sample)" if h.small else ""
-        rows += f"<tr><td>{html.escape(str(k))}</td><td>{rate}</td><td>{h.hits}/{h.n}{html.escape(flag)}</td></tr>"
+        ch = getattr(h, "chance", None)
+        extra = (f"<td>{ch:.0%}</td>" if ch is not None else "<td>—</td>") if chance else ""
+        rows += f"<tr><td>{html.escape(str(k))}</td><td>{rate}</td>{extra}<td>{h.hits}/{h.n}{html.escape(flag)}</td></tr>"
     return rows
 
 
@@ -326,7 +328,11 @@ def accuracy_html(s: dict) -> str:
                 "(Live 1h, Intraday 24h, Weekly 7d, Monthly 30d); Director reports score at 24h and 7d. "
                 f"Open calls waiting: {s.get('open_calls', 0)}.</p>")
         return card_html("Accuracy ledger", body)
-    body = "<p>Direction calls by category</p><table><tr><th>Category</th><th>Hit rate</th><th>Hits / n</th></tr>" + _rate_rows(s["by_category"]) + "</table>"
+    body = ("<p>Direction calls by category</p><table><tr><th>Category</th><th>Hit rate</th><th>Chance</th><th>Hits / n</th></tr>"
+            + _rate_rows(s["by_category"], chance=True) + "</table>"
+            "<p class='muted'>Chance is what a coin flip would score under the same rule: a directional call counts "
+            "only when price moves more than a quarter of the desk's sigma its way, a neutral one only when it stays "
+            "within half a sigma. Read the hit rate against it, not against 50%.</p>")
     if s["by_classification_24h"]:
         body += "<p>Director classification, 24h</p><table><tr><th>Class</th><th>Hit rate</th><th>Hits / n</th></tr>" + _rate_rows(s["by_classification_24h"]) + "</table>"
     if s["by_classification_7d"]:
