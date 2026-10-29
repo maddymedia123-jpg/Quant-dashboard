@@ -34,7 +34,7 @@ def test_the_message_follows_his_template_in_order():
     t = pulse.close_event(live(), market(), CLOSE + 60_000).headline
     order = ["MARKET PULSE DISPATCH", "⏰ Time:", "🎯 MARKET DIRECTION: BEARISH", "💡 WHAT IS HAPPENING:",
              "🕒 EXACT TIME TO WATCH:", "Next Turning Window:", "📍 IMPORTANT PRICE LEVELS:",
-             "Target Level: $80,800", "Invalidation (Safety Line): $81,300", "⚠️ IMPORTANT NEWS / EVENT WARNINGS:"]
+             "Target Level: $80,500", "Invalidation (Safety Line): $81,300", "⚠️ IMPORTANT NEWS / EVENT WARNINGS:"]
     at = [t.index(s) for s in order]
     assert at == sorted(at)
     assert "PKT" in t.split("Next Turning Window:")[1].splitlines()[0]
@@ -97,12 +97,46 @@ def test_the_confirmation_names_the_candle_and_the_level_and_where_price_stands(
     assert "Do not buy here: wait for a dip into the zone, then buy only after a 1-hour candle closes above $80,300." in above
 
 
-def test_a_report_without_a_plan_falls_back_to_the_live_desk_and_a_stale_one_is_skipped():
+def test_a_report_without_a_plan_sends_nothing_and_a_stale_one_is_skipped():
+    """A 15-agent report, or a 1-agent 'stand aside', used to send the Live desk's view again: a compare
+    run was two dispatches, and every Run was a message whether or not it said anything new."""
     row = {"report_id": "TIR1-2", "ts_ms": CLOSE, "plan": json.dumps({"side": "NONE"})}
-    e = pulse.report_event(row, live(), market(), CLOSE)
-    assert "Live desk" in e.headline and "Target Level: $80,800" in e.headline
-    assert pulse.report_event(row, live(), market(), CLOSE + 31 * 60_000) is None
+    assert pulse.report_event(row, live(), market(), CLOSE) is None
+    assert pulse.report_event({"report_id": "TIR-15", "ts_ms": CLOSE, "plan": None}, live(), market(), CLOSE) is None
+    with_plan = {"report_id": "TIR1-3", "ts_ms": CLOSE, "plan": json.dumps(PLAN)}
+    assert pulse.report_event(with_plan, live(), market(), CLOSE) is not None
+    assert pulse.report_event(with_plan, live(), market(), CLOSE + 31 * 60_000) is None
     assert pulse.report_event(None, live(), market(), CLOSE) is None
+
+
+def test_the_desk_target_is_the_farther_of_the_first_level_and_the_range_edge():
+    """29 Oct: 'Target Level: $80,801' sat 0.4% from price - the first floor, not a target. The range
+    edge is the target unless a level sits beyond it."""
+    assert pulse.desk_read(live()).get("target") == "$80,500", "exp_low 80,500 is beyond the first floor 80,800"
+    near_edge = live()
+    near_edge.vol = NS(exp_low=80_900.0, exp_high=81_700.0)
+    assert pulse.desk_read(near_edge)["target"] == "$80,800", "the first floor sits beyond a narrow range"
+    bull = live("BULLISH")
+    assert pulse.desk_read(bull)["target"] == "$81,700"
+
+
+def test_a_4h_close_while_a_plan_is_live_speaks_from_the_plan():
+    """The close pulse named the desk's nearest level while the report pulse named the plan's target, so
+    two messages an hour apart gave two targets for one trade."""
+    row = {"report_id": "TIR1-9", "ts_ms": CLOSE - 2 * H, "plan": json.dumps(PLAN), "plan_outcome": None}
+    e = pulse.close_event(live("BULLISH"), market(), CLOSE + 60_000, plan_row=row)
+    assert e.dedup_key == f"pulse:4h:{CLOSE}" and "plan from report TIR1-9" in e.headline
+    assert "MARKET DIRECTION: BEARISH" in e.headline and "Target Level: $80,900" in e.headline
+    assert "Safety Line): $82,650" in e.headline
+    # closed by the ledger, or out of hours: back to the desk
+    done = dict(row, plan_outcome="stop")
+    assert "Live desk" in pulse.close_event(live(), market(), CLOSE + 60_000, plan_row=done).headline
+    old = dict(row, ts_ms=CLOSE - 13 * H)                      # PLAN expires after 12 hours
+    assert "Live desk" in pulse.close_event(live(), market(), CLOSE + 60_000, plan_row=old).headline
+    assert pulse.plan_live(row, CLOSE) and not pulse.plan_live(None, CLOSE)
+    assert pulse.plan_live({"report_id": "x", "ts_ms": CLOSE, "plan": json.dumps({"side": "NONE"})}, CLOSE) is False
+    assert pulse.close_event(None, market(), CLOSE, plan_row=row) is not None, "a plan needs no desk"
+    assert pulse.close_event(None, market(), CLOSE) is None
 
 
 def test_news_lists_us_prints_and_fresh_headlines_or_says_there_are_none():
