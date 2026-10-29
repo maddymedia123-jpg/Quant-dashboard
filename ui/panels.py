@@ -2413,12 +2413,47 @@ def qf_timeline_html(plan: dict, now_ms: int, h1=None) -> str:
         word = {"chop": "Chop box", "expansion": "Expansion", "normal": "Normal"}[n["phase"]]
         body += (f"<div class='ti-tl ti-tl-{cls[n['state']]}'>"
                  f"<p class='ti-tl-head'>{n['emoji']} <strong>[ {us} – {ue} UTC ] / [ {ks} – {ke} PKT ]</strong> "
-                 f"<span class='muted'>{html.escape(word)} · {n['bps']} bps</span></p>"
+                 f"<span class='muted'>{html.escape(word)} · {html.escape(n['tempo'])}</span></p>"
                  f"<p class='ti-tl-status'>{html.escape(n['status'])}</p>"
                  f"<p><em>Summary:</em> {html.escape(n['summary'])}</p>"
                  f"<p class='muted'><em>Why:</em> {html.escape(n['why'])}</p>"
                  f"<p class='muted'>{money(n['low'])} – {money(n['high'])}</p></div>")
     return card_html("Timeline", body)
+
+
+def qf_monday_html(week: dict | None) -> str:
+    """The Sticky Monday Master Plan (Hammad, message 8, panel B): the week's bias, the dealers' walls and
+    the baseline levels, anchored for the week."""
+    from core.qf_alerts import at_label
+    if not week:
+        return card_html("Sticky Monday master plan", "<p class='muted'>Written on the first pass after Monday 00:00 UTC "
+                                                     "(05:00 PKT), once the Weekly desk has read the chart.</p>")
+    money = lambda x: fmt_num(x, 0, "$") if x is not None else "—"  # noqa: E731
+    bias = week["weekly_bias"]
+    tone = {"BULLISH": "up", "BEARISH": "down"}.get(bias, "neutral")
+    put_wall, call_wall = (week.get("weekly_gex_walls") or [None, None])[:2]
+    base = week.get("baseline") or {}
+    body = (f"<p class='ti-wire-head'><strong>Weekly bias</strong> {chip(bias, tone)}</p>"
+            f"<p class='ti-wire-line'>{html.escape(week.get('macro_baseline_summary', ''))}</p>"
+            "<div class='ti-grid3'>"
+            + _kv("Baseline floor / ceiling", f"{money(base.get('floor'))} / {money(base.get('ceiling'))}")
+            + _kv("Dealer walls (put / call)", f"{money(put_wall)} / {money(call_wall)}")
+            + _kv("Weekly view flips", money(week.get("invalidation")) if week.get("invalidation") else "—", "down")
+            + "</div>")
+    return card_html(f"Sticky Monday master plan · week of {at_label(week['week_ms']).split(' (')[0]}", body, tone)
+
+
+def qf_audit_html(report: dict | None) -> str | None:
+    """The self-audit feedback card (Hammad, message 9, panel D), only when a level was missed."""
+    if not report:
+        return None
+    from core.qf_alerts import at_label
+    money = lambda x: fmt_num(x, 0, "$")  # noqa: E731
+    body = (f"<p class='ti-wire-line'>{html.escape(report['note'])}</p>"
+            f"<p class='muted'>Projected {report['side']} {money(report['projected'])} · printed {money(report['actual'])}"
+            + (f" · the day traded {report['range_ratio']}x the expected range" if report.get("range_ratio") else "")
+            + f" · {html.escape(at_label(report['day_ms']).split(' (')[0])}</p>")
+    return card_html("Self-audit report", body, "warn")
 
 
 def qf_directive_html(plan: dict) -> str:

@@ -606,6 +606,24 @@ def hit_rate(plan: dict, live: dict | None) -> str | None:
     return None
 
 
+def projected_candles(plan: dict) -> list[dict]:
+    """The forecast as solid 1-hour candles (Hammad, message 8): open = where the median path stood an hour
+    before, close = the median at the hour, high and low = the hour's own 68% box around that open, widened
+    to hold the body. GREEN when the close is at or above the open, RED below. The simulation does not make
+    candles - these are the median path drawn as candles so the chart reads like one - and the payload's
+    note says so."""
+    out, prev = [], float(plan.get("origin") or 0.0)
+    for k, h in enumerate(plan.get("hours") or []):
+        s = h["sigma_pct"] / 100
+        o, c = prev, float(h["median"])
+        hi, lo = max(o, c, o * math.exp(Z84 * s)), min(o, c, o * math.exp(-Z84 * s))
+        out.append({"hour_index": k + 1, "t_ms": int(h["t_ms"]), "open": round(o, 2), "high": round(hi, 2),
+                    "low": round(lo, 2), "close": round(c, 2), "color": "GREEN" if c >= o else "RED",
+                    "phase": h["phase"]})
+        prev = c
+    return out
+
+
 # ---------- the volatility schedule (Hammad, message 5, panel C) ----------
 
 def _bps(sigma_pct: float) -> int:

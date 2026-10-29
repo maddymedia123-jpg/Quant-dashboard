@@ -1328,7 +1328,20 @@ if screen == "qf":
                     else:
                         render_qf_chart(_qf_plan, _h1, dark, height=560, signal=signal, now_ms=now_ms)
         with _qf_side:
+            from core import qf_selfaudit, qf_weekly
+            try:
+                _qf_week = qf_weekly.ensure(store, analyses.get("weekly"), desk_derivs.gamma_for("weekly", m), now_ms, m.spot.last)
+            except Exception as _e:  # noqa: BLE001 - the week's note must not blank the screen
+                _qf_week, _qf_problem = None, _qf_problem or f"Monday plan unavailable: {_e}"
+            try:
+                _qf_self = qf_selfaudit.latest(store, now_ms)
+            except Exception as _e:  # noqa: BLE001
+                _qf_self, _qf_problem = None, _qf_problem or f"Self-audit unavailable: {_e}"
+            panels.render(panels.qf_monday_html(_qf_week))
             panels.render(panels.qf_wire_html(_qf_plan, _qf_audit["status"], live=_qf_live))
+            _qf_audit_card = panels.qf_audit_html(_qf_self)
+            if _qf_audit_card:
+                panels.render(_qf_audit_card)
             panels.render(panels.qf_directive_html(_qf_plan))
             panels.render(panels.qf_timeline_html(_qf_plan, now_ms, _h1))
         # the raw data and audit drawer, closed by default
@@ -1352,7 +1365,8 @@ if screen == "qf":
             st.download_button("Download today's JSON payload (the agent's output schema)",
                                data=json.dumps(qf_payload.payload(_qf_plan, _qf_audit["status"], _qf_today,
                                                                   _qf_sent[0]["headline"] if _qf_sent else "",
-                                                                  _qf_live, now_ms, _h1, _qf_book), indent=1, ensure_ascii=False),
+                                                                  _qf_live, now_ms, _h1, _qf_book,
+                                                                  week=_qf_week, self_audit=_qf_self), indent=1, ensure_ascii=False),
                                file_name=f"quant-forecast-{_qf_day}-plan{_qf_plan['version']}.json",
                                mime="application/json", key="qf_payload_dl")
             st.caption("Alerts (Discord): the daily plan at 00:00 UTC (05:00 PKT) with the trade figures and the "

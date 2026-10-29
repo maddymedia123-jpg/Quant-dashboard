@@ -24,6 +24,11 @@ from core import quant_forecast as qf
 HOUR_MS = qf.HOUR_MS
 MIN_NODE_HOURS = 2                # a shorter run of hours joins the node before it: 11 nodes a day read as noise
 STATE_EMOJI = {"COMPLETED_FADED": "🕒", "ACTIVE_HIGHLIGHTED": "⚡", "PENDING": "🎯"}
+# the "why" is plain trader English (message 8: zero raw math on the main screen); the numbers behind it
+# stay on the node (bps) for the drawer and the JSON
+TEMPO = {"COMPRESSED": ("quiet", "A quieter stretch than most of the day"),
+         "NORMAL": ("normal", "An ordinary stretch for the day"),
+         "HIGH VOLATILITY SPIKE": ("busy", "One of the day's busiest stretches")}
 STATUS_WORD = {"COMPLETED_FADED": "🫥 Passed", "ACTIVE_HIGHLIGHTED": "🔥 Active Focus", "PENDING": "⏳ Pending"}
 SETUP_TOL = 0.003                 # a level within 0.3% of the entry zone names the setup
 SETUP_WORD = {"value low": "Value Area Low retest", "value high": "Value Area High retest", "POC": "POC retest",
@@ -123,21 +128,25 @@ def timeline_tree(plan: dict, now_ms: int, h1: pd.DataFrame | None = None) -> li
         actual = _actual(h1, start, end) if state == "COMPLETED_FADED" else None
         if actual:
             summary = f"Traded {_money(actual[0])} to {_money(actual[1])}. " + summary.replace("most likely here", "was due here")
-        # the why, from the numbers
-        why = [f"{qf._character(sum(h.get('mult', 1.0) for h in hs) / len(hs)).lower()} GARCH volatility ({bps} bps expected)"]
+        # the why, from the numbers, said in plain words
+        tempo, tempo_line = TEMPO[qf._character(sum(h.get('mult', 1.0) for h in hs) / len(hs))]
+        why = [tempo_line]
         for w in macro:
             if w["start_ms"] < end and w["end_ms"] > start:
-                why.append(f"{w['title']} release inside the window")
+                why.append(f"{w['title']} is released inside this window")
         flow = parts.get("flow") or {}
         if flow.get("delta_btc") is not None:
-            why.append("CVD " + ("buyers paying" if flow["delta_btc"] > 0 else "sellers paying" if flow["delta_btc"] < 0 else "neutral"))
+            why.append("buyers have been paying up" if flow["delta_btc"] > 0 else
+                       "sellers have been hitting bids" if flow["delta_btc"] < 0 else "buying and selling balanced")
         oi = parts.get("open_interest") or {}
         if oi.get("pct") is not None:
-            why.append(f"open interest {oi['pct']:+.1f}% over 24h")
+            why.append("more positions have been opened over the day" if oi["pct"] > 0.5 else
+                       "positions have been closing out over the day" if oi["pct"] < -0.5 else
+                       "open positions about unchanged")
         if inside:
-            why.append("levels inside: " + ", ".join(f"{lv['label']} {_money(lv['price'])}" for lv in inside[:3]))
+            why.append("price meets " + ", ".join(f"the {lv['label']} at {_money(lv['price'])}" for lv in inside[:3]))
         node = {"start_ms": int(start), "end_ms": int(end), "phase": phase, "state": state, "emoji": STATE_EMOJI[state],
-                "status": STATUS_WORD[state], "bps": bps, "low": round(lo, 2), "high": round(hi, 2),
+                "status": STATUS_WORD[state], "bps": bps, "tempo": tempo, "low": round(lo, 2), "high": round(hi, 2),
                 "levels": inside[:4], "summary": summary, "why": "; ".join(why) + "."}
         if actual:
             node["actual_low"], node["actual_high"] = round(actual[0], 2), round(actual[1], 2)

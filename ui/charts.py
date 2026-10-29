@@ -303,10 +303,11 @@ QF_CONTEXT_HOURS = 36        # real hours shown before the plan was made
 
 
 def qf_chart_payload(plan: dict, h1, dark: bool = True, signal: bool = True, now_ms: int | None = None) -> dict:
-    """The pure-forecasting chart (Hammad, 28 Oct): dark, hourly candles up to a vertical "now" line, then
-    the green median path with its 68% envelope, green expansion boxes and grey chop boxes, and the
-    invalidation, predicted high, predicted low and air pockets as right-axis badges only - no text over
-    the candles. A locked day draws its range so far as one grey box to the end of the day.
+    """The pure-forecasting chart (Hammad, 28 Oct, revised in message 8): dark, hourly candles up to a
+    vertical "now" line, then the forecast as solid green and red 1-hour candles with a faint 68% envelope,
+    chop windows as faint background bands, and the invalidation, predicted high, predicted low and air
+    pockets as right-axis badges only - no text over the candles. A locked day draws its range so far as
+    one grey band to the end of the day.
 
     Always drawn on the dark signal palette, whatever the page's mode: the chart is the terminal."""
     p = palette(True, True)
@@ -321,8 +322,13 @@ def qf_chart_payload(plan: dict, h1, dark: bool = True, signal: bool = True, now
     path = [origin] + [{"time": h["t_ms"] // 1000, "value": h["median"]} for h in hours]
     band_hi = [origin] + [{"time": h["t_ms"] // 1000, "value": h["band_high"]} for h in hours]
     band_lo = [origin] + [{"time": h["t_ms"] // 1000, "value": h["band_low"]} for h in hours]
+    # message 8: the path is drawn as solid 1-hour candles; chop windows are faint background bands, and
+    # expansion windows carry no box of their own (the candles show the move)
+    from core.quant_forecast import projected_candles
+    proj = [{"time": c["t_ms"] // 1000, "open": c["open"], "high": c["high"], "low": c["low"], "close": c["close"]}
+            for c in projected_candles(plan)]
     boxes = [{"t1": w["start_ms"] // 1000, "t2": w["end_ms"] // 1000, "p1": w["lower"], "p2": w["upper"],
-              "kind": w["phase"]} for w in plan.get("windows") or []]
+              "kind": w["phase"]} for w in plan.get("windows") or [] if w["phase"] == "chop"]
     lines = []
     if hours:
         ph, pl = plan["projected_high"], plan["projected_low"]
@@ -347,8 +353,8 @@ def qf_chart_payload(plan: dict, h1, dark: bool = True, signal: bool = True, now
     whitespace = [{"time": s} for s in future if s > last_real]
     now = (now_ms or plan["created_ms"]) // 1000
     return {"theme": {k: p[k] for k in ("panel", "border", "grid", "text", "muted", "accent", "up", "down", "now")},
-            "candles": candles, "whitespace": whitespace, "path": path, "bandHigh": band_hi, "bandLow": band_lo,
-            "boxes": boxes, "lines": lines, "now": now, "origin": origin["time"]}
+            "candles": candles, "whitespace": whitespace, "path": path, "proj": proj, "bandHigh": band_hi,
+            "bandLow": band_lo, "boxes": boxes, "lines": lines, "now": now, "origin": origin["time"]}
 
 
 _QF_TEMPLATE = (pathlib.Path(__file__).with_name("qf_chart.html")).read_text(encoding="utf-8")
