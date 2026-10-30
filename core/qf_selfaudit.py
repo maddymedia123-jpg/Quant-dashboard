@@ -6,15 +6,24 @@ plan's own numbers: a level of the plan's that price ran to beyond the projectio
 a day that traded far wider or narrower than the expected range (volatility), a breached invalidation
 (the lean), or the move landing at a different hour (timing). No model names a cause.
 
-"System multipliers auto-calibrated": nothing is recalibrated here yet. A bounded sigma scale from the
-last days' realised-to-expected range is the safe version and waits for approval; until then the card
-says so rather than claiming a change that was not made."""
+"System multipliers auto-calibrated": the card reports the sigma scale the plan was actually built with
+(core.quant_forecast.calibration, approved 30 Oct: the last ten days' realised over expected range,
+bounded 0.8-1.3). A plan built with too little history to calibrate says so instead."""
 from __future__ import annotations
 
 GRAVITY_LABELS = ("est. liquidation zone", "air pocket", "call wall", "put wall", "gamma flip")
 WIDE_X, NARROW_X = 1.25, 0.75
 LOOKBACK_DAYS = 3
-CALIBRATION = "not changed (automatic recalibration awaits approval)"
+NO_CALIBRATION = "not changed (too little history to calibrate)"
+
+
+def calibration_text(plan: dict) -> str:
+    """What the plan did to its multipliers, for the card: the sigma scale it was built with."""
+    c = plan.get("calibration") or {}
+    if not c.get("days") or c.get("ratio") is None:
+        return NO_CALIBRATION
+    return (f"auto-calibrated (sigma x{c['scale']:.2f}: the last {c['days']} days traded "
+            f"{c['ratio']:.2f}x the range the model expected, bounded {c['bounds'][0]}-{c['bounds'][1]})")
 
 
 def self_audit(row: dict) -> dict | None:
@@ -58,9 +67,9 @@ def self_audit(row: dict) -> dict | None:
         root = f"the {side} landed just outside tolerance; no single driver stands out"
     return {"day_ms": plan.get("day_ms"), "side": side, "missed_pct": round(abs(pct), 2), "projected": projected,
             "actual": actual, "beyond": beyond, "range_ratio": None if ratio is None else round(ratio, 2),
-            "root_cause": root, "calibration": CALIBRATION,
+            "root_cause": root, "calibration": calibration_text(plan),
             "note": (f"🔍 SELF-AUDIT REPORT: {side.capitalize()} projection missed by {abs(pct):.1f}%. "
-                     f"Root cause: {root}. System multipliers: {CALIBRATION}.")}
+                     f"Root cause: {root}. System multipliers: {calibration_text(plan)}.")}
 
 
 def latest(store, now_ms: int) -> dict | None:

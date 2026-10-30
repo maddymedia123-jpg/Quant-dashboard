@@ -9,8 +9,8 @@ The tiers, as agreed with Hammad (28 Oct):
 * MODEL HELD (tier 2B) - after a shock like that, price takes back at least half of it within
   HOLD_WINDOW_MS without breaking invalidation.
 * INVALIDATED (tier 3) - a decisive breach of the whole-day invalidation level
-  (core.quant_forecast.invalidation_hit: a 4h close, two hourly closes in a row, a cascade close, or a firm
-  close with opposing CVD). The plan is replaced by Scenario B - a new forecast for the rest of the day, drawn
+  (core.quant_forecast.invalidation_hit: a 4h close or two hourly closes in a row beyond the level; the
+  single-candle tests were retired 30 Oct). The plan is replaced by Scenario B - a new forecast for the rest of the day, drawn
   on a secondary chart under the voided one; the LOCK_AFTER_INVALIDATIONS-th failure locks the day instead.
 * The magnitude scaler (core.quant_forecast.magnitude_scale) runs on every pass that finds the plan intact
   and widens its target once when open interest or taker flow shows more force than the simulation gave it.
@@ -151,14 +151,13 @@ def held_after(shock: dict, m15: pd.DataFrame | None, now_ms: int, invalidated_m
     return None
 
 
-def audit(plan: dict, frames: dict, flow15: pd.DataFrame | None, now_ms: int,
-          flow1h: pd.DataFrame | None = None) -> dict:
+def audit(plan: dict, frames: dict, flow15: pd.DataFrame | None, now_ms: int) -> dict:
     """Where the active plan stands now: status, the cautions and holds since it was made, and the
-    invalidation if price has broken it (`flow1h`, the hourly taker flow, for the opposing-CVD test)."""
+    invalidation if price has broken it."""
     if plan.get("regime") == "locked":
         return {"status": "locked", "cautions": [], "holds": [], "invalidation": None}
     h1, m15 = frames.get("1h"), frames.get("15m")
-    inv = qf.invalidation_hit(plan, h1, now_ms, flow1h) if h1 is not None else None
+    inv = qf.invalidation_hit(plan, h1, now_ms) if h1 is not None else None
     inv_ms = inv["close_ms"] if inv else None
     cautions = []
     for s in shocks(plan, m15, now_ms):
@@ -479,7 +478,7 @@ def run(store, m, now_ms: int, gamma: dict | None = None, weekly=None, weekly_ga
                                     invalidated_headline(last["payload"], hit, new), hit.get("close")))
         return events
     plan = active["payload"]
-    a = audit(plan, frames, flow.get("15m"), now_ms, flow.get("1h"))
+    a = audit(plan, frames, flow.get("15m"), now_ms)
     hit = a["invalidation"]
     if hit is None:
         if qf.magnitude_scale(plan, h1, flow.get("1h"), now_ms):

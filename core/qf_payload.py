@@ -92,6 +92,8 @@ def payload(plan: dict, status: str, plans_today: list[dict], bot_message: str, 
         "collapsible_raw_math_drawer": {
             "garch_alpha": (plan.get("garch") or {}).get("alpha"), "garch_beta": (plan.get("garch") or {}).get("beta"),
             "garch_compression": (plan.get("garch") or {}).get("compression"),
+            "sigma_calibration": plan.get("calibration") or {"scale": 1.0, "days": 0},
+            "liquidation_gravity": plan.get("gravity") or {"active": False},
             "hurst_exponent": (parts.get("momentum") or {}).get("hurst"),
             "cvd_24h_delta": (parts.get("flow") or {}).get("delta_btc"),
             "open_interest_24h_change_pct": (parts.get("open_interest") or {}).get("pct"),
