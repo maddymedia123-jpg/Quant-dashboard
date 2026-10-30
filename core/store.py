@@ -222,7 +222,11 @@ class _TursoConnection:
 
 
 class Store:
-    def __init__(self, path: str | os.PathLike | None = None):
+    def __init__(self, path: str | os.PathLike | None = None, readonly: bool = False):
+        """`readonly` (the MCP server): the schema is not created or migrated and a file store is opened
+        with SQLite's mode=ro, so nothing can be written through it; on Turso the embedded replica is
+        synced and read, and a write raises on the database side."""
+        self.readonly = bool(readonly)
         if path == ":memory:":
             self.path = ":memory:"
         else:
@@ -252,10 +256,16 @@ class Store:
                 # the message names the URL at most, never the token (libsql does not echo it)
                 self.turso_note = f"could not connect to Turso: {type(e).__name__}: {str(e)[:160]}"
         if self.backend != "turso":
-            self._conn = sqlite3.connect(self.path, check_same_thread=False)
+            if self.readonly and self.path != ":memory:":
+                self._conn = sqlite3.connect(f"file:{pathlib.Path(self.path).as_posix()}?mode=ro", uri=True,
+                                             check_same_thread=False)
+            else:
+                self._conn = sqlite3.connect(self.path, check_same_thread=False)
             self._conn.row_factory = sqlite3.Row
             self.backend = "sqlite"
         self._lock = threading.Lock()
+        if self.readonly:
+            return
         with self._lock:
             self._conn.executescript(SCHEMA)
             self._add_missing_columns()
@@ -809,6 +819,12 @@ class Store:
         with self._lock:
             r = self._conn.execute("SELECT ts_ms, payload FROM book_reports ORDER BY ts_ms DESC LIMIT 1").fetchone()
         return {**json.loads(r["payload"]), "ts_ms": int(r["ts_ms"])} if r else None
+
+    def market_alerts_recent(self, limit: int = 20) -> list[dict]:
+        """The newest alerts first, whether or not they were sent (the MCP server's recent_alerts)."""
+        with self._lock:
+            return _rows(self._conn.execute("SELECT * FROM market_alerts ORDER BY ts_ms DESC, id DESC LIMIT ?",
+                                            (int(limit),)))
 
     def market_alerts_keyed(self, prefix: str, limit: int = 20) -> list[dict]:
         """The alerts whose key starts with `prefix`, newest first (one Quant Forecast day's, say)."""
