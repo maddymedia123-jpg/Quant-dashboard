@@ -2651,7 +2651,34 @@ def qf_levels_html(plan: dict) -> str:
         if g:
             body += (f"<p class='muted'>GARCH(1,1): alpha {g['alpha']:.2f}, beta {g['beta']:.2f}; volatility now "
                      f"{g['compression']:.0%} of its usual level{' (compressed)' if g.get('compressed') else ''}.</p>")
+    body += _qf_model_notes(plan)
     return card_html("Levels and the lean", body or "<p class='muted'>Nothing to show for a locked day.</p>")
+
+
+def _qf_model_notes(plan: dict) -> str:
+    """The self-calibration and the liquidation gravity the plan was built with, in one short line each."""
+    money = lambda x: fmt_num(x, 0, "$")  # noqa: E731
+    out = ""
+    c = plan.get("calibration") or {}
+    if c.get("days") and c.get("ratio") is not None:
+        out += (f"<p class='muted'>Volatility auto-calibrated: sigma ×{c['scale']:.2f}. The last {c['days']} days traded "
+                f"{c['ratio']:.2f}× the range the model expected (bounded {c['bounds'][0]}–{c['bounds'][1]}).</p>")
+    elif c:
+        out += "<p class='muted'>Volatility not calibrated: too little history behind this plan.</p>"
+    gr = plan.get("gravity") or {}
+    if gr.get("active"):
+        names = ", ".join(f"{a['label']} {money(a['price'])}" for a in gr["attractors"][:6])
+        out += (f"<p class='muted'>Liquidation gravity on (k {gr['k']:.2f}): the simulated paths drift towards the nearest "
+                f"liquidation zone, air pocket or dealer wall, at most half an hour's sigma an hour. Pulling: {html.escape(names)}.</p>")
+    elif gr.get("shadow"):
+        sh = gr["shadow"]
+        out += (f"<p class='muted'>Liquidation gravity measured in shadow (k {sh['k']:.2f}): steered by the plan's "
+                f"{len(gr['attractors'])} liquidation zones and dealer walls it would have projected a high of "
+                f"{money(sh['projected_high'])} and a low of {money(sh['projected_low'])}. It does not steer the live plan: "
+                "the 60-day backtest made the level-touch odds worse. Its record is kept beside the live one below.</p>")
+    elif gr:
+        out += "<p class='muted'>Liquidation gravity off: no liquidation zone or dealer wall to pull today.</p>"
+    return out
 
 
 def _qf_record_line(rec: dict, name: str) -> str:
@@ -2663,7 +2690,17 @@ def _qf_record_line(rec: dict, name: str) -> str:
             f"(a range day is right whenever its box holds, so it is counted apart) · predicted high "
             f"within tolerance {rec['high_hit']} · low {rec['low_hit']} · high's time within 2h "
             f"{rec['high_time_hit']} · low's {rec['low_time_hit']} · closed inside the 68% envelope "
-            f"{rec['band_held']} · invalidated {rec['invalidated']}</p>")
+            f"{rec['band_held']} · invalidated {rec['invalidated']}</p>" + _qf_shadow_line(rec))
+
+
+def _qf_shadow_line(rec: dict) -> str:
+    """Liquidation gravity's shadow record against the live plan on the same days, or nothing."""
+    n = rec.get("shadow_days") or 0
+    if not n:
+        return ""
+    return (f"<p class='muted'>Liquidation gravity, shadow only, on the {n} of those days with a level to pull: "
+            f"it would have put the high within tolerance {rec['shadow_high_hit']} times (the live plan {rec['live_high_hit_on_shadow_days']}) "
+            f"and the low {rec['shadow_low_hit']} times (the live plan {rec['live_low_hit_on_shadow_days']}).</p>")
 
 
 def qf_record_html(backtest: dict | None, live: dict, history: list[dict]) -> str:

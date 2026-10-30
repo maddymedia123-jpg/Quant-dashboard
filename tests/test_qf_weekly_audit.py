@@ -65,7 +65,8 @@ def test_the_self_audit_names_the_miss_and_a_cause_by_rule():
     assert a["side"] == "high" and a["missed_pct"] == 2.0 and a["beyond"] is True
     assert a["root_cause"].startswith("liquidation gravity underestimated: price ran to the est. liquidation zone at $83,500")
     assert a["note"].startswith("🔍 SELF-AUDIT REPORT: High projection missed by 2.0%. Root cause: liquidation gravity")
-    assert "awaits approval" in a["note"], "no recalibration is claimed that was not made"
+    assert a["note"].endswith("System multipliers: not changed (too little history to calibrate)."), \
+        "a plan built without a calibration says so"
     # a dealer wall counts as gravity too
     w = qf_selfaudit.self_audit(_row(83_640, 79_100, high_hit=False, low_hit=True, levels=[("call wall", 83_200.0)]))
     assert "dealer wall at $83,200" in w["root_cause"]

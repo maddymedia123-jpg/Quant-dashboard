@@ -1304,7 +1304,7 @@ if screen == "qf":
         _flow = m.taker_flow.frames if getattr(m.taker_flow, "available", False) else {}
         _qf_problem = None
         try:
-            _qf_audit = qf_alerts.audit(_qf_plan, m.spot.frames, _flow.get("15m"), now_ms, _flow.get("1h"))
+            _qf_audit = qf_alerts.audit(_qf_plan, m.spot.frames, _flow.get("15m"), now_ms)
         except Exception as e:  # noqa: BLE001 - the plan still shows without its audit
             _qf_audit = {"status": "on track", "cautions": [], "holds": []}
             _qf_problem = f"Audit unavailable this refresh: {e}"

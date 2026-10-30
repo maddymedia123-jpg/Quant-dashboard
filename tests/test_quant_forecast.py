@@ -132,8 +132,9 @@ def candles(closes, start=DAY0, bar=H):
 
 
 def test_invalidation_is_a_decisive_breach_of_the_whole_day_level():
-    """Hammad, message 5: a whole-day level, breached by sustained price action or a violent cascade - made
-    exact as a 4h close, two hourly closes in a row, or one hourly close an ATR beyond."""
+    """Hammad, message 5: a whole-day level, breached by sustained price action - made exact as a 4h close or
+    two hourly closes in a row. The single-candle tests (a cascade close, a firm close with opposing CVD)
+    were retired on 30 Oct: one hourly close beyond the line is a wick, however far."""
     plan = _plan_fixed(below=79_000.0, atr=200.0)
     one_shallow = candles([80_000, 78_950, 80_000, 80_000, 80_000, 80_000])      # one 01:00 close 50 below, back by 02:00
     assert qf.invalidation_hit(plan, one_shallow, DAY0 + 6 * H) is None, "a single shallow hourly close is a wick"
@@ -144,18 +145,10 @@ def test_invalidation_is_a_decisive_breach_of_the_whole_day_level():
     sustained = candles([80_000, 78_950, 78_960, 80_000])                        # the 02:00 and 03:00 closes both below
     hit = qf.invalidation_hit(plan, sustained, DAY0 + 4 * H)
     assert hit and hit["basis"] == "2 hourly closes in a row" and hit["close_ms"] == DAY0 + 3 * H
-    cascade = candles([80_000, 78_700, 80_000, 80_000])                          # 300 below on the 02:00 close
-    hit = qf.invalidation_hit(plan, cascade, DAY0 + 4 * H)
-    assert hit and hit["basis"].startswith("hourly close more than $200") and hit["close_ms"] == DAY0 + 2 * H
-    assert "two hourly closes in a row" in qf.directive(plan, qa.at_label)
-    # message 6: one firm hourly close (half an ATR) with the hour's taker flow behind the break
-    firm = candles([80_000, 78_880, 80_000, 80_000])                             # 120 below on the 02:00 close
-    assert qf.invalidation_hit(plan, firm, DAY0 + 4 * H) is None, "firm but no flow: a wick"
-    sellers = pd.DataFrame({"timestamp": [DAY0, DAY0 + H], "delta": [10.0, -250.0]})
-    hit = qf.invalidation_hit(plan, firm, DAY0 + 4 * H, sellers)
-    assert hit and hit["close_ms"] == DAY0 + 2 * H and "250 BTC of taker flow behind it" in hit["basis"]
-    buyers = pd.DataFrame({"timestamp": [DAY0, DAY0 + H], "delta": [10.0, 250.0]})
-    assert qf.invalidation_hit(plan, firm, DAY0 + 4 * H, buyers) is None, "buyers on a break below is not opposing CVD"
+    spike = candles([80_000, 77_000, 80_000, 80_000])                            # 2,000 below on the 02:00 close, back by 03:00
+    assert qf.invalidation_hit(plan, spike, DAY0 + 4 * H) is None, "one violent hourly close is still one close"
+    text = qf.directive(plan, qa.at_label)
+    assert "a 4-hour close or two hourly closes in a row" in text and "violent" not in text and "order flow" not in text
 
 
 def test_a_shock_against_the_plan_is_a_caution_and_taking_half_back_is_model_held():
@@ -245,6 +238,69 @@ def test_scoring_waits_for_the_window_and_reads_the_day():
     # an invalidated plan is judged on the hours it was live
     short = qf.score_plan(plan, day, until_ms=DAY0 + 8 * H)
     assert short["scored"] and short["close"] == closes[7] and short["high"] < 80_500
+
+
+def test_the_sigma_scale_is_the_last_days_realised_over_projected_range_bounded(monkeypatch):
+    """Approved 30 Oct: a bounded sigma scale from the last ten days, measured against what this engine would
+    have projected for each of them, and applied to every hour of the plan."""
+    df = hourly(800, DAY0 - 800 * H)
+    plain = qf.calibration(df, DAY0)
+    assert plain["days"] == 10 and plain["window_days"] == 10 and plain["bounds"] == [0.8, 1.3]
+    assert 0.8 <= plain["scale"] <= 1.3 and plain["ratio"] is not None
+    last = df["timestamp"] >= DAY0 - 10 * qf.DAY_MS
+    wide = df.copy()                                        # ten days four points wider than their closes
+    wide.loc[last, "high"], wide.loc[last, "low"] = wide.loc[last, "close"] * 1.02, wide.loc[last, "close"] * 0.98
+    assert qf.calibration(wide, DAY0)["scale"] == 1.3, "far wider than projected: the upper bound"
+    flat = df.copy()                                        # ten days with no range at all
+    px = float(df.loc[last, "close"].iloc[0])
+    for col in ("open", "high", "low", "close"):
+        flat.loc[last, col] = px
+    assert qf.calibration(flat, DAY0)["scale"] == 0.8, "no range at all: the lower bound"
+    assert qf.calibration(df.tail(200), DAY0)["scale"] == 1.0, "too little history: no change"
+    assert qf.calibration(df.tail(200), DAY0)["days"] == 0
+    # the plan's sigmas, bands and invalidation carry the scale
+    monkeypatch.setattr(qf, "calibration", lambda closed, now_ms, days=10: {"scale": 1.3, "ratio": 1.4, "days": 10,
+                                                                             "window_days": 10, "bounds": [0.8, 1.3]})
+    hot = _plan(df, DAY0 + 60_000)
+    monkeypatch.setattr(qf, "calibration", lambda closed, now_ms, days=10: {"scale": 1.0, "ratio": 1.0, "days": 10,
+                                                                             "window_days": 10, "bounds": [0.8, 1.3]})
+    cool = _plan(df, DAY0 + 60_000)
+    assert hot["calibration"]["scale"] == 1.3 and cool["calibration"]["scale"] == 1.0
+    assert all(abs(a["sigma_pct"] / b["sigma_pct"] - 1.3) < 0.01 for a, b in zip(hot["hours"], cool["hours"])), "rounded to 3 places"
+    width = lambda p: p["hours"][-1]["band_high"] - p["hours"][-1]["band_low"]
+    assert 1.2 < width(hot) / width(cool) < 1.4
+    from core import qf_selfaudit
+    assert qf_selfaudit.calibration_text(hot) == "auto-calibrated (sigma x1.30: the last 10 days traded 1.40x the range the model expected, bounded 0.8-1.3)"
+    assert qf_selfaudit.calibration_text({"calibration": {"scale": 1.0, "days": 0, "ratio": None}}) == qf_selfaudit.NO_CALIBRATION
+
+
+def test_liquidation_gravity_pulls_the_paths_and_is_shadow_only():
+    """The rule approved 30 Oct: a pull towards the strongest liquidation zone or dealer wall, size over
+    distance, capped at half the hour's sigma. The 60-day backtest said it hurts, so it is off (GRAVITY_K 0)
+    and judged in shadow beside every live plan with a level to pull."""
+    sig = [0.004] * 24
+    grav = qf.gravity([("est. liquidation zone", 82_000.0), ("POC", 79_000.0), ("gamma flip", 81_000.0)], 80_000.0, 0.5)
+    assert [a["label"] for a in grav["attractors"]] == ["est. liquidation zone"] and grav["active"] and grav["origin"] == 80_000.0
+    off = qf.simulate(sig, np.zeros(24), 500)
+    on = qf.simulate(sig, np.zeros(24), 500, grav)
+    assert np.median(on[:, -1]) > np.median(off[:, -1]) + 0.002, "the paths lean towards the zone above"
+    assert np.max(np.abs(on - off)) <= 24 * 0.5 * 0.004 + 1e-9, "at most half an hour's sigma an hour, either way"
+    assert np.min(on - off) < -0.002, "paths that ran above the zone are pulled back down to it"
+    assert np.max(on[:, -1]) <= max(np.max(off[:, -1]), math.log(82_000 / 80_000)) + 0.05, "never pulled past the level"
+    assert qf.GRAVITY_K == 0.0 and qf.gravity([("air pocket", 82_000.0)], 80_000.0, 0.0)["active"] is False
+    assert qf.gravity([("air pocket", 82_000.0)], 80_000.0, 0.5)["attractors"][0]["weight"] == 0.5
+    # a plan with gravity off and a level to pull carries the shadow projection, and the score judges both
+    plan = _plan_fixed()
+    plan["gravity"] = {"k": 0.0, "active": False, "attractors": [{"label": "air pocket", "price": 81_000.0, "weight": 0.5}],
+                       "shadow": {"k": 0.5, "projected_high": 81_000.0, "projected_low": 79_900.0}}
+    day = candles([80_000] * 10 + [81_200] + [80_000] * 13)      # high 81,205, low 79,995; tolerance 300
+    o = qf.score_plan(plan, day)
+    assert o["high_hit"] is False and o["shadow_high_hit"] is True and o["shadow_low_hit"] is True
+    rec = qf.record([o, {**o, "shadow_high_hit": False}, qf.score_plan(_plan_fixed(), day)])
+    assert (rec["shadow_days"], rec["shadow_high_hit"], rec["live_high_hit_on_shadow_days"]) == (2, 1, 0)
+    from ui import panels
+    h = panels._qf_record_line(rec, "Backtest")
+    assert "shadow only, on the 2 of those days" in h and "within tolerance 1 times (the live plan 0)" in h
 
 
 def test_the_backtest_replays_past_days_price_only():

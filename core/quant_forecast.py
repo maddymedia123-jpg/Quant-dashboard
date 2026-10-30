@@ -47,9 +47,8 @@ DAY_MS = 24 * HOUR_MS
 FOUR_H_MS = 4 * HOUR_MS
 DAY_START_HOUR_UTC = 0
 LOCK_AFTER_INVALIDATIONS = 2     # one re-forecast a day; the second failed plan locks the rest of it (Hammad, message 5)
-SUSTAINED_CLOSES = 2             # ...or this many hourly closes in a row beyond the level ("sustained price action")
-CASCADE_ATR = 1.0                # ...or one hourly close this many 1h ATRs beyond it ("a violent cascade")
-FIRM_ATR = 0.5                   # ...or one hourly close this far beyond it with the hour's taker flow against the plan (message 6)
+SUSTAINED_CLOSES = 2             # ...or this many hourly closes in a row beyond the level ("sustained price action");
+                                 # the single-candle tests (a cascade close, a firm close with flow) were retired 30 Oct
 MISSING_HOURS_TOLERATED = 2      # a day is still scored with this many hourly candles missing from the feed
 ABSORPTION_X = 1.5               # magnitude scaler: an hour's taker delta this many times the usual hour's widens the target
 SCALE_LEVELS = ("call wall", "put wall", "gamma flip", "est. liquidation zone", "air pocket")   # ...to the next of these
@@ -59,6 +58,16 @@ NEUTRAL_SCORE = 0.20             # a lean weaker than this is no lean
 COMPRESSED_SCORE = 0.35          # ...and when volatility is compressed, neither is one weaker than this
 COMPRESSION_X = 0.80             # next hour's volatility under 80% of its long-run level
 DRIFT_K = 0.5                    # a full-strength lean moves the median by half a day's sigma
+CALIBRATION_DAYS = 10            # the sigma scale: realised against expected day range over the last ten finished days
+CALIBRATION_MIN, CALIBRATION_MAX = 0.8, 1.3
+CALIBRATION_FIT_HOURS = 300      # a day counts for the calibration with at least this many hours before it to fit on
+CALIBRATION_PATHS = 800          # paths in each calibration day's no-lean simulation of the expected range
+GRAVITY_K = 0.0                  # liquidation gravity: 0 = off. The 60-day price-only backtest (30 Oct) made the
+                                 # level-touch odds worse at every strength (Brier 0.141 at k 0.5 against 0.105 off,
+                                 # air pockets only), so it steers nothing live and is measured in shadow instead
+GRAVITY_SHADOW_K = 0.5           # ...the strength the shadow projection is run at, dealer walls included
+GRAVITY_CAP = 0.5                # ...the pull is never more than this share of the hour's sigma an hour
+GRAVITY_WEIGHTS = {"est. liquidation zone": 1.0, "call wall": 1.0, "put wall": 1.0, "air pocket": 0.5}
 INVALIDATION_PCT = 10.0          # invalidation: the price only 10% of simulated days reach against the lean
 BAND_LOW, BAND_HIGH = 16.0, 84.0
 Z84 = 0.994457883
@@ -190,11 +199,96 @@ def _windows(times: list[int], phases: list[str], sigmas: list[float], path: lis
     return out
 
 
+def calibration(closed: pd.DataFrame, now_ms: int, days: int = CALIBRATION_DAYS) -> dict:
+    """The sigma scale for today's plan (Hammad, message 9: "system multipliers auto-calibrated"; approved
+    30 Oct): the median, over the last `days` finished days, of each day's realised range (high to low, as a
+    share of its open) over the range this engine would have projected for it at its open - a GARCH fit
+    on the hours before that day only, its 24 hourly sigmas run through the same simulation as the plan
+    with no lean, the median path high less the median path low - bounded to CALIBRATION_MIN..
+    CALIBRATION_MAX. (A closed formula will not do here: the simulation's projected range is about 1.25
+    day-sigmas, not the textbook 1.6, and a scale measured against the wrong baseline shrank every plan
+    to the lower bound in the backtest.) Days with a gap in the feed or too little history before them
+    are skipped; under three usable days the scale is 1.0. Nothing after each day's open is read for it,
+    so the backtest's replayed days calibrate exactly as a live morning would have."""
+    ts = closed["timestamp"].astype("int64").to_numpy()
+    closes = closed["close"].astype(float).to_numpy()
+    highs, lows = closed["high"].astype(float).to_numpy(), closed["low"].astype(float).to_numpy()
+    ratios: list[float] = []
+    d = day_start(now_ms) - DAY_MS
+    for _ in range(days):
+        day = (ts >= d) & (ts < d + DAY_MS)
+        before = ts + HOUR_MS <= d
+        if int(before.sum()) < CALIBRATION_FIT_HOURS:
+            break
+        if int(day.sum()) >= 24 - MISSING_HOURS_TOLERATED:
+            profile = garch.hourly_profile(ts[before], closes[before])
+            fit = garch.fit(garch.deseasonalise(ts[before], closes[before], profile))
+            open_ = float(closes[before][-1])
+            if fit is not None and open_ > 0:
+                p = np.exp(simulate(garch.hour_sigmas(fit, profile, d, 24), np.zeros(24), CALIBRATION_PATHS))
+                expected = float(np.median(p.max(axis=1)) - np.median(p.min(axis=1)))
+                realised = (float(highs[day].max()) - float(lows[day].min())) / open_
+                if expected > 0:
+                    ratios.append(realised / expected)
+        d -= DAY_MS
+    if len(ratios) < 3:
+        return {"scale": 1.0, "ratio": None, "days": len(ratios), "window_days": days,
+                "bounds": [CALIBRATION_MIN, CALIBRATION_MAX]}
+    ratio = float(np.median(ratios))
+    return {"scale": round(min(CALIBRATION_MAX, max(CALIBRATION_MIN, ratio)), 3), "ratio": round(ratio, 3),
+            "days": len(ratios), "window_days": days, "bounds": [CALIBRATION_MIN, CALIBRATION_MAX]}
+
+
+def gravity(levels: list[tuple[str, float]], price: float, k: float) -> dict:
+    """Liquidation gravity (Hammad, message 8; the rule approved 30 Oct): the plan's estimated liquidation
+    zones, air pockets and dealer walls pull the simulated paths towards them. Each sub-step, every path
+    drifts towards the attractor pulling hardest on it - weight over log-distance - by k * weight * sigma_h**2
+    / distance an hour, never more than GRAVITY_CAP of that hour's sigma and never past the level. The
+    weights are GRAVITY_WEIGHTS (an air pocket with no open-interest surge pulls half as hard). k = 0 is
+    off: the paths are the plain random walk with the lean's drift."""
+    attractors = [{"label": label, "price": round(float(lv), 2), "weight": GRAVITY_WEIGHTS[label]}
+                  for label, lv in levels if label in GRAVITY_WEIGHTS]
+    return {"k": float(k), "cap": GRAVITY_CAP, "active": k > 0 and bool(attractors), "attractors": attractors,
+            "origin": round(float(price), 2)}
+
+
+def simulate(sigmas: list[float], drift: np.ndarray, paths: int, grav: dict | None = None,
+             price: float | None = None) -> np.ndarray:
+    """The log-price paths: (paths, n*SUB + 1), the first column zero. A plain random walk with the drift,
+    or, with gravity active, the same noise with each sub-step's pull added (see gravity())."""
+    n = len(sigmas)
+    rng = np.random.default_rng(SEED)
+    steps = np.repeat(np.array(sigmas) / math.sqrt(SUB), SUB)
+    mu = np.repeat(np.asarray(drift) / SUB, SUB)
+    noise = rng.standard_normal((paths, n * SUB)) * steps + mu
+    if not grav or not grav.get("active"):
+        return np.concatenate([np.zeros((paths, 1)), np.cumsum(noise, axis=1)], axis=1)
+    origin = float(price or grav.get("origin") or 0.0)
+    if origin <= 0:
+        raise ValueError("gravity needs the origin price")
+    lv = np.log(np.array([a["price"] for a in grav["attractors"]], dtype=float) / origin)
+    w = np.array([a["weight"] for a in grav["attractors"]], dtype=float)
+    k = float(grav["k"])
+    logp = np.zeros((paths, n * SUB + 1))
+    rows = np.arange(paths)
+    for j in range(n * SUB):
+        x = logp[:, j]
+        d = lv[None, :] - x[:, None]
+        ad = np.maximum(np.abs(d), 1e-9)
+        i = (w[None, :] / ad).argmax(axis=1)
+        dist, sign, wi = ad[rows, i], np.sign(d[rows, i]), w[i]
+        s_h = sigmas[j // SUB]
+        pull = np.minimum(GRAVITY_CAP * s_h, k * wi * s_h * s_h / dist) / SUB
+        logp[:, j + 1] = x + noise[:, j] + sign * np.minimum(pull, dist)
+    return logp
+
+
 def build_plan(h1: pd.DataFrame, now_ms: int, end_ms: int, price: float, *, version: int = 0,
                flow: pd.DataFrame | None = None, gamma: dict | None = None, price_only: bool = False,
-               paths: int = PATHS, force_neutral: bool = False, forced_windows: list | None = None) -> dict:
+               paths: int = PATHS, force_neutral: bool = False, forced_windows: list | None = None,
+               gravity_k: float | None = None) -> dict:
     """The plan from now to end_ms, as a JSON-safe dict. {"available": False, "reason": ...} without
-    enough history.
+    enough history. `gravity_k` overrides GRAVITY_K (the backtest compares settings).
 
     The pre-flight (core.qf_preflight) can override two things. `force_neutral` (an engineered trap is
     active on the 4h) keeps the lean's parts for the record but scores the day 0.0: the regime is neutral,
@@ -218,7 +312,8 @@ def build_plan(h1: pd.DataFrame, now_ms: int, end_ms: int, price: float, *, vers
     hour0 = now_ms - now_ms % HOUR_MS
     n = max(1, math.ceil((end_ms - hour0) / HOUR_MS))
     times = [min(hour0 + (k + 1) * HOUR_MS, end_ms) for k in range(n)]
-    sigmas = garch.hour_sigmas(fit, profile, hour0, n)
+    cal = calibration(closed, now_ms)
+    sigmas = [s * cal["scale"] for s in garch.hour_sigmas(fit, profile, hour0, n)]
     full_sigmas = list(sigmas)                                               # whole hours, for the 15m caution test
     sigmas[0] *= math.sqrt(max((times[0] - now_ms) / HOUR_MS, 1 / 60))     # what is left of this hour
     mults = [profile[int((hour0 + k * HOUR_MS) // HOUR_MS % 24)] for k in range(n)]
@@ -249,12 +344,27 @@ def build_plan(h1: pd.DataFrame, now_ms: int, end_ms: int, price: float, *, vers
     if regime != "neutral" and carry.sum() > 0:
         drift = score * DRIFT_K * math.sqrt(var.sum()) * carry / carry.sum()
 
-    rng = np.random.default_rng(SEED)
-    steps = np.repeat(np.array(sigmas) / math.sqrt(SUB), SUB)
-    mu = np.repeat(drift / SUB, SUB)
-    logp = np.concatenate([np.zeros((paths, 1)),
-                           np.cumsum(rng.standard_normal((paths, n * SUB)) * steps + mu, axis=1)], axis=1)
-    prices = price * np.exp(logp)
+    a_atr = atr(closed.tail(200))
+    atr_1h = float(a_atr.iloc[-1]) if len(a_atr) and np.isfinite(a_atr.iloc[-1]) else None
+    vp = volume_profile(closed.tail(VALUE_HOURS), lookback=VALUE_HOURS)
+    liq = estimated_liquidation_zones(closed, None if price_only else flow)
+    levels: list[tuple[str, float]] = []
+    if vp.available:
+        levels += [("POC", vp.poc), ("value high", vp.value_area_high), ("value low", vp.value_area_low)]
+    if gamma and gamma.get("available", True) and not price_only:
+        for key, label in (("call_wall", "call wall"), ("put_wall", "put wall"), ("zero_gamma_level", "gamma flip")):
+            if gamma.get(key):
+                levels.append((label, float(gamma[key])))
+    for z in liq:
+        levels.append(("est. liquidation zone" if z["oi_surge"] else "air pocket", (z["low"] + z["high"]) / 2))
+    levels = [(label, lv) for label, lv in levels if lv and math.isfinite(lv) and abs(lv / price - 1) >= 1e-6]
+    grav = gravity(levels, price, GRAVITY_K if gravity_k is None else gravity_k)
+
+    prices = price * np.exp(simulate(sigmas, drift, paths, grav))
+    if not grav["active"] and grav["attractors"]:
+        sh = price * np.exp(simulate(sigmas, drift, paths, {**grav, "k": GRAVITY_SHADOW_K, "active": True}))
+        grav["shadow"] = {"k": GRAVITY_SHADOW_K, "projected_high": round(float(np.median(sh.max(axis=1))), 2),
+                          "projected_low": round(float(np.median(sh.min(axis=1))), 2)}
     at_hours = prices[:, SUB::SUB]
     median = np.median(at_hours, axis=0)
     band_lo, band_hi = np.percentile(at_hours, BAND_LOW, axis=0), np.percentile(at_hours, BAND_HIGH, axis=0)
@@ -278,23 +388,8 @@ def build_plan(h1: pd.DataFrame, now_ms: int, end_ms: int, price: float, *, vers
     p_up = float(np.mean(end > price))
     p_a = (p_up if regime == "bullish" else 1 - p_up if regime == "bearish" else float(np.mean(holds)))
 
-    a_atr = atr(closed.tail(200))
-    atr_1h = float(a_atr.iloc[-1]) if len(a_atr) and np.isfinite(a_atr.iloc[-1]) else None
-    vp = volume_profile(closed.tail(VALUE_HOURS), lookback=VALUE_HOURS)
-    liq = estimated_liquidation_zones(closed, None if price_only else flow)
-    levels: list[tuple[str, float]] = []
-    if vp.available:
-        levels += [("POC", vp.poc), ("value high", vp.value_area_high), ("value low", vp.value_area_low)]
-    if gamma and gamma.get("available", True) and not price_only:
-        for key, label in (("call_wall", "call wall"), ("put_wall", "put wall"), ("zero_gamma_level", "gamma flip")):
-            if gamma.get(key):
-                levels.append((label, float(gamma[key])))
-    for z in liq:
-        levels.append(("est. liquidation zone" if z["oi_surge"] else "air pocket", (z["low"] + z["high"]) / 2))
     level_odds = []
     for label, lv in levels:
-        if not lv or not math.isfinite(lv) or abs(lv / price - 1) < 1e-6:
-            continue
         hit = highs >= lv if lv > price else lows <= lv
         level_odds.append({"label": label, "price": round(float(lv), 2), "side": "above" if lv > price else "below",
                            "p_touch": round(float(np.mean(hit)), 3)})
@@ -320,6 +415,7 @@ def build_plan(h1: pd.DataFrame, now_ms: int, end_ms: int, price: float, *, vers
                                                      "low": round(vp.value_area_low, 2)},
         "garch": {"alpha": fit.alpha, "beta": fit.beta, "compression": round(fit.compression, 3),
                   "compressed": compressed, "fit_hours": fit.n},
+        "calibration": cal, "gravity": grav,
     }
     if force_neutral:
         plan["preflight_override"] = "trap"
@@ -397,36 +493,29 @@ def directive(plan: dict, at) -> str:
     inv = plan["invalidation"]
     if plan["regime"] == "neutral":
         out.append(f"The range breaks if price holds above {_money(inv['above'])} or below {_money(inv['below'])}: "
-                   "a 4-hour close, two hourly closes in a row, one violent hourly close, or a firm hourly close "
-                   "with the order flow behind it.")
+                   "a 4-hour close or two hourly closes in a row beyond it.")
     else:
         side, level = next(iter(inv.items()))
-        out.append(f"The plan is wrong if price holds {side} {_money(level)}: a 4-hour close, two hourly closes "
-                   "in a row, one violent hourly close, or a firm hourly close with the order flow behind it.")
+        out.append(f"The plan is wrong if price holds {side} {_money(level)}: a 4-hour close or two hourly closes "
+                   "in a row beyond it.")
     return " ".join(out)
 
 
 # ---------- invalidation, read from the candles ----------
 
-def invalidation_hit(plan: dict, h1: pd.DataFrame, now_ms: int, flow: pd.DataFrame | None = None) -> dict | None:
+def invalidation_hit(plan: dict, h1: pd.DataFrame, now_ms: int) -> dict | None:
     """The first decisive breach of the plan's whole-day invalidation level since it was made; None while it
-    holds. The level is the day's (fixed at session open); what counts as "decisively breached by sustained
-    price action, or a violent cascade" (Hammad, message 5) and "an hourly candle closes firmly outside
-    boundaries with opposing CVD" (message 6) is made exact here, in four tests on closed hourly candles: a
-    4-hour candle close beyond the level, SUSTAINED_CLOSES hourly closes in a row beyond it, one hourly close
-    CASCADE_ATR 1h ATRs beyond it, or one hourly close FIRM_ATR ATRs beyond it on an hour whose taker delta
-    (`flow`, the 1h taker-flow frame) went the breach's way. A single hourly close just past the line with no
-    flow behind it is a wick on the day, and the CAUTION tier covers it."""
+    holds. The level is the day's (fixed at session open); "decisively breached by sustained price action"
+    (Hammad, message 5) is made exact here, in two tests on closed hourly candles: a 4-hour candle close
+    beyond the level, or SUSTAINED_CLOSES hourly closes in a row beyond it. One hourly close past the line,
+    however far and whatever the flow behind it, is a wick on the day, and the CAUTION tier covers it: the
+    single-candle tests of messages 5 and 6 (a close an ATR beyond, a half-ATR close with opposing CVD)
+    were retired on 30 Oct, with Hammad, because they voided plans on spikes that came straight back."""
     inv = plan.get("invalidation") or {}
     if not inv:
         return None
     rows = h1[(h1["timestamp"].astype("int64") >= plan["created_ms"] - plan["created_ms"] % HOUR_MS)
               & (h1["timestamp"].astype("int64") + HOUR_MS <= min(now_ms, plan["end_ms"]))]
-    atr_ = float(plan.get("atr_1h") or 0.0)
-    cascade, firm = CASCADE_ATR * atr_, FIRM_ATR * atr_
-    deltas: dict[int, float] = {}
-    if flow is not None and not flow.empty and "delta" in flow:
-        deltas = dict(zip(flow["timestamp"].astype("int64").tolist(), flow["delta"].astype(float).tolist()))
     run: dict[str, int] = {side: 0 for side in inv}
     for t, close in zip(rows["timestamp"].astype("int64"), rows["close"].astype(float)):
         close_ms = int(t) + HOUR_MS
@@ -435,13 +524,8 @@ def invalidation_hit(plan: dict, h1: pd.DataFrame, now_ms: int, flow: pd.DataFra
         for side, level in inv.items():
             beyond = close - level if side == "above" else level - close
             run[side] = run[side] + 1 if beyond > 0 else 0
-            delta = deltas.get(int(t), 0.0)
-            opposing = (delta > 0) if side == "above" else (delta < 0)
             basis = ("4-hour close" if beyond > 0 and close_ms % FOUR_H_MS == 0 else
-                     f"{SUSTAINED_CLOSES} hourly closes in a row" if run[side] >= SUSTAINED_CLOSES else
-                     f"hourly close more than {_money(cascade)} beyond" if cascade > 0 and beyond >= cascade else
-                     f"hourly close {_money(beyond)} beyond with {abs(delta):,.0f} BTC of taker flow behind it"
-                     if firm > 0 and beyond >= firm and opposing else None)
+                     f"{SUSTAINED_CLOSES} hourly closes in a row" if run[side] >= SUSTAINED_CLOSES else None)
             if basis:
                 return {"side": side, "level": level, "close": round(close, 2), "close_ms": close_ms, "basis": basis}
     return None
@@ -542,12 +626,17 @@ def score_plan(plan: dict, h1: pd.DataFrame, until_ms: int | None = None) -> dic
     tol = HIGH_LOW_TOL * (ph["price"] - pl["price"])
     hours = plan.get("hours") or []
     last = next((h for h in hours if h["t_ms"] >= end), hours[-1] if hours else None)
-    return {"scored": True, "regime": regime, "high": round(high, 2), "high_ms": hi_t, "low": round(low, 2), "low_ms": lo_t,
-            "close": round(close, 2), "direction_hit": bool(direction), "invalidated": inv is not None,
-            "scenario_a_right": bool(direction) and inv is None,
-            "high_hit": abs(high - ph["price"]) <= tol, "low_hit": abs(low - pl["price"]) <= tol,
-            "high_time_hit": abs(hi_t - ph["t_ms"]) <= TIME_TOL_MS, "low_time_hit": abs(lo_t - pl["t_ms"]) <= TIME_TOL_MS,
-            "band_held": bool(last and last["band_low"] <= close <= last["band_high"])}
+    out = {"scored": True, "regime": regime, "high": round(high, 2), "high_ms": hi_t, "low": round(low, 2), "low_ms": lo_t,
+           "close": round(close, 2), "direction_hit": bool(direction), "invalidated": inv is not None,
+           "scenario_a_right": bool(direction) and inv is None,
+           "high_hit": abs(high - ph["price"]) <= tol, "low_hit": abs(low - pl["price"]) <= tol,
+           "high_time_hit": abs(hi_t - ph["t_ms"]) <= TIME_TOL_MS, "low_time_hit": abs(lo_t - pl["t_ms"]) <= TIME_TOL_MS,
+           "band_held": bool(last and last["band_low"] <= close <= last["band_high"])}
+    sh = (plan.get("gravity") or {}).get("shadow")
+    if sh:                      # the same tolerance, for the gravity-steered projection that did not go out
+        out["shadow_high_hit"] = abs(high - sh["projected_high"]) <= tol
+        out["shadow_low_hit"] = abs(low - sh["projected_low"]) <= tol
+    return out
 
 
 SCORE_KEYS = ("scenario_a_right", "high_hit", "low_hit", "high_time_hit", "low_time_hit", "band_held", "invalidated")
@@ -567,12 +656,20 @@ def record(outcomes: list[dict]) -> dict:
     out.update({"direction_days": len(directional),
                 "direction_right": sum(1 for o in directional if o.get("scenario_a_right")),
                 "range_days": len(ranges), "range_held": sum(1 for o in ranges if o.get("scenario_a_right"))})
+    shadow = [o for o in done if "shadow_high_hit" in o]       # liquidation gravity, judged beside the live plan
+    out.update({"shadow_days": len(shadow),
+                "shadow_high_hit": sum(1 for o in shadow if o.get("shadow_high_hit")),
+                "shadow_low_hit": sum(1 for o in shadow if o.get("shadow_low_hit")),
+                "live_high_hit_on_shadow_days": sum(1 for o in shadow if o.get("high_hit")),
+                "live_low_hit_on_shadow_days": sum(1 for o in shadow if o.get("low_hit"))})
     return out
 
 
-def backtest(h1: pd.DataFrame, now_ms: int, days: int = BACKTEST_DAYS, paths: int = 800) -> dict:
+def backtest(h1: pd.DataFrame, now_ms: int, days: int = BACKTEST_DAYS, paths: int = 800,
+             gravity_k: float | None = None, keep: list | None = None) -> dict:
     """The morning plan's rules replayed on each past day the history allows, price-only, and scored the
-    same way as the live plans. {"days": 0} with too little history."""
+    same way as the live plans. {"days": 0} with too little history. `keep`, a list, collects each day's
+    (plan, outcome) for a closer look (the gravity and calibration comparisons)."""
     closed = closed_hours(h1, now_ms)
     if closed.empty:
         return record([])
@@ -583,11 +680,13 @@ def backtest(h1: pd.DataFrame, now_ms: int, days: int = BACKTEST_DAYS, paths: in
     while len(outcomes) < days and d - first_ts >= (garch.FIT_HOURS + 60) * HOUR_MS:
         hist = closed[closed["timestamp"].astype("int64") + HOUR_MS <= d]
         price = float(hist["close"].iloc[-1])
-        plan = build_plan(hist, d, d + DAY_MS, price, price_only=True, paths=paths)
+        plan = build_plan(hist, d, d + DAY_MS, price, price_only=True, paths=paths, gravity_k=gravity_k)
         if plan.get("available"):
             o = score_plan(plan, closed)
             if o and o.get("scored"):
                 outcomes.append(o)
+                if keep is not None:
+                    keep.append((plan, o))
         d -= DAY_MS
     out = record(outcomes)
     out["recent"] = record(outcomes[:RECENT_DAYS])
