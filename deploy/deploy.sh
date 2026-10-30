@@ -12,6 +12,6 @@ as_app git checkout -q "$BRANCH" 2>/dev/null || as_app git checkout -q -b "$BRAN
 as_app git reset -q --hard "origin/$BRANCH"
 as_app /opt/quant/venv/bin/pip install -q -r requirements.txt
 echo "deployed $(as_app git log --oneline -1)"
-for unit in quant-worker quant-book; do
+for unit in quant-worker quant-book quant-mcp; do
   if systemctl is-enabled -q "$unit"; then systemctl restart "$unit"; fi
 done

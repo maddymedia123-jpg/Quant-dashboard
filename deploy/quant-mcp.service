@@ -1,0 +1,19 @@
+[Unit]
+Description=Quant dashboard MCP server (read-only tools for AI assistants, streamable HTTP on 8787)
+After=network-online.target quant-worker.service
+Wants=network-online.target
+
+[Service]
+User=quant-worker
+WorkingDirectory=/opt/quant/app
+# /opt/quant/mcp.env holds QUANT_MCP_TOKEN only: this unit never sees the Turso or Discord secrets.
+EnvironmentFile=/opt/quant/mcp.env
+# It reads the worker's embedded replica beside it, read-only, with no second Turso connection.
+Environment=PYTHONUNBUFFERED=1 QUANT_MCP_STORE=/opt/quant/data/trap_intel.turso.db
+ExecStart=/opt/quant/venv/bin/python mcp_server.py --http --host 127.0.0.1 --port 8787
+Restart=always
+RestartSec=10
+MemoryMax=300M
+
+[Install]
+WantedBy=multi-user.target
