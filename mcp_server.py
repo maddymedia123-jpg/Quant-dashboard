@@ -26,6 +26,7 @@ import hmac
 import logging
 import os
 import pathlib
+import re
 import sys
 
 from mcp.server.mcpserver import MCPServer
@@ -148,6 +149,18 @@ class BearerAuth:
         await self.app(scope, receive, send)
 
 
+class RedactKey(logging.Filter):
+    """The access log must not keep the path-form token: /k/<token>/ is logged as /k/REDACTED/."""
+    _KEY = re.compile(r"/k/[^/\s\"]+")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.args:
+            record.args = tuple(self._KEY.sub("/k/REDACTED", x) if isinstance(x, str) else x for x in record.args)
+        if isinstance(record.msg, str):
+            record.msg = self._KEY.sub("/k/REDACTED", record.msg)
+        return True
+
+
 async def _plain(send, status: int, body: bytes, extra: list | None = None):
     await send({"type": "http.response.start", "status": status,
                 "headers": [(b"content-type", b"text/plain"), (b"content-length", str(len(body)).encode())] + (extra or [])})
@@ -183,6 +196,7 @@ def main(argv: list[str] | None = None) -> int:
         log.error("%s must be set (16+ characters) to serve HTTP; refusing to open the port", TOKEN_ENV)
         return 2
     import uvicorn
+    logging.getLogger("uvicorn.access").addFilter(RedactKey())
     uvicorn.run(http_app(mcp, token), host=a.host, port=a.port, log_level="info")
     return 0
 

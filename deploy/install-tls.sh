@@ -16,6 +16,9 @@ fi
 cat > /etc/caddy/Caddyfile <<CADDY
 $HOST {
     encode gzip
+    log {
+        output discard
+    }
     reverse_proxy 127.0.0.1:8787
 }
 CADDY

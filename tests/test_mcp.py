@@ -136,3 +136,12 @@ def test_the_server_lists_six_tools_the_guide_and_guards_http_with_a_bearer_toke
     monkeypatch.delenv(mcp_server.TOKEN_ENV, raising=False)
     monkeypatch.setenv(mcp_server.STORE_ENV, str(store.path))
     assert mcp_server.main(["--http", "--port", "1"]) == 2
+
+
+def test_the_access_log_never_keeps_a_path_token():
+    import logging
+    import mcp_server
+    rec = logging.LogRecord("uvicorn.access", logging.INFO, "", 0, '%s - "%s %s HTTP/%s" %d',
+                            ("1.2.3.4:0", "POST", "/k/0123456789abcdef0123/mcp", "1.1", 200), None)
+    assert mcp_server.RedactKey().filter(rec) is True
+    assert "0123456789abcdef0123" not in rec.getMessage() and "/k/REDACTED/mcp" in rec.getMessage()
