@@ -43,7 +43,9 @@ curl -s http://127.0.0.1:8787/healthz                                   # "ok"
 ```
 
 The server listens on 127.0.0.1 only. Remote connectors (claude.ai, ChatGPT) accept HTTPS URLs only, so
-a TLS front has to sit in front of it: a Cloudflare Tunnel (`cloudflared tunnel --url http://127.0.0.1:8787`,
+a TLS front has to sit in front of it. The one in use is Caddy with a free DuckDNS name, installed by
+`sudo sh /opt/quant/app/deploy/install-tls.sh <name>.duckdns.org` once the name points at the VM and TCP 80
+and 443 are open in the cloud firewall (`install-mcp.sh` first). Alternatives: a Cloudflare Tunnel (`cloudflared tunnel --url http://127.0.0.1:8787`,
 free, no firewall change) or Caddy with a hostname. The assistant is then given the public URL
 (`https://<host>/mcp`) and the header `Authorization: Bearer <token>`.
 
