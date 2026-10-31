@@ -1,4 +1,5 @@
-"""The MCP server: six read-only tools over the shared store, a bearer-guarded HTTP app, the guide resource."""
+"""The MCP server: six read-only tools over the shared store plus the guide (a tool and a resource), a
+bearer-guarded HTTP app."""
 import asyncio
 import json
 import os
@@ -101,13 +102,18 @@ def test_a_read_only_store_serves_the_tools_and_refuses_writes(seeded, tmp_path)
     assert len(store.market_alerts_recent(10)) == 2, "nothing got through"
 
 
-def test_the_server_lists_six_tools_the_guide_and_guards_http_with_a_bearer_token(seeded, monkeypatch):
+def test_the_server_lists_the_tools_serves_the_guide_both_ways_and_guards_http(seeded, monkeypatch):
     store, plan = seeded
     import mcp_server
     srv = mcp_server.build(store)
     tools = asyncio.run(srv.list_tools())
-    assert sorted(t.name for t in tools) == sorted(mcp_tools.TOOLS)
+    assert sorted(t.name for t in tools) == sorted([*mcp_tools.TOOLS, "how_to_read"])
     assert all(t.description for t in tools), "every tool explains itself"
+    # chat connectors (Claude, ChatGPT) give the model tools and not resources: the guide is a tool as well
+    got = asyncio.run(srv.call_tool("how_to_read", {}))
+    body = got.content[0].text
+    assert body.startswith("# How to read") and "House rules" in body and "## 2. The tools" in body, body[:120]
+    assert "how_to_read" in mcp_server.INSTRUCTIONS, "the server tells a new client to read the guide first"
     res = asyncio.run(srv.list_resources())
     assert [str(r.uri) for r in res] == ["guide://how-to-read"]
     text = asyncio.run(srv.read_resource("guide://how-to-read"))
