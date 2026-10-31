@@ -10,9 +10,10 @@ Two ways to run it:
     python mcp_server.py                      # stdio, for a desktop assistant on the same machine
     python mcp_server.py --http --port 8787   # streamable HTTP, for remote connectors; needs QUANT_MCP_TOKEN
 
-Over HTTP every request must carry `Authorization: Bearer <QUANT_MCP_TOKEN>`; the server refuses to start
-without a token, so a bare port is never opened by accident. GET /healthz answers without a token so a
-check from outside can see the service is up. Remote connectors in claude.ai and ChatGPT need an HTTPS
+Over HTTP every request must carry the token - `Authorization: Bearer <token>`, `X-Api-Key: <token>`, or
+the path form `/k/<token>/mcp` for connectors that allow no header; the server refuses to start without a
+token, so a bare port is never opened by accident. GET /healthz answers without a token so a check from
+outside can see the service is up. Remote connectors in claude.ai and ChatGPT need an HTTPS
 URL, so on the VM the port sits behind a TLS front (deploy/README.md).
 
 The store: by default the usual one (TI_DATA_DIR, or Turso when TURSO_* is set), opened read-only -
@@ -103,21 +104,45 @@ def build(store: Store) -> MCPServer:
     return mcp
 
 
+KEY_PREFIX = "/k/"
+
+
 class BearerAuth:
-    """ASGI middleware: every HTTP request needs `Authorization: Bearer <token>`, except GET /healthz."""
+    """ASGI middleware: every HTTP request must carry the token, except GET /healthz. Three ways, because
+    connectors differ: `Authorization: Bearer <token>`; `X-Api-Key: <token>` (Claude's connector keeps the
+    Authorization header for its own OAuth token); or the token in the path, `/k/<token>/mcp` (ChatGPT's
+    connector allows no custom header at all), which is stripped before the app sees the request. The
+    OAuth discovery paths answer 404, not 401, so a client that sees a 401 does not go looking for a
+    login that does not exist."""
 
     def __init__(self, app, token: str):
         self.app, self.token = app, token
+
+    def _ok(self, given: str) -> bool:
+        return bool(self.token) and bool(given) and hmac.compare_digest(given, self.token)
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-        if scope.get("path") == "/healthz" and scope.get("method") == "GET":
+        path = scope.get("path") or "/"
+        if path == "/healthz" and scope.get("method") == "GET":
             await _plain(send, 200, b"ok")
             return
-        auth = dict(scope.get("headers") or {}).get(b"authorization", b"").decode("latin-1")
-        if not self.token or not hmac.compare_digest(auth, f"Bearer {self.token}"):
+        if path.startswith("/.well-known/"):
+            await _plain(send, 404, b"not found")
+            return
+        headers = dict(scope.get("headers") or {})
+        bearer = headers.get(b"authorization", b"").decode("latin-1")
+        given = bearer[7:] if bearer.startswith("Bearer ") else headers.get(b"x-api-key", b"").decode("latin-1")
+        if path.startswith(KEY_PREFIX):
+            key, _, rest = path[len(KEY_PREFIX):].partition("/")
+            if self._ok(key):
+                scope = {**scope, "path": "/" + rest, "raw_path": ("/" + rest).encode()}
+                await self.app(scope, receive, send)
+                return
+            given = ""
+        if not self._ok(given):
             await _plain(send, 401, b"unauthorized", [(b"www-authenticate", b"Bearer")])
             return
         await self.app(scope, receive, send)

@@ -122,6 +122,16 @@ def test_the_server_lists_six_tools_the_guide_and_guards_http_with_a_bearer_toke
         assert c.post("/mcp", json=body, headers={**heads, "Authorization": "Bearer wrong"}).status_code == 401
         ok = c.post("/mcp", json=body, headers={**heads, "Authorization": "Bearer 0123456789abcdef0123"})
         assert ok.status_code != 401, ok.text
+        # the two other ways in, for connectors that keep Authorization for themselves or allow no header
+        assert c.post("/mcp", json=body, headers={**heads, "X-Api-Key": "0123456789abcdef0123"}).status_code == ok.status_code
+        assert c.post("/mcp", json=body, headers={**heads, "X-Api-Key": "wrong"}).status_code == 401
+        by_path = c.post("/k/0123456789abcdef0123/mcp", json=body, headers=heads)
+        assert by_path.status_code == ok.status_code and by_path.text == ok.text, by_path.text
+        assert c.post("/k/wrong/mcp", json=body, headers=heads).status_code == 401
+        assert c.post("/k/wrong/mcp", json=body, headers={**heads, "X-Api-Key": "0123456789abcdef0123"}).status_code == 401, \
+            "a wrong key in the path is not rescued by a header"
+        assert c.get("/.well-known/oauth-protected-resource").status_code == 404, "no OAuth to discover"
+        assert c.get("/.well-known/oauth-authorization-server", headers={"X-Api-Key": "0123456789abcdef0123"}).status_code == 404
     # no token, no port
     monkeypatch.delenv(mcp_server.TOKEN_ENV, raising=False)
     monkeypatch.setenv(mcp_server.STORE_ENV, str(store.path))
