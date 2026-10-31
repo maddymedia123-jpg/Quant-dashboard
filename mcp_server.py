@@ -1,9 +1,10 @@
 """The dashboard's MCP server: read-only tools so an AI assistant (Claude, ChatGPT, Cursor) can read the
 day's plan, its status, the record, the desks and the alerts, and talk about them in Hammad's framework.
 
-Six tools, all reads of the shared store (core.mcp_tools), and one resource, the reader's guide
-(docs/mcp-guide.md), which tells the assistant how to read every number. No tool writes, fetches an
-exchange or runs a model: the assistant reads what the worker produced.
+Six tools, all reads of the shared store (core.mcp_tools), and the reader's guide (docs/mcp-guide.md),
+which tells the assistant how to read every number; the guide is both a tool (how_to_read, because chat
+connectors give the model tools and not resources) and a resource (guide://how-to-read). No tool writes,
+fetches an exchange or runs a model: the assistant reads what the worker produced.
 
 Two ways to run it:
 
@@ -40,8 +41,8 @@ GUIDE = HERE / "docs" / "mcp-guide.md"
 TOKEN_ENV = "QUANT_MCP_TOKEN"
 STORE_ENV = "QUANT_MCP_STORE"
 INSTRUCTIONS = ("Read-only access to a BTC Trap Intelligence dashboard: the day's Quant Forecast plan, its live status "
-                "and alerts, the forecast record, the four desks' anchors and the week's Monday plan. Read the "
-                "guide://how-to-read resource first: it explains every field and the house rules. Quote only numbers "
+                "and alerts, the forecast record, the four desks' anchors and the week's Monday plan. Call how_to_read "
+                "first: it explains every field and the house rules. Quote only numbers "
                 "a tool returned; never extrapolate a forecast of your own. Times are UTC unless a field says PKT.")
 log = logging.getLogger("mcp_server")
 
@@ -52,8 +53,12 @@ def open_store(path: str | None = None) -> Store:
     return Store(p, readonly=True)
 
 
+def _guide() -> str:
+    return GUIDE.read_text(encoding="utf-8") if GUIDE.exists() else "The guide is missing from this build."
+
+
 def build(store: Store) -> MCPServer:
-    """The server with its six tools and the guide bound to `store`."""
+    """The server with its six store tools, the guide tool and the guide resource, bound to `store`."""
     mcp = MCPServer("Quant Dashboard", instructions=INSTRUCTIONS)
 
     @mcp.tool()
@@ -96,11 +101,16 @@ def build(store: Store) -> MCPServer:
         floor and ceiling and the weekly flip level, in plain words."""
         return mcp_tools.monday_plan(store)
 
+    @mcp.tool()
+    def how_to_read() -> str:
+        """Read this first. The reader's guide: what every tool returns, how to read the plan, the record,
+        the desks and the alerts, and the house rules for talking about them (markdown)."""
+        return _guide()
+
     @mcp.resource("guide://how-to-read", name="How to read the dashboard", mime_type="text/markdown")
     def guide() -> str:
-        """The reader's guide: what every tool returns, how to read the plan, the record, the desks and the
-        alerts, and the house rules for talking about them."""
-        return GUIDE.read_text(encoding="utf-8") if GUIDE.exists() else "The guide is missing from this build."
+        """The same guide as a resource, for clients that read resources."""
+        return _guide()
 
     return mcp
 
