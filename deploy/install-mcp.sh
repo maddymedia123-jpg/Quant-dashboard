@@ -12,12 +12,17 @@ for f in quant-mcp.service deploy.sh; do
 done
 install -o root -g root -m 644 "$SRC/quant-mcp.service" /etc/systemd/system/quant-mcp.service
 install -o root -g root -m 755 "$SRC/deploy.sh" /opt/quant/deploy.sh
-if ! grep -q '^QUANT_MCP_TOKEN=.\{16,\}$' /opt/quant/mcp.env 2>/dev/null; then
-  umask 077
-  echo "QUANT_MCP_TOKEN=$(openssl rand -hex 24)" > /opt/quant/mcp.env
+ENV=/opt/quant/mcp.env
+[ ! -e "$ENV" ] || { [ -f "$ENV" ] && [ ! -L "$ENV" ]; } || { echo "refusing: $ENV is not a regular file"; exit 1; }
+if ! grep -q '^QUANT_MCP_TOKEN=.\{16,\}$' "$ENV" 2>/dev/null; then
+  # the secret lands in a fresh 0600 file and is renamed into place: never written into an open-mode file
+  install -o quant-worker -g quant-worker -m 600 /dev/null "$ENV.new"
+  printf 'QUANT_MCP_TOKEN=%s
+' "$(openssl rand -hex 24)" > "$ENV.new"
+  mv -f "$ENV.new" "$ENV"
 fi
-chown quant-worker:quant-worker /opt/quant/mcp.env
-chmod 600 /opt/quant/mcp.env
+chown -h quant-worker:quant-worker "$ENV"
+chmod 600 "$ENV"
 systemctl daemon-reload
 systemctl enable --now quant-mcp
 sleep 8
