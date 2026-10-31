@@ -17,8 +17,7 @@ ENV=/opt/quant/mcp.env
 if ! grep -q '^QUANT_MCP_TOKEN=.\{16,\}$' "$ENV" 2>/dev/null; then
   # the secret lands in a fresh 0600 file and is renamed into place: never written into an open-mode file
   install -o quant-worker -g quant-worker -m 600 /dev/null "$ENV.new"
-  printf 'QUANT_MCP_TOKEN=%s
-' "$(openssl rand -hex 24)" > "$ENV.new"
+  printf 'QUANT_MCP_TOKEN=%s\n' "$(openssl rand -hex 24)" > "$ENV.new"
   mv -f "$ENV.new" "$ENV"
 fi
 chown -h quant-worker:quant-worker "$ENV"
