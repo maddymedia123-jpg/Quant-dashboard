@@ -253,7 +253,9 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     import uvicorn
     logging.getLogger("uvicorn.access").addFilter(RedactKey())
-    uvicorn.run(http_app(mcp, token), host=a.host, port=a.port, log_level="info")
+    # a bounded graceful stop: behind a proxy, idle keep-alive connections otherwise hold a restart for
+    # systemd's whole 90 s stop timeout (every tool call is one short POST; nothing long-lived is cut)
+    uvicorn.run(http_app(mcp, token), host=a.host, port=a.port, log_level="info", timeout_graceful_shutdown=5)
     return 0
 
 
