@@ -18,6 +18,20 @@ Trap Intelligence is Hammad's BTC dashboard, read from the Gate.io BTC_USDT perp
 
 **monday_plan** returns this week's Sticky Monday Master Plan.
 
+**trap_reports** returns the Trap Intelligence reports, newest first, without bodies: `report_id`, time, `mode` (1-agent is the single-model pipeline, 15-agent the full desk of agents), `classification` (BULL_TRAP, BEAR_TRAP, RANGE_TRAP, NO_TRAP, GENUINE_MOVE), price, `majority_direction`, the `plan` line, `plan_outcome`, and `scored` (hit_24h and hit_7d: null until scored).
+
+**trap_report** returns one report in full. `briefs`: one per agent (desk bullish or bearish, domain, raw_metrics, interpretation, traps_detected, conviction, key_risk_to_thesis). `desks`: the bullish and bearish summaries with convergence, divergence and best_setup. `director`: executive_summary, trap_classification and its rationale, contradictions, convergence, blind_spots, scenarios (each with a probability, path and invalidation), trade_plan and category_summaries for live, intraday, weekly and monthly. `raw_metrics`: the metric table as [label, value, source] rows. `plan`: the report's own trade plan (side, zone, confirmation, stop, targets, expiry) or `why_none`. `unavailable_domains` names data that was down when the report ran. Empty arguments read the newest report; `mode` narrows to a pipeline.
+
+**desk_calls** returns the desks' direction calls, newest first, with `horizon_hours`, and once the horizon has passed `scored_utc`, `realised_pct` and `hit` (null while open). `per_desk` counts the rows returned; it is not a hit rate against chance, forecast_record's ledger is.
+
+**traps** returns the TRAP desk's declared traps: `side` (bull_trap or bear_trap), `timeframe`, `level`, `invalidation`, `plays_out`, `score`, `head_call`, `evidence`, `status` (active, played_out, invalidated, expired) and the settle price and time.
+
+**trade_journal** returns the pinned trades with the `plan` written at open, the `stop` the desk set, the trader's `given_stop` with the desk's `stop_verdict` on it, `status`, close details and `events` (targets reached, stop moves, warnings). An empty list means nothing is pinned.
+
+**order_book** returns the latest order-book report: `depth` (mid, best bid and ask, spread_bps, resting BTC within 0.10, 0.25, 0.50 and 1.00 percent on each side, imbalance_025), `sweeps` and `scoops` in the window, `minutes_in_window`, and `method`, which defines a sweep and a scoop. The Market Pulse is written from this.
+
+**recon_windows** returns a desk's last anchored windows: `bias`, `margin` (bull points minus bear points), `confidence`, `trap`, `price`, `reasoning` (the rubric: points by domain and by item for each side, trap_probabilities, the handshake with the other desks, notes, degraded flag), `side_notes` added during the window, and `score` once the window closed (realised move, direction_hit, trap_hit, Brier scores).
+
 ## 3. How to read the day plan
 
 **Regime.** Bullish expansion, bearish expansion, or neutral / range-bound. It comes from the lean, a score from -1 to +1. The day is neutral when the lean is weaker than 0.20, or weaker than 0.35 while volatility is compressed. An engineered trap active on the 4h forces the day neutral. A neutral day gets no direction, only a box.
@@ -70,6 +84,12 @@ In the ledger, a directional desk call hits when price moves more than 0.25 sigm
 
 **Monday plan.** Written once after Monday 00:00 UTC. It does not move during the week.
 
+**Trap reports.** A report is one run of the Trap Intelligence pipeline at a moment in time; it does not update. Quote its `generated_at` with any number from it. The report's `plan` is the trade plan of that report, not the Quant Forecast directive; when they differ, say so and give both. The 1-agent and 15-agent pipelines are separate reports of the same market.
+
+**Recon windows and calls.** A window is one anchored verdict for one candle (Live 4 hours, Intraday, Weekly and Monthly longer). The reasoning behind it is the rubric: each domain scores both sides, and the margin is the difference. A call is the direction the desk published at that time; it is scored once, at its horizon.
+
+**Order book.** Depth is resting size, not traded volume. A sweep is the mid moving through resting size within a minute; a scoop is a large wall tested and held. Neither is a forecast.
+
 ## 6. House rules
 
 - Never invent or extrapolate a number a tool did not return.
@@ -98,6 +118,11 @@ In the ledger, a directional desk call hits when price moves more than 0.25 sigm
 - **Tolerance**: 25% of projected range; 2 hours.
 - **Air pocket**: a low-volume node on the 1h profile.
 - **Estimated liquidation zone**: an air pocket where open interest surged; an estimate, not exchange data.
+- **Trap Intelligence report (TIR)**: one run of the desk pipeline; its classification names the trap it sees.
+- **Head call**: the TRAP desk's one-line verdict on a declared trap (ENGINEERED_TRAP, say).
+- **Margin**: bull points minus bear points on a desk's rubric for one window.
+- **Handshake**: a desk asking the other desks before it publishes; the factor shows how much they moved it.
+- **Sweep / scoop**: the mid clearing resting size within a minute / a large wall tested and held.
 - **Liquidation gravity**: pull towards those levels; off live, in shadow.
 - **Calibration**: the 0.8-1.3 sigma scale.
 - **Desk anchor**: a direction held until a trigger.

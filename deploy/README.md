@@ -7,7 +7,7 @@ What runs on the Google VM (`/opt/quant`), kept here so the server can be rebuil
 | `quant-worker.service` | the 24/7 worker (`worker.py`): one pass a minute | `/etc/systemd/system/` |
 | `quant-book.service` | the order-book recorder (`book_collector.py`): one snapshot every 5 s into `/opt/quant/data/order_book.sqlite` | `/etc/systemd/system/` |
 | `quant-deploy.timer` → `quant-deploy.service` | every 2 min: pull `main` if it moved, `pip install`, restart the enabled units | `/etc/systemd/system/`, script `/opt/quant/deploy.sh` |
-| `quant-mcp.service` | the read-only MCP server (`mcp_server.py --http`): seven tools for AI assistants (six reads of the store and the reader's guide), streamable HTTP on 127.0.0.1:8787 behind a bearer token | `/etc/systemd/system/`, token in `/opt/quant/mcp.env` |
+| `quant-mcp.service` | the read-only MCP server (`mcp_server.py --http`): fourteen tools for AI assistants (thirteen reads of the store and the reader's guide), streamable HTTP on 127.0.0.1:8787 behind a bearer token | `/etc/systemd/system/`, token in `/opt/quant/mcp.env` |
 
 Install a new unit once (as root):
 
@@ -26,7 +26,8 @@ enabled (28 Oct 2026).
 ## The MCP server
 
 `mcp_server.py` lets an AI assistant (Claude, ChatGPT, Cursor) read the dashboard: the day's plan, its
-status and alerts, the record, the desks' anchors and the Monday plan (core/mcp_tools.py), plus the reader's
+status and alerts, the record, the desks' anchors, calls and window reasoning, the Trap Intelligence reports,
+the traps, the trade journal, the order book and the Monday plan (core/mcp_tools.py), plus the reader's
 guide (docs/mcp-guide.md) as the `how_to_read` tool and as a resource (chat connectors only hand the model tools). Every tool is a read of the shared store; nothing writes, fetches
 an exchange or runs a model.
 

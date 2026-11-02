@@ -18,7 +18,8 @@ from core.config import CATEGORIES
 from core.quant_forecast import DAY_MS, day_start
 
 READS = frozenset({"qf_plans", "qf_week", "market_alerts_keyed", "market_alerts_recent", "book_report", "get_anchor",
-                   "anchor_log", "calls", "reports"})
+                   "anchor_log", "calls", "reports", "report_body", "traps", "trades", "trade_events", "live_anchors",
+                   "get_live_anchor", "side_notes", "recon_scores"})
 RECORD_DAYS = 30
 ALERT_LIMIT = 20
 
@@ -211,6 +212,174 @@ def monday_plan(store, now_ms: int | None = None) -> dict:
     return _clean({"available": True, "week_utc": _iso(week), "written_utc": _iso(row.get("created_ms")), **row["payload"]})
 
 
+def _limit(n, cap: int) -> int:
+    try:
+        return max(1, min(int(n), cap))
+    except (TypeError, ValueError):
+        return cap
+
+
+def _desk(key: str | None) -> dict:
+    cat = CATEGORIES.get(key or "")
+    return {"desk_label": cat.label if cat else key, "horizon": cat.horizon_label if cat else None}
+
+
+def _bool(v):
+    return None if v is None else bool(v)
+
+
+def _loads(v, default):
+    if isinstance(v, (dict, list)):
+        return v
+    try:
+        return json.loads(v) if v else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _report_row(r: dict) -> dict:
+    return {"report_id": r["report_id"], "time_utc": _iso(r["ts_ms"]), "mode": r.get("mode"),
+            "classification": r.get("classification"), "price": r.get("price"), "sigma24_pct": r.get("sigma24_pct"),
+            "majority_direction": r.get("majority_dir"), "plan": r.get("plan"), "plan_outcome": r.get("plan_outcome"),
+            "plan_scored_utc": _iso(r.get("plan_scored_ms")),
+            "scored": {"move_24h_pct": r.get("move_24h_pct"), "hit_24h": _bool(r.get("hit_24h")),
+                       "move_7d_pct": r.get("move_7d_pct"), "hit_7d": _bool(r.get("hit_7d"))}}
+
+
+def trap_reports(store, limit: int = 20, now_ms: int | None = None) -> dict:
+    """The Trap Intelligence reports, newest first, without their bodies: id, time, pipeline (1-agent or
+    15-agent), classification, price, 24h sigma, majority direction, the plan line and how the report
+    scored at 24 hours and 7 days. `trap_report` reads one body."""
+    now = _now(now_ms)
+    rows = store.reports(limit=_limit(limit, 100))
+    return _clean({"as_of_utc": _iso(now), "reports": [_report_row(r) for r in rows],
+                   "how_to_read": "hit_24h / hit_7d: did price move the way the report's majority said over that "
+                                  "horizon; plan_outcome: what became of the report's trade plan"})
+
+
+def trap_report(store, report_id: str | None = None, mode: str | None = None, now_ms: int | None = None) -> dict:
+    """One Trap Intelligence report in full: every desk brief with its raw metrics, interpretation and
+    traps detected, the bullish and bearish desks' summaries, the director's classification, scenarios,
+    contradictions, blind spots and trade plan, the category summaries, the raw metric table and the
+    report's own plan. `report_id` names one; empty reads the newest (of `mode` when given)."""
+    now = _now(now_ms)
+    r = store.report_body(report_id or None, mode or None)
+    if not r:
+        want = f"report {report_id}" if report_id else f"a {mode} report" if mode else "a report"
+        return {"available": False, "as_of_utc": _iso(now), "reason": f"no body saved for {want}"}
+    body = dict(r["payload"] or {})
+    body.pop("runs", None)                      # model latencies and token counts: not part of the analysis
+    return _clean({"available": True, "as_of_utc": _iso(now), **_report_row(r), "report": body})
+
+
+def desk_calls(store, desk: str | None = None, limit: int = 50, now_ms: int | None = None) -> dict:
+    """The desks' direction calls, newest first, each with its score once its horizon has passed (the
+    realised move and whether the call was right), plus counts per desk over the rows returned.
+    `desk` is live, intraday, weekly or monthly; empty is all four."""
+    now = _now(now_ms)
+    rows = store.calls(limit=_limit(limit, 500))
+    if desk:
+        rows = [r for r in rows if r.get("category") == desk]
+    calls, per = [], {}
+    for r in rows:
+        scored = r.get("scored_ms") is not None
+        calls.append({"time_utc": _iso(r["ts_ms"]), "desk": r["category"], **_desk(r["category"]),
+                      "direction": r["direction"], "confidence": r.get("confidence"), "price": r.get("price"),
+                      "sigma_pct": r.get("sigma_pct"), "horizon_hours": int(r["horizon_ms"]) / 3_600_000,
+                      "scored_utc": _iso(r.get("scored_ms")), "realised_pct": r.get("realised_pct"),
+                      "hit": _bool(r.get("hit")) if scored else None})
+        p = per.setdefault(r["category"], {"calls": 0, "scored": 0, "hits": 0})
+        p["calls"] += 1
+        if scored:
+            p["scored"] += 1
+            p["hits"] += 1 if r.get("hit") else 0
+    return _clean({"as_of_utc": _iso(now), "desk": desk, "calls": calls, "per_desk": per,
+                   "how_to_read": "a call is scored once at its horizon; for hit rates against chance use "
+                                  "forecast_record.desk_ledger, which applies the same rule to every desk"})
+
+
+def traps(store, status: str | None = None, limit: int = 50, now_ms: int | None = None) -> dict:
+    """The TRAP desk's declared traps, newest first: side (bull_trap / bear_trap), timeframe, the level,
+    where it is invalidated and where it plays out, the score and head call, the evidence lines, and how
+    it was settled. `status` is active, played_out, invalidated or expired; empty is all."""
+    now = _now(now_ms)
+    rows = store.traps(status=status or None, limit=_limit(limit, 200))
+    out = [{"id": r["id"], "declared_utc": _iso(r["declared_ms"]), "declared_by": r["category"], "side": r["side"],
+            "timeframe": r["timeframe"], "level": r["level"], "invalidation": r["invalidation"], "plays_out": r["plays_out"],
+            "score": r.get("score"), "head_call": r.get("head_call"), "evidence": _loads(r.get("evidence"), []),
+            "notes": _loads(r.get("notes"), []), "status": r["status"], "resolved_utc": _iso(r.get("resolved_ms")),
+            "resolved_price": r.get("resolved_price"), "detail": _loads(r.get("detail"), None)} for r in rows]
+    return _clean({"as_of_utc": _iso(now), "status": status, "traps": out,
+                   "how_to_read": "a trap is a market event, not a desk's opinion: the same raid is one trap whichever "
+                                  "desk declared it; invalidation sits half an ATR past the level"})
+
+
+def trade_journal(store, status: str | None = None, limit: int = 20, now_ms: int | None = None) -> dict:
+    """The pinned trades: side, entry, the stop the desk set and the one the trader gave with the desk's
+    verdict on it, the plan written at open (never rewritten), status and close, and every event logged
+    on the trade. `status` is open or closed; empty is all."""
+    now = _now(now_ms)
+    rows = store.trades(status=status or None, limit=_limit(limit, 100))
+    trades = []
+    for r in rows:
+        events = [{"time_utc": _iso(e["ts_ms"]), "kind": e["kind"], "headline": e["headline"], "price": e.get("price"),
+                   "sent": bool(e.get("notified"))} for e in store.trade_events(trade_id=r["id"], limit=100)]
+        trades.append({"id": r["id"], "opened_utc": _iso(r["opened_ms"]), "asset": r["asset"], "side": r["side"],
+                       "entry": r["entry"], "stop": r["stop"], "given_stop": r.get("given_stop"),
+                       "stop_verdict": r.get("stop_verdict"), "desk": r["category"], **_desk(r["category"]),
+                       "status": r["status"], "closed_utc": _iso(r.get("closed_ms")), "closed_reason": r.get("closed_reason"),
+                       "closed_price": r.get("closed_price"), "last_refresh_utc": _iso(r.get("refreshed_ms")),
+                       "plan": r.get("plan") or {}, "events": events})
+    return _clean({"as_of_utc": _iso(now), "status": status, "trades": trades,
+                   "how_to_read": "the plan is the thesis at open and does not change; read the events for what has "
+                                  "happened since; an empty list means no trade is pinned"})
+
+
+def order_book(store, now_ms: int | None = None) -> dict:
+    """The worker's latest order-book report: depth around the mid (best bid and ask, spread, resting size
+    within 0.10 / 0.25 / 0.50 / 1.00 percent, the imbalance), the sweeps and scoops seen in the window,
+    and the method that defines them. This is what the Market Pulse reads."""
+    now = _now(now_ms)
+    rep = store.book_report()
+    if not rep:
+        return {"available": False, "as_of_utc": _iso(now), "reason": "the worker has not written an order-book report yet"}
+    rest = {k: v for k, v in rep.items() if k not in ("ts_ms", "as_of_ms")}
+    return _clean({"available": True, "as_of_utc": _iso(now), "report_utc": _iso(rep.get("ts_ms")),
+                   "book_as_of_utc": _iso(rep.get("as_of_ms")), **rest})
+
+
+def recon_windows(store, desk: str = "live", limit: int = 5, now_ms: int | None = None) -> dict:
+    """A desk's last anchored windows with the full reasoning behind each: the bias and margin, the bull
+    and bear points by domain (quant, auction, delta, ICT, derivatives) and by item, the trap
+    probabilities, the handshake with the other desks, the side notes added during the window, and the
+    score once the window closed. `desk` is live, intraday, weekly or monthly."""
+    now = _now(now_ms)
+    desk = desk or "live"
+    heads = store.live_anchors(limit=_limit(limit, 50), category=desk)
+    scores = {int(s["window_open_ms"]): s for s in store.recon_scores(category=desk, limit=200)}
+    windows = []
+    for h in heads:
+        w = int(h["window_open_ms"])
+        full = store.get_live_anchor(w, category=desk)
+        sc = scores.get(w)
+        windows.append({"window_open_utc": _iso(w), "window_close_utc": _iso(h.get("window_close_ms")),
+                        "published_utc": _iso(h.get("published_ms")), "bias": h.get("bias"), "margin": h.get("margin"),
+                        "confidence": h.get("confidence"), "trap": h.get("trap"), "price": h.get("price"),
+                        "reasoning": (full or {}).get("payload"),
+                        "side_notes": [{"time_utc": _iso(n["ts_ms"]), "kind": n["kind"], "headline": n["headline"],
+                                        "detail": n.get("detail"), "price": n.get("price")}
+                                       for n in store.side_notes(w, category=desk)],
+                        "score": None if not sc else {
+                            "scored_utc": _iso(sc["scored_ms"]), "open_price": sc["open_price"], "close_price": sc["close_price"],
+                            "move_pct": sc["move_pct"], "realised": sc["realised"], "direction_hit": _bool(sc["direction_hit"]),
+                            "trap_hit": _bool(sc.get("trap_hit")), "bull_brier": sc.get("bull_brier"), "bear_brier": sc.get("bear_brier")}})
+    return _clean({"as_of_utc": _iso(now), "desk": desk, **_desk(desk), "windows": windows,
+                   "how_to_read": "margin is bull points minus bear points on the rubric; the anchor is pinned at the "
+                                  "window open and scored once at its close; side notes are what changed meanwhile"})
+
+
 TOOLS = {"todays_plan": todays_plan, "plan_status": plan_status, "forecast_record": forecast_record,
-         "desk_anchors": desk_anchors, "recent_alerts": recent_alerts, "monday_plan": monday_plan}
+         "desk_anchors": desk_anchors, "recent_alerts": recent_alerts, "monday_plan": monday_plan,
+         "trap_reports": trap_reports, "trap_report": trap_report, "desk_calls": desk_calls, "traps": traps,
+         "trade_journal": trade_journal, "order_book": order_book, "recon_windows": recon_windows}
 __all__ = ["TOOLS", "READS", "DAY_MS", *TOOLS]
