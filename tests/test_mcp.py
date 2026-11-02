@@ -131,6 +131,8 @@ def test_the_rest_of_the_dashboard_reads_back_reports_calls_traps_trades_book_an
     assert calls["calls"][0]["hit"] is None and calls["calls"][0]["horizon_hours"] == 168.0
     assert calls["per_desk"] == {"weekly": {"calls": 1, "scored": 0, "hits": 0}, "live": {"calls": 1, "scored": 1, "hits": 1}}
     assert [c["desk"] for c in mcp_tools.desk_calls(ro, "live", now_ms=NOW)["calls"]] == ["live"]
+    assert len(mcp_tools.desk_calls(ro, "live", limit=1, now_ms=NOW)["calls"]) == 1, \
+        "the desk filter comes before the limit: the newest row overall is a weekly call"
     tr = mcp_tools.traps(ro, now_ms=NOW)["traps"]
     assert len(tr) == 1 and tr[0]["status"] == "invalidated" and tr[0]["resolved_price"] == 80_530.0
     assert tr[0]["evidence"] == ["price holding above value while delta drains"], "evidence comes back as a list"

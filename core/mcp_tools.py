@@ -277,9 +277,10 @@ def desk_calls(store, desk: str | None = None, limit: int = 50, now_ms: int | No
     realised move and whether the call was right), plus counts per desk over the rows returned.
     `desk` is live, intraday, weekly or monthly; empty is all four."""
     now = _now(now_ms)
-    rows = store.calls(limit=_limit(limit, 500))
+    lim = _limit(limit, 500)
+    rows = store.calls(limit=2000 if desk else lim)
     if desk:
-        rows = [r for r in rows if r.get("category") == desk]
+        rows = [r for r in rows if r.get("category") == desk][:lim]
     calls, per = [], {}
     for r in rows:
         scored = r.get("scored_ms") is not None
