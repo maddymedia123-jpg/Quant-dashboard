@@ -389,6 +389,28 @@ class Store:
                 "move_7d_pct, hit_7d, mode, snapshot_id, plan, plan_outcome, plan_scored_ms FROM reports "
                 "ORDER BY ts_ms DESC LIMIT ?", (int(limit),)))
 
+    def report_body(self, report_id: str | None = None, mode: str | None = None) -> dict | None:
+        """One report with its body parsed: the one named, or the newest saved whole (of `mode` when given).
+        None when there is no such report or it was saved without a body."""
+        where, args = ["payload IS NOT NULL"], []
+        if report_id:
+            where.append("report_id=?")
+            args.append(str(report_id))
+        if mode:
+            where.append("mode=?")
+            args.append(str(mode))
+        with self._lock:
+            r = self._conn.execute("SELECT * FROM reports WHERE " + " AND ".join(where) +
+                                   " ORDER BY ts_ms DESC LIMIT 1", tuple(args)).fetchone()
+        if not r:
+            return None
+        d = dict(r)
+        try:
+            d["payload"] = json.loads(d["payload"])
+        except (TypeError, ValueError):
+            return None
+        return d
+
     def latest_report_payloads(self) -> dict[str, dict]:
         """The newest report of each pipeline that was saved whole: {mode: {report_id, ts_ms, mode, payload}}.
         Reports from before bodies were kept have no payload and are not here."""

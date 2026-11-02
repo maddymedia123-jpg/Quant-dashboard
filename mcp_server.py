@@ -1,7 +1,7 @@
 """The dashboard's MCP server: read-only tools so an AI assistant (Claude, ChatGPT, Cursor) can read the
 day's plan, its status, the record, the desks and the alerts, and talk about them in Hammad's framework.
 
-Six tools, all reads of the shared store (core.mcp_tools), and the reader's guide (docs/mcp-guide.md),
+Thirteen tools, all reads of the shared store (core.mcp_tools), and the reader's guide (docs/mcp-guide.md),
 which tells the assistant how to read every number; the guide is both a tool (how_to_read, because chat
 connectors give the model tools and not resources) and a resource (guide://how-to-read). No tool writes,
 fetches an exchange or runs a model: the assistant reads what the worker produced.
@@ -41,7 +41,8 @@ GUIDE = HERE / "docs" / "mcp-guide.md"
 TOKEN_ENV = "QUANT_MCP_TOKEN"
 STORE_ENV = "QUANT_MCP_STORE"
 INSTRUCTIONS = ("Read-only access to a BTC Trap Intelligence dashboard: the day's Quant Forecast plan, its live status "
-                "and alerts, the forecast record, the four desks' anchors and the week's Monday plan. Call how_to_read "
+                "and alerts, the forecast record, the four desks' anchors, calls and reasoning, the Trap Intelligence "
+                "reports, the declared traps, the trade journal, the order book and the week's Monday plan. Call how_to_read "
                 "first: it explains every field and the house rules. Quote only numbers "
                 "a tool returned; never extrapolate a forecast of your own. Times are UTC unless a field says PKT.")
 log = logging.getLogger("mcp_server")
@@ -58,7 +59,7 @@ def _guide() -> str:
 
 
 def build(store: Store) -> MCPServer:
-    """The server with its six store tools, the guide tool and the guide resource, bound to `store`."""
+    """The server with its store tools, the guide tool and the guide resource, bound to `store`."""
     mcp = MCPServer("Quant Dashboard", instructions=INSTRUCTIONS)
 
     @mcp.tool()
@@ -100,6 +101,51 @@ def build(store: Store) -> MCPServer:
         """This week's Sticky Monday Master Plan: weekly bias, the dealers' put and call walls, the baseline
         floor and ceiling and the weekly flip level, in plain words."""
         return mcp_tools.monday_plan(store)
+
+    @mcp.tool()
+    def trap_reports(limit: int = 20) -> dict:
+        """The Trap Intelligence reports, newest first, without bodies: id, time, pipeline (1-agent or
+        15-agent), classification, price, majority direction, plan line, 24h and 7d scores. `limit` up to 100."""
+        return mcp_tools.trap_reports(store, limit)
+
+    @mcp.tool()
+    def trap_report(report_id: str | None = None, mode: str | None = None) -> dict:
+        """One Trap Intelligence report in full: every desk brief (raw metrics, interpretation, traps
+        detected), the bullish and bearish desk summaries, the director's classification, scenarios,
+        contradictions, blind spots and trade plan, the per-desk summaries, the raw metric table and the
+        report's plan. `report_id` names one (see trap_reports); empty is the newest, of `mode` if given."""
+        return mcp_tools.trap_report(store, report_id, mode)
+
+    @mcp.tool()
+    def desk_calls(desk: str | None = None, limit: int = 50) -> dict:
+        """The desks' direction calls, newest first, with each call's score once its horizon passed, and
+        counts per desk. `desk`: live, intraday, weekly, monthly or empty for all. `limit` up to 500."""
+        return mcp_tools.desk_calls(store, desk, limit)
+
+    @mcp.tool()
+    def traps(status: str | None = None, limit: int = 50) -> dict:
+        """The TRAP desk's declared traps, newest first: side, timeframe, level, invalidation, where it
+        plays out, score, head call, evidence and how it settled. `status`: active, played_out,
+        invalidated, expired or empty for all."""
+        return mcp_tools.traps(store, status, limit)
+
+    @mcp.tool()
+    def trade_journal(status: str | None = None, limit: int = 20) -> dict:
+        """The pinned trades with their plan at open, stop verdict, status, close and every event logged
+        since. `status`: open, closed or empty for all."""
+        return mcp_tools.trade_journal(store, status, limit)
+
+    @mcp.tool()
+    def order_book() -> dict:
+        """The latest order-book report the Market Pulse reads: depth around the mid, spread, resting size
+        by band, imbalance, and the sweeps and scoops seen in the window, with the method."""
+        return mcp_tools.order_book(store)
+
+    @mcp.tool()
+    def recon_windows(desk: str = "live", limit: int = 5) -> dict:
+        """A desk's last anchored windows with the full reasoning: bias, margin, bull and bear points by
+        domain and item, trap probabilities, the handshake, side notes and the window's score."""
+        return mcp_tools.recon_windows(store, desk, limit)
 
     @mcp.tool()
     def how_to_read() -> str:
