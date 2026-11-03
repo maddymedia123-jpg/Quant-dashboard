@@ -302,6 +302,18 @@ def anchored_direction_html(a: CategoryAnalysis, v, now_ms: int) -> str:
     return card_html("Market direction · anchored", body, tone)
 
 
+def anomaly_trap_html(t) -> str:
+    """His Section 5.3 on the desk: the named trap, its ingredients, and what price and the flow are doing."""
+    ing = " + ".join((t.mood,) + tuple(t.crowd))
+    body = (f"<p><strong>{html.escape(ing)}</strong></p>"
+            f"<p>{html.escape(t.candle)}; {html.escape(t.flow)}.</p>"
+            f"<p class='muted ti-note'>Positioning read against the candle. SET means the order flow already disagrees "
+            f"with the crowd; FORMING means the crowd is there but the flow has not turned. Contrarian by design: "
+            f"the {html.escape(t.trapped)} are the crowd that gets forced out, so this leans "
+            f"{'higher' if t.side == 'LONG' else 'lower'}. Not trading advice.</p>")
+    return card_html(f"Anomaly trap · {t.name} · {t.status.upper()}", body, "up" if t.side == "LONG" else "down")
+
+
 def early_warning_html(ws) -> str | None:
     if not ws:
         return None
@@ -2284,7 +2296,9 @@ def layman_summary_html(a: CategoryAnalysis, label: str, derivs: dict | None, fe
     tone = {"TRADE": "up" if long else "down", "WAIT": "warn"}.get(s["verdict"], "muted")
     return (f"<div class='ti-read ti-layman'><span class='ti-kicker'>Summary · {html.escape(label)}</span>"
             f"<p><strong>🧭 BIG PICTURE</strong><br>{e(s['summary'])}</p>"
-            "<p><strong>🕒 TIMELINE</strong></p><ul>"
+            + (f"<p class='ti-directive {'up' if s['anomaly']['side'] == 'LONG' else 'down'}'><strong>🪤 ANOMALY TRAP</strong><br>"
+               f"{e(s['anomaly']['headline'])}</p>" if s.get("anomaly") else "")
+            + "<p><strong>🕒 TIMELINE</strong></p><ul>"
             f"<li>Now: {e(s['phase_now'])}</li>"
             f"<li>Turning window: {e(s['window1'])}</li></ul>"
             f"<p class='muted ti-note'>Kill zones, measured: {e(s['kill_zones'])}</p>"

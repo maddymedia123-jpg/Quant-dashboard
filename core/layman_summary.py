@@ -277,6 +277,7 @@ def lines(a, derivs: dict | None, fear_greed: int | None, now_ms: int, evidence=
         "directive": directive,
         "warning": _warning(f.side, now_ms, ev, a.vol.horizon_label, f, a.vol.atr),
         "bar": None if g.bar is None else {"label": g.bar.label, "price": g.bar.price, "note": g.bar.note},
+        "anomaly": None if g.trap is None else g.trap.to_state(),
     }
 
 
