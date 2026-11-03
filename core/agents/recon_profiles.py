@@ -32,6 +32,14 @@ class ReconProfile:
     window_title: str                   # "4-hour anchored summary"
     window_label: str                   # "the current 4h candle"
     bias_tf: str = ""                   # the cascade's bias timeframe, one candle above the anchor
+    cascade_reads: tuple[str, ...] = () # his v22 Section 3: derived candles read between the three, as briefs
+
+    @property
+    def read_order(self) -> tuple[str, ...]:
+        """His cascade read order, shortest first: the desk's three timeframes with the derived candles
+        slotted in by length (Intraday 1h, 4h, 12h, 1d; Weekly 4h, 1d, 3d, 0.5w, 1w; Monthly 1d, 1w, 2w, 1M)."""
+        from core.config import TF_MINUTES
+        return tuple(sorted(set(self.timeframes) | set(self.cascade_reads), key=lambda tf: TF_MINUTES[tf]))
 
     @property
     def cascade(self) -> tuple[str, str, tuple[str, str]]:
@@ -79,8 +87,10 @@ PROFILES: dict[str, ReconProfile] = {
     # one is the candle its summary is pinned to - so each desk judges the structure of its own window.
     # Monthly reads true calendar-month candles; it used to read the same 4h/1d/1w as Weekly.
     "live": ReconProfile("live", "Live Recon", ("15m", "1h", "4h"), "four hours", "4h", "4-hour", "4h", "1d"),
-    "intraday": ReconProfile("intraday", "Intraday", ("1h", "4h", "1d"), "24 hours", "1d", "Daily", "daily", "1w"),
-    "weekly": ReconProfile("weekly", "Weekly", ("4h", "1d", "1w"), "seven days", "1w", "Weekly", "weekly", "1M"),
-    "monthly": ReconProfile("monthly", "Monthly", ("1d", "1w", "1M"), "30 days", "1M", "Monthly", "monthly", "3M"),
+    # his v22 Section 3 cascade: 4H/12H/24H -> 1D (24H is the daily candle), 4H -> 1D -> 0.5W -> 1W,
+    # 1D -> 1W -> 2W -> 1M; the 3D candle is Weekly's second chart in his table, read here as a brief
+    "intraday": ReconProfile("intraday", "Intraday", ("1h", "4h", "1d"), "24 hours", "1d", "Daily", "daily", "1w", ("12h",)),
+    "weekly": ReconProfile("weekly", "Weekly", ("4h", "1d", "1w"), "seven days", "1w", "Weekly", "weekly", "1M", ("3d", "0.5w")),
+    "monthly": ReconProfile("monthly", "Monthly", ("1d", "1w", "1M"), "30 days", "1M", "Monthly", "monthly", "3M", ("2w",)),
 }
 LIVE = PROFILES["live"]

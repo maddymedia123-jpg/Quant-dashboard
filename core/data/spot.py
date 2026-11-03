@@ -14,8 +14,10 @@ from core.data.gemini_spot import fetch_gemini_spot
 from core.data.kraken_spot import fetch_spot as fetch_kraken
 from core.data.types import SpotSnapshot
 
+HOUR_MS = 3_600_000
 DAY_MS = 86_400_000
 WEEK_MS = 7 * DAY_MS
+HALF_WEEK_MS = WEEK_MS // 2        # 84 hours: Monday 00:00 to Thursday 12:00 UTC, then to Monday
 # Monday 1970-01-05 00:00 UTC: weeks are counted from here, so two-week candles pair the same weeks
 # on every run instead of shifting with whatever the first candle in the response happened to be.
 EPOCH_MONDAY_MS = 4 * DAY_MS
@@ -33,6 +35,27 @@ def _aggregate(df: pd.DataFrame, bucket: pd.Series) -> pd.DataFrame:
     })
     out["timestamp"] = out["timestamp"].astype("int64")
     return out.reset_index(drop=True)
+
+
+def twelve_hour(hourly: pd.DataFrame) -> pd.DataFrame:
+    """12H candles: hourly candles grouped into the UTC half-days opening at 00:00 and 12:00."""
+    ts = hourly["timestamp"].astype("int64")
+    return _aggregate(hourly, (ts // (12 * HOUR_MS)) * (12 * HOUR_MS))
+
+
+def three_day(daily: pd.DataFrame) -> pd.DataFrame:
+    """3D candles: daily candles in runs of three counted from the fixed epoch Monday, so the same days
+    group together on every run whatever the first candle in the response."""
+    ts = daily["timestamp"].astype("int64")
+    day_no = (ts - EPOCH_MONDAY_MS) // DAY_MS
+    return _aggregate(daily, (day_no // 3) * 3 * DAY_MS + EPOCH_MONDAY_MS)
+
+
+def half_week(four_hour: pd.DataFrame) -> pd.DataFrame:
+    """0.5W candles: 4h candles grouped into half-weeks, Monday 00:00 to Thursday 12:00 UTC and Thursday
+    12:00 to Monday 00:00, so two of them make exactly the weekly candle."""
+    ts = four_hour["timestamp"].astype("int64")
+    return _aggregate(four_hour, ((ts - EPOCH_MONDAY_MS) // HALF_WEEK_MS) * HALF_WEEK_MS + EPOCH_MONDAY_MS)
 
 
 def two_week(weekly: pd.DataFrame) -> pd.DataFrame:
@@ -65,10 +88,17 @@ def calendar_quarter(daily: pd.DataFrame) -> pd.DataFrame:
 
 
 def with_derived_frames(frames: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
-    """Add the 2W and 1M candles the Weekly and Monthly desks read. A frame that cannot be built is
-    simply absent, which every consumer already treats as "not enough history"."""
+    """Add the derived candles (12h, 3d, 0.5w, 2w, 1M, 3M) the desks and his cascade read. A frame that
+    cannot be built is simply absent, which every consumer already treats as "not enough history"."""
     out = dict(frames)
+    hourly, four_hour = frames.get("1h"), frames.get("4h")
     weekly, daily = frames.get("1w"), frames.get("1d")
+    if hourly is not None and len(hourly) and "12h" not in out:
+        out["12h"] = twelve_hour(hourly)
+    if daily is not None and len(daily) and "3d" not in out:
+        out["3d"] = three_day(daily)
+    if four_hour is not None and len(four_hour) and "0.5w" not in out:
+        out["0.5w"] = half_week(four_hour)
     if weekly is not None and len(weekly) and "2w" not in out:
         out["2w"] = two_week(weekly)
     if daily is not None and len(daily) and "1M" not in out:

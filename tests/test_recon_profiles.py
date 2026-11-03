@@ -111,3 +111,18 @@ def test_each_desk_charts_its_middle_timeframe_and_is_pinned_to_its_top_one():
 def test_monthly_reads_monthly_candles_not_the_weekly_desks_charts():
     assert rp.PROFILES["monthly"].timeframes == ("1d", "1w", "1M")
     assert rp.PROFILES["monthly"].timeframes != rp.PROFILES["weekly"].timeframes
+
+
+
+def test_each_desk_reads_his_v22_cascade_order_with_the_derived_candles_slotted_in():
+    """His Section 3: 4H/12H/24H -> 1D, 4H -> 1D -> 0.5W -> 1W, 1D -> 1W -> 2W -> 1M (24H is the daily candle).
+    The three-timeframe questions are unchanged; the derived candles are extra reads."""
+    from core.config import DERIVED_TIMEFRAMES, TF_MINUTES
+
+    assert rp.PROFILES["live"].cascade_reads == () and rp.PROFILES["live"].read_order == ("15m", "1h", "4h")
+    assert rp.PROFILES["intraday"].read_order == ("1h", "4h", "12h", "1d")
+    assert rp.PROFILES["weekly"].read_order == ("4h", "1d", "3d", "0.5w", "1w")
+    assert rp.PROFILES["monthly"].read_order == ("1d", "1w", "2w", "1M")
+    for p in rp.PROFILES.values():
+        assert p.timeframes == tuple(tf for tf in p.read_order if tf not in p.cascade_reads), "the questions still name the three"
+    assert set(("12h", "3d", "0.5w", "2w")) <= set(DERIVED_TIMEFRAMES) and all(tf in TF_MINUTES for tf in DERIVED_TIMEFRAMES)

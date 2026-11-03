@@ -25,8 +25,8 @@ DAY_MS = 86_400_000
 ANNOUNCE_WINDOW_MS = DAY_MS
 SILENT_STATES = ("?",)
 # Plain names for the timeframes, so an alert reads "daily" rather than "1d"
-TF_WORDS = {"15m": "15m", "1h": "1h", "4h": "4h", "1d": "daily", "1w": "weekly", "2w": "2-week", "1M": "monthly",
-            "3M": "quarterly"}
+TF_WORDS = {"15m": "15m", "1h": "1h", "4h": "4h", "12h": "12h", "1d": "daily", "3d": "3-day", "0.5w": "half-week",
+            "1w": "weekly", "2w": "2-week", "1M": "monthly", "3M": "quarterly"}
 DESK_TF = {"live": "1h", "intraday": "4h", "weekly": "1d", "monthly": "1w"}
 DESK_LABEL = {"live": "Live Recon", "intraday": "Intraday", "weekly": "Weekly", "monthly": "Monthly"}
 
