@@ -299,6 +299,11 @@ def desk_calls(store, desk: str | None = None, limit: int = 50, now_ms: int | No
                                   "forecast_record.desk_ledger, which applies the same rule to every desk"})
 
 
+def _horizon(timeframe) -> str:
+    from core.traps import horizon
+    return horizon(timeframe)
+
+
 def traps(store, status: str | None = None, limit: int = 50, now_ms: int | None = None) -> dict:
     """The TRAP desk's declared traps, newest first: side (bull_trap / bear_trap), timeframe, the level,
     where it is invalidated and where it plays out, the score and head call, the evidence lines, and how
@@ -306,13 +311,15 @@ def traps(store, status: str | None = None, limit: int = 50, now_ms: int | None 
     now = _now(now_ms)
     rows = store.traps(status=status or None, limit=_limit(limit, 200))
     out = [{"id": r["id"], "declared_utc": _iso(r["declared_ms"]), "declared_by": r["category"], "side": r["side"],
-            "timeframe": r["timeframe"], "level": r["level"], "invalidation": r["invalidation"], "plays_out": r["plays_out"],
+            "timeframe": r["timeframe"], "horizon": _horizon(r["timeframe"]), "level": r["level"], "invalidation": r["invalidation"], "plays_out": r["plays_out"],
             "score": r.get("score"), "head_call": r.get("head_call"), "evidence": _loads(r.get("evidence"), []),
             "notes": _loads(r.get("notes"), []), "status": r["status"], "resolved_utc": _iso(r.get("resolved_ms")),
             "resolved_price": r.get("resolved_price"), "detail": _loads(r.get("detail"), None)} for r in rows]
     return _clean({"as_of_utc": _iso(now), "status": status, "traps": out,
                    "how_to_read": "a trap is a market event, not a desk's opinion: the same raid is one trap whichever "
-                                  "desk declared it; invalidation sits half an ATR past the level"})
+                                  "desk declared it; invalidation sits half an ATR past the level; horizon short = a 15m or "
+                                  "1h trap, shown and traded on the Live desk only, never in a desk summary or the Pulse; "
+                                  "horizon swing = 4h and longer, read by every desk on that candle"})
 
 
 def trade_journal(store, status: str | None = None, limit: int = 20, now_ms: int | None = None) -> dict:

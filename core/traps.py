@@ -39,6 +39,43 @@ MAX_SWEEP_BARS = 5
 MIN_REWARD_RISK = 1.0
 DEFAULT_ATR_PCT = 0.004          # fallback when the volatility matrix has no ATR for this timeframe
 
+# His v22 Section 1.4 bans 15m/1h execution noise from the swing outputs; the owner's decision (4 Nov)
+# keeps those traps, on the Live desk only, labelled short-horizon. Everything that writes or filters a
+# trap by horizon reads these three names, so the rule cannot drift between the band, the trade desk's
+# consultation, the alerts and the MCP tool.
+SHORT_HORIZON = ("15m", "1h")
+SHORT_HORIZON_LABEL = "short-horizon"
+SHORT_HORIZON_DESK = "live"           # the one desk that sees and trades them
+
+
+def is_short_horizon(timeframe) -> bool:
+    return str(timeframe or "") in SHORT_HORIZON
+
+
+def horizon(timeframe) -> str:
+    """"short" for a 15m or 1h trap, "swing" for anything longer."""
+    return "short" if is_short_horizon(timeframe) else "swing"
+
+
+def tf_label(timeframe) -> str:
+    """The timeframe as it is written wherever a trap is named: "1h · short-horizon" or "4h"."""
+    tf = str(timeframe or "—")
+    return f"{tf} · {SHORT_HORIZON_LABEL}" if is_short_horizon(tf) else tf
+
+
+def desk_timeframes(category: str, timeframes) -> tuple[str, ...]:
+    """The trap timeframes a desk may see: all of its own on the Live desk, its own minus the
+    short-horizon ones everywhere else (Intraday reads the 1h candle but does not trade 1h traps)."""
+    tfs = tuple(timeframes)
+    return tfs if category == SHORT_HORIZON_DESK else tuple(tf for tf in tfs if not is_short_horizon(tf))
+
+
+def visible_to(rows, category: str):
+    """The trap rows a desk may act on: short-horizon traps only on the Live desk."""
+    if category == SHORT_HORIZON_DESK:
+        return list(rows)
+    return [r for r in rows if not is_short_horizon(r.get("timeframe") if isinstance(r, dict) else getattr(r, "timeframe", None))]
+
 
 @dataclass(frozen=True)
 class TrapCandidate:

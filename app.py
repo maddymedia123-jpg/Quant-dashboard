@@ -54,7 +54,7 @@ from core.agents.trade_desk import judge_trade
 from core.alerts import Dispatcher
 from core.indicators.fib_time import fib_time_zones
 from core import trades
-from core.traps import find_candidates
+from core.traps import desk_timeframes, find_candidates, tf_label
 from core.agents.live_recon import build_state, run_live_recon
 from core.agents import handshake
 from core.agents.recon_profiles import LIVE, PROFILES
@@ -285,7 +285,7 @@ def run_trap_sweep() -> None:
                     c = verdict.candidate
                     store.add_side_note(
                         profile.window_open(run_ms), run_ms, "TRAP", f"trap:{trap_id}",
-                        f"TRAP desk: {c.label} anchored at {c.level:,.0f} on the {c.timeframe} chart.",
+                        f"TRAP desk: {c.label} anchored at {c.level:,.0f} on the {tf_label(c.timeframe)} chart.",
                         f"Invalidated at {c.invalidation:,.0f}; pays off at {c.plays_out:,.0f}. "
                         + "; ".join(c.evidence), price, category=cat)
             declared = sum(1 for r in results if r["verdict"] is not None and r["verdict"].declared)
@@ -583,9 +583,10 @@ def render_protocols(profile) -> None:
     except Exception as e:  # noqa: BLE001 - a protocol failure must not blank the tab
         st.warning(f"Protocols unavailable this refresh: {e}")
         return
-    # every trap on a timeframe this desk reads, not only the ones it declared itself
+    # every trap on a timeframe this desk reads, not only the ones it declared itself - except the
+    # short-horizon (15m/1h) traps, which only the Live desk sees (v22 Section 1.4, owner 4 Nov)
     try:
-        rows = store.traps(timeframes=profile.timeframes, status="active")
+        rows = store.traps(timeframes=desk_timeframes(profile.category, profile.timeframes), status="active")
     except Exception as e:  # noqa: BLE001 - the ledger must not blank the tab
         rows = []
         st.warning(f"Trap ledger unavailable: {e}")

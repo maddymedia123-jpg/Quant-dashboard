@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from core.agents.judge import Judge
 from core.agents.recon_profiles import PROFILES, ReconProfile
 from core.agents.rubric import BEARISH, BULLISH, DOMAIN_BY_KEY, RubricItem
+from core.traps import visible_to
 from core.trades import LONG, StopVerdict, TimedTarget
 
 log = logging.getLogger(__name__)
@@ -232,10 +233,12 @@ def category_alignment(store, side: str, now_ms: int) -> tuple[DeskAlignment, ..
 
 
 def trap_proximity(store, side: str, entry: float, stop: float, targets: list[TimedTarget],
-                   atr: float) -> tuple[TrapProximity, ...]:
-    """The inbound handshake with the TRAP desk: does an anchored trap sit on a price this trade needs?"""
+                   atr: float, category: str = "live") -> tuple[TrapProximity, ...]:
+    """The inbound handshake with the TRAP desk: does an anchored trap sit on a price this trade needs?
+    A short-horizon (15m/1h) trap is consulted only for the Live desk's trades; a swing desk's trade
+    is not warned off by 15-minute noise (v22 Section 1.4, owner 4 Nov)."""
     try:
-        rows = store.traps(status="active", limit=50)
+        rows = visible_to(store.traps(status="active", limit=50), category)
     except Exception as e:  # noqa: BLE001
         log.warning("trap consultation unavailable: %s", e)
         return ()
@@ -276,7 +279,7 @@ async def judge_trade(judge: Judge, state: dict, side: str, entry: float, stop: 
 
     notes: list[str] = []
     alignment = category_alignment(store, side, now_ms) if store is not None else ()
-    traps = trap_proximity(store, side, entry, stop.stop, targets, atr) if store is not None else ()
+    traps = trap_proximity(store, side, entry, stop.stop, targets, atr, profile.category) if store is not None else ()
 
     if not for_res.ok or not against_res.ok:
         problem = for_res.error or against_res.error or "no probabilities"

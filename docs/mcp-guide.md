@@ -24,7 +24,7 @@ Trap Intelligence is Hammad's BTC dashboard, read from the Gate.io BTC_USDT perp
 
 **desk_calls** returns the desks' direction calls, newest first, with `horizon_hours`, and once the horizon has passed `scored_utc`, `realised_pct` and `hit` (null while open). `per_desk` counts the rows returned; it is not a hit rate against chance, forecast_record's ledger is.
 
-**traps** returns the TRAP desk's declared traps: `side` (bull_trap or bear_trap), `timeframe`, `level`, `invalidation`, `plays_out`, `score`, `head_call`, `evidence`, `status` (active, played_out, invalidated, expired) and the settle price and time.
+**traps** returns the TRAP desk's declared traps: `side` (bull_trap or bear_trap), `timeframe`, `horizon` (short for a 15m or 1h trap, which the Live desk alone shows and trades and which never reaches a desk summary or the Pulse; swing for 4h and longer), `level`, `invalidation`, `plays_out`, `score`, `head_call`, `evidence`, `status` (active, played_out, invalidated, expired) and the settle price and time.
 
 **trade_journal** returns the pinned trades with the `plan` written at open, the `stop` the desk set, the trader's `given_stop` with the desk's `stop_verdict` on it, `status`, close details and `events` (targets reached, stop moves, warnings). An empty list means nothing is pinned.
 

@@ -19,6 +19,7 @@ Alerts go out while a page is open; there is no background worker on Streamlit C
 from __future__ import annotations
 
 from core.alerts import Event
+from core.traps import SHORT_HORIZON_LABEL, is_short_horizon
 
 DAY_MS = 86_400_000
 ANNOUNCE_WINDOW_MS = DAY_MS
@@ -101,6 +102,8 @@ def trap_events(traps: list[dict], now_ms: int) -> list[Event]:
         invalid = float(t.get("invalidation") or 0)
         desk = DESK_LABEL.get(str(t.get("category") or ""), str(t.get("category") or "").capitalize())
         tf = str(t.get("timeframe") or "")
+        if tf and is_short_horizon(tf):
+            tf = f"{tf}, {SHORT_HORIZON_LABEL}"
         where = f"{desk} ({tf})" if tf else desk
         move = f"pop above ${level:,.0f}" if bull else f"dip below ${level:,.0f}"
         declared = int(t.get("declared_ms") or 0)
