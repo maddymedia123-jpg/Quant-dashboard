@@ -54,9 +54,9 @@ the log every minute.
 | Desk | Reads | Charts | Anchored to | Scored over |
 | --- | --- | --- | --- | --- |
 | Live Recon | 15m / 1h / 4h | 1h, next 4 hours | the UTC 4h candle | 4 hours |
-| Intraday | 1h / 4h / 1D | 4h, next 24 hours | the UTC day | 24 hours |
-| Weekly | 4h / 1D / 1W | 1D, next 7 days | Monday 00:00 UTC | 7 days |
-| Monthly | 1D / 1W / 1M | 1W, next month | the calendar month | 30 days |
+| Intraday | 1h / 4h / 1D, plus a 12H brief | 4h, next 24 hours | the UTC day | 24 hours |
+| Weekly | 4h / 1D / 1W, plus 3D and 0.5W briefs | 1D, next 7 days | Monday 00:00 UTC | 7 days |
+| Monthly | 1D / 1W / 1M, plus a 2W brief | 1W, next month | the calendar month | 30 days |
 
 Each desk screen carries: the hero and candle countdown, the chart with the anchored call, the plain-English
 read (what is happening, levels that matter, what changes the view), the KPI strip for its own window, the
@@ -110,6 +110,17 @@ gets forced out, so a squeeze trap leans long and a flush trap leans short. It s
 as its own line under the Big Picture in the summary, speaks for the positioning family in the confluence
 gate, and goes to the desk's judges and Head in their state by name. Greed without leverage building is
 greed, not a flush, and is not named.
+
+**Derived candles and the cascade read order (your Section 3, live 4 November).** No free venue serves
+12-hour, 3-day, half-week or two-week candles, so they are built from the fetched ones on every refresh:
+12H is two UTC half-days of hourly candles (opening 00:00 and 12:00); 3D is three days counted from a fixed
+epoch Monday, so the same days always group together; 0.5W is a half-week of 4-hour candles, Monday 00:00
+to Thursday 12:00 UTC and Thursday 12:00 to Monday, so two of them make exactly the weekly candle; 2W is
+two Monday-aligned weeks (already built); 24H is the UTC daily candle, which the 1D frame already is. Each
+war room now reads your cascade order as briefs beside its own three timeframes (the three-timeframe
+questions are unchanged): Intraday 1h, 4h, 12h, 1D; Weekly 4h, 1D, 3D, 0.5W, 1W; Monthly 1D, 1W, 2W, 1M; Live
+15m, 1h, 4h as before. A derived candle that could not be built is named as missing in the state, not left
+out. The per-desk chart switch that would draw a 3D or 4h chart is the next item.
 
 **Short-horizon traps (your Section 1.4, live 4 November).** A trap on the 15-minute or 1-hour candle is
 short-horizon. It is still found, judged and anchored (the Live desk owns those candles in the sweep), but
@@ -306,6 +317,7 @@ report runs and are not stored, so there is nothing to read back. See section 9.
 
 | Ask | Status |
 | --- | --- |
+| Derived candles 12H / 3D / 0.5W / 2W and the cascade read order (Section 3) | Built 4 Nov: built from the fetched candles each refresh; each war room reads your cascade order as briefs beside its three timeframes; 24H is the daily candle (section 3) |
 | Short-horizon trap labels (Section 1.4) | Built 4 Nov: 15m and 1h traps labelled short-horizon, shown and traded on the Live desk only, never in a summary or the Pulse; 4h and longer unchanged (section 3) |
 | Market Pulse on every 1H, 2H and 4H close (Section 10) | Built 4 Nov: one message per hour boundary naming which closes it covers; a message older than 30 minutes is skipped, not sent late; the 4-hour close keeps its old ledger key so nothing double-sent at the switch (section 6) |
 | Weekend modifier (flag, sweep-and-rejection wording) | Built 4 Nov: Friday 21:00 to Sunday 22:00 UTC; desk card, summary wording and directive, a clean weekend break does not count in the gate, session in the judges' state (section 3) |

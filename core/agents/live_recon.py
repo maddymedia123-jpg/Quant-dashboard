@@ -136,6 +136,18 @@ def timeframe_brief(m, tf: str, context_tf: str) -> dict | None:
     return category_brief(a, m) if a is not None else None
 
 
+def cascade_reads(m, profile: ReconProfile) -> dict:
+    """His v22 Section 3 read order: the derived candles between a desk's own three (Intraday's 12h,
+    Weekly's 3d and half-week, Monthly's two-week), each as the same brief a desk's analysis gives, keyed
+    by timeframe. A frame that could not be built is named as missing rather than left out, so a judge
+    sees the gap. The desk's three-timeframe questions are unchanged; these are evidence beside them."""
+    out: dict = {"order": list(profile.read_order), "briefs": {}}
+    for tf in profile.cascade_reads:
+        brief = timeframe_brief(m, tf, profile.timeframes[2])
+        out["briefs"][tf] = brief if brief is not None else {"available": False, "note": f"no {tf} candles, or too few to read"}
+    return out
+
+
 def build_state(m, analyses: dict, now_ms: int | None = None, profile: ReconProfile | None = None) -> dict:
     """The shared state both teams and the trap agent judge.
 
@@ -163,6 +175,7 @@ def build_state(m, analyses: dict, now_ms: int | None = None, profile: ReconProf
             state["categories"][tf] = brief
             state["timeframes_read"][tf] = tf
     state["war_room"] = profile.label
+    state["cascade_reads"] = cascade_reads(m, profile)
     if profile.bias_tf:
         # the timeframe cascade, the same object the desk shows: bias above, anchor, engine below
         from core.indicators.cascade import classify

@@ -30,13 +30,17 @@ CATEGORIES: dict[str, Category] = {
 # Fetched from the exchange. 15m is still fetched: the 24h change, the trade desk's first checkpoint
 # and the TRAP sweep's finest look all read it.
 TIMEFRAMES: tuple[str, ...] = ("15m", "1h", "4h", "1d", "1w")
-# Built from those: no free spot venue serves two-week or calendar-month candles, so 2W is two
-# Monday-aligned weeks and 1M is a calendar month of daily candles (see core.data.spot).
-DERIVED_TIMEFRAMES: tuple[str, ...] = ("2w", "1M", "3M")
+# Built from those (see core.data.spot): 12h is two UTC half-days of hourly candles; 3d is three days
+# counted from a fixed epoch Monday; 0.5w is a half-week of 4h candles (Monday 00:00 and Thursday
+# 12:00 UTC); 2W is two Monday-aligned weeks; 1M and 3M are calendar months and quarters of daily
+# candles. His v22 Section 3 cascade (4H/12H/24H -> 1D, 4H -> 1D -> 0.5W -> 1W, 1D -> 1W -> 2W -> 1M)
+# reads them; 24H is the UTC daily candle, which the 1d frame already is.
+DERIVED_TIMEFRAMES: tuple[str, ...] = ("12h", "3d", "0.5w", "2w", "1M", "3M")
 
 # 1M is a nominal 30 days, used only where a duration is needed (annualising volatility, horizons);
 # month boundaries themselves are always taken from the calendar.
-TF_MINUTES: dict[str, int] = {"15m": 15, "1h": 60, "4h": 240, "1d": 1440, "1w": 10080, "2w": 20160, "1M": 43200, "3M": 129600}
+TF_MINUTES: dict[str, int] = {"15m": 15, "1h": 60, "4h": 240, "12h": 720, "1d": 1440, "3d": 4320, "0.5w": 5040,
+                              "1w": 10080, "2w": 20160, "1M": 43200, "3M": 129600}
 
 # Cache TTLs (seconds)
 TTL = {"spot": 25, "context": 120, "futures": 60, "options": 120, "sentiment": 1800}

@@ -361,3 +361,23 @@ def test_each_war_room_reads_gamma_from_its_own_expiries(market_and_analyses):
         d = lr.build_state(m, analyses, profile=PROFILES[key])["derivatives"]
         assert d["options"]["gamma"] == m.options.gamma_by_desk[key], key
         assert d["matched_window"]["gamma"] == m.options.gamma_by_desk[key], key
+
+
+
+def test_the_state_carries_the_cascade_reads_as_briefs_beside_the_three_timeframes(market_and_analyses):
+    from core.agents.recon_profiles import PROFILES
+
+    m, analyses = market_and_analyses
+    st = lr.build_state(m, analyses, profile=PROFILES["weekly"])
+    json.dumps(st)
+    assert st["cascade_reads"]["order"] == ["4h", "1d", "3d", "0.5w", "1w"]
+    assert set(st["cascade_reads"]["briefs"]) == {"3d", "0.5w"}
+    for tf, brief in st["cascade_reads"]["briefs"].items():
+        assert brief.get("available", True) is not False, f"the fixture carries {tf} candles, so the brief must be real"
+    assert set(st["categories"]) == {"intraday", "weekly", "monthly"}, "the questions' three timeframes are untouched"
+    live = lr.build_state(m, analyses)
+    assert live["cascade_reads"] == {"order": ["15m", "1h", "4h"], "briefs": {}}
+    # a desk whose derived candles are missing is told so, not left guessing
+    bare = m.model_copy(update={"spot": m.spot.model_copy(update={"frames": {k: v for k, v in m.spot.frames.items() if k not in ("3d", "0.5w")}})})
+    gap = lr.build_state(bare, analyses, profile=PROFILES["weekly"])["cascade_reads"]["briefs"]
+    assert gap["3d"]["available"] is False and "no 3d candles" in gap["3d"]["note"]

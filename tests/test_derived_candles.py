@@ -3,7 +3,8 @@ from datetime import datetime, timezone
 
 import pandas as pd
 
-from core.data.spot import EPOCH_MONDAY_MS, calendar_month, two_week, with_derived_frames
+from core.data.spot import (EPOCH_MONDAY_MS, HALF_WEEK_MS, calendar_month, half_week, three_day, twelve_hour,
+                            two_week, with_derived_frames)
 from core.trades import next_close, nth_close
 
 DAY = 86_400_000
@@ -46,7 +47,10 @@ def test_two_weeks_pair_the_same_weeks_whatever_the_first_candle():
 def test_derived_frames_are_added_and_never_replace_a_fetched_one():
     daily, weekly = _candles(_ms(2026, 1, 1), DAY, 40), _candles(EPOCH_MONDAY_MS, 7 * DAY, 6)
     out = with_derived_frames({"1d": daily, "1w": weekly})
-    assert set(out) == {"1d", "1w", "2w", "1M", "3M"}
+    assert set(out) == {"1d", "3d", "1w", "2w", "1M", "3M"}, "no hourly or 4h candles, so no 12h or half-week"
+    hourly, four_hour = _candles(_ms(2026, 1, 1), 3_600_000, 48), _candles(EPOCH_MONDAY_MS, 4 * 3_600_000, 84)
+    full = with_derived_frames({"1h": hourly, "4h": four_hour, "1d": daily, "1w": weekly})
+    assert set(full) == {"1h", "4h", "12h", "1d", "3d", "0.5w", "1w", "2w", "1M", "3M"}
     own = _candles(0, DAY, 3)
     assert with_derived_frames({"1d": daily, "1M": own})["1M"] is own
     assert "1M" not in with_derived_frames({"1w": weekly}), "no daily candles, no months"
@@ -69,3 +73,36 @@ def test_a_quarter_is_its_three_calendar_months():
     q = calendar_quarter(daily)
     assert list(q["timestamp"]) == [_ms(2026, 1, 1), _ms(2026, 4, 1)]
     assert q.iloc[0].close == 102 and q.iloc[1].open == 102
+
+
+# ---------- his v22 Section 3 derived candles: 12H, 3D, 0.5W ----------
+def test_twelve_hour_candles_open_at_midnight_and_noon_utc():
+    hourly = _candles(_ms(2026, 3, 2, 7), 3_600_000, 30)        # 07:00 Mon 2 Mar to 12:00 Tue 3 Mar
+    h12 = twelve_hour(hourly)
+    assert list(h12["timestamp"]) == [_ms(2026, 3, 2, 0), _ms(2026, 3, 2, 12), _ms(2026, 3, 3, 0), _ms(2026, 3, 3, 12)]
+    first = h12.iloc[0]
+    assert (first.open, first.close, first.volume) == (100, 105, 50), "07:00 to 11:00: five hourly candles"
+    assert h12.iloc[1].open == 105 and h12.iloc[1].close == 117 and h12.iloc[1].volume == 120, "the full noon half-day"
+
+
+def test_three_day_candles_count_from_the_epoch_monday_whatever_the_first_candle():
+    daily = _candles(EPOCH_MONDAY_MS + 3001 * DAY, DAY, 7)      # starts one day into a 3-day run
+    d3 = three_day(daily)
+    assert list(d3["timestamp"]) == [EPOCH_MONDAY_MS + n * DAY for n in (3000, 3003, 3006)]
+    assert d3.iloc[1].open == 102 and d3.iloc[1].close == 105 and d3.iloc[1].volume == 30, "days 3003-3005 together"
+    shifted = three_day(daily.iloc[2:].reset_index(drop=True))
+    assert shifted["timestamp"].iloc[0] == EPOCH_MONDAY_MS + 3003 * DAY, "dropping days does not regroup the rest"
+    assert all((t - EPOCH_MONDAY_MS) % (3 * DAY) == 0 for t in d3["timestamp"])
+
+
+def test_half_week_candles_split_the_week_at_thursday_noon_so_two_make_the_weekly():
+    four_hour = _candles(EPOCH_MONDAY_MS + 2000 * 7 * DAY, 4 * 3_600_000, 42)   # exactly one week of 4h candles
+    hw = half_week(four_hour)
+    monday = EPOCH_MONDAY_MS + 2000 * 7 * DAY
+    assert list(hw["timestamp"]) == [monday, monday + HALF_WEEK_MS]
+    assert datetime.fromtimestamp((monday + HALF_WEEK_MS) / 1000, timezone.utc).strftime("%a %H:%M") == "Thu 12:00"
+    a, b = hw.iloc[0], hw.iloc[1]
+    assert (a.volume, b.volume) == (210, 210), "21 four-hour candles in each half"
+    assert a.open == 100 and b.close == 142 and max(a.high, b.high) == 146 and min(a.low, b.low) == 95
+    week = two_week  # noqa: F841 - the weekly candle is the two halves end to end
+    assert a.close == 121 and b.open == 121, "the halves meet at Thursday noon"

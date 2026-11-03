@@ -487,7 +487,7 @@ def _data_stamp() -> str:
     still read the old one. Keying on the data means the cache follows the snapshot, not the minute."""
     last = getattr(m.spot, "last", None)
     stamps = [str(last)]
-    for tf in ("15m", "1h", "4h", "1d", "1w", "2w", "1M", "3M"):
+    for tf in ("15m", "1h", "4h", "12h", "1d", "3d", "0.5w", "1w", "2w", "1M", "3M"):
         df = m.spot.frames.get(tf)
         stamps.append(str(int(df["timestamp"].iloc[-1])) if df is not None and not df.empty else "-")
     return "|".join(stamps)

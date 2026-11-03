@@ -48,7 +48,7 @@ def fixture_spot() -> SpotSnapshot:
         if (FX / name).exists():
             frames[tf] = parse_ohlc(_load(name))
     # higher timeframes are not recorded from Kraken; reuse the 1h frame so every category renders
-    for tf in ("4h", "1d", "1w", "2w", "1M", "3M"):
+    for tf in ("4h", "12h", "1d", "3d", "0.5w", "1w", "2w", "1M", "3M"):
         frames.setdefault(tf, frames["1h"])
     return SpotSnapshot(source="fixture", last=parse_ticker(_load("kraken_ticker.json")), frames=frames)
 
