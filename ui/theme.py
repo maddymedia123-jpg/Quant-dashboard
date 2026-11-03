@@ -345,6 +345,9 @@ section[data-testid="stSidebar"] * {{ color: {p['text']}; }}
 .ti-team-row .n {{ font-family: {_HEADING}; font-weight: 600; font-size: 1.375rem; text-align: right; }}
 .ti-read {{ display: flex; flex-direction: column; gap: 10px; max-width: 900px; margin: 18px 0 26px 0; }}
 .ti-read p {{ font-size: 1.125rem !important; line-height: 1.8rem !important; margin: 0; }}
+.ti-confl li.up {{ color: {p['up']}; }} .ti-confl li.down {{ color: {p['down']}; }} .ti-confl li.muted {{ color: {p['muted']}; }}
+.ti-directive {{ border-left: 3px solid {p['border']}; padding-left: 14px; }}
+.ti-directive.up {{ border-color: {p['up']}; }} .ti-directive.down {{ border-color: {p['down']}; }} .ti-directive.warn {{ border-color: {p['accent']}; }}
 .ti-hero-p {{ font-size: 0.9375rem !important; line-height: 1.44rem !important; color: {p['muted']}; max-width: 760px; margin: 0; }}
 .stApp [data-testid="stMarkdownContainer"] .ti-card p.ti-sum-p, .stApp [data-testid="stMarkdownContainer"] .ti-desk-sum p {{ font-size: 1rem; line-height: 1.56rem; }}
 .ti-early {{ border-color: {p['accent']} !important; box-shadow: none !important; padding: 16px 20px; }}
