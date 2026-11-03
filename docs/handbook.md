@@ -37,7 +37,7 @@ dash, never a number. Whichever provider answered is named in the sidebar.
 | Options: max pain, put/call, IV skew, gamma by expiry, call and put walls | Deribit | Gamma regime bar, per-desk gamma, Monday plan, Quant Forecast levels |
 | Stablecoin supply | DefiLlama | Derivatives domain |
 | Fear & Greed | alternative.me | Sentiment |
-| Economic calendar (high-impact USD prints) | Forex Factory, cached 30 minutes | Macro window trigger, Quant Forecast chop windows, Pulse |
+| Economic calendar (high-impact USD prints) | Forex Factory, the current week's file (Sunday to Saturday; no next-week file is published), cached 30 minutes | Event window on every desk, macro window trigger, Quant Forecast chop windows, Pulse |
 | Headlines | CoinDesk and Cointelegraph RSS plus the cryptocurrency.cv aggregator (14 publishers) | Macro & News screen, narratives in the agents' context, Pulse |
 | Gold | goldprice.dev | Macro & News |
 | Prediction markets | Polymarket via VoxOdds, with execution-quality bands | Macro & News, Fed odds in the Pulse |
@@ -90,8 +90,8 @@ that gets forced out, so extreme fear plus a crowded short is a bullish trigger)
 is the trap it is, a swept-and-reclaimed pool, a value-area edge in the zone); macro (the broad dollar
 ±0.25% on the week, the 2-year yield ±0.10 points, which side the last news print trapped); and the measured
 turning window, counting only while it is on. A missing feed is a family that says nothing, never one that
-agrees. The warning names the next high-impact US print inside the window (24 hours on the short desks, a
-week on the long ones), a dollar move against the trade, and the weekend.
+agrees. The warning names the next high-impact US print inside the event window (five days ahead, on every
+desk, with the time to it), a dollar move against the trade, and the weekend.
 
 **The higher-timeframe bar (live 4 November).** Over the gate: a Weekly or Monthly level within half an ATR
 beyond the zone, on the path to Target 1, bars the trade even when three families agree (WAIT, naming the
@@ -110,6 +110,20 @@ gets forced out, so a squeeze trap leans long and a flush trap leans short. It s
 as its own line under the Big Picture in the summary, speaks for the positioning family in the confluence
 gate, and goes to the desk's judges and Head in their state by name. Greed without leverage building is
 greed, not a flush, and is not named.
+
+**Event window: five days either side (your Section 5.3, live 4 November).** Buy the rumour, sell the news
+is read from five days before each high-impact US print to five days after (it was 48 hours). Inside the
+window the print shows as flat or positioned (the run-up itself is still measured over the last 24 hours
+against that week's volatility); after it, sell-the-news, spike-faded, confirmed or absorbed stays readable
+for five days. The event-trap card now sits on every desk, not only Live Recon and Intraday, whenever a
+print is positioned, reacting or has trapped a side; the summary's warning names the next print and how far
+away it is on every desk. One limit, said plainly: Forex Factory publishes only the current week's file
+(Sunday to Saturday; its next-week file does not exist, checked 4 November), so late in the week the
+forward view is shorter than five days, and a print drops off the feed when the week rolls over. Keeping
+prints in the store so the full five days hold across the week boundary is a small follow-up build that
+needs your go. Unchanged on purpose: the Quant
+Forecast chop window around a print (30 minutes before to 90 after) and the desks' 24-hour macro re-anchor
+trigger, which are about the print's minute, not its week.
 
 **The war room, per desk:** five bullish and five bearish domain agents (Quant, Auction, Order Flow, ICT,
 Derivatives) each score a 100-point checklist of 22 weighted items. The model only answers "does this
@@ -272,6 +286,7 @@ report runs and are not stored, so there is nothing to read back. See section 9.
 
 | Ask | Status |
 | --- | --- |
+| Event window five days either side of each high-impact print | Built 4 Nov: event-trap reads, the card on every desk and the summary warning span five days before to five days after, as far as the feed reaches. Open: the feed is the current week only (no next-week file exists); storing prints to hold the full five days across the week boundary needs your go (section 3) |
 | Named anomaly traps (Section 5.3: Bullish squeeze trap, Liquidation flush trap) | Built 4 Nov: on the desk, in the summary, in the gate's positioning family and in the judges' state; SET when the flow already disagrees with the crowd, FORMING before (section 3) |
 | Higher-timeframe bar (Weekly/Monthly level within half an ATR on the path to Target 1 → WAIT) | Built 4 Nov: a level inside the zone is the entry and never bars; farther levels before Target 1 go in the warning (section 3) |
 | Confluence gate and v22 summary layout on every desk | Built 4 Nov: three of seven families must agree before a desk's trade box opens; WAIT names what is missing or what conflicts (section 3) |

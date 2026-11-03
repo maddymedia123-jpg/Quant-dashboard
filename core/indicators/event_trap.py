@@ -3,12 +3,12 @@
 Measured on the 1H candles against BTC's own recent volatility (the standard deviation of hourly log
 returns over the week before), so "a big run-up" means big for this market this week, not a fixed percent.
 
-Before a print (inside 48 hours):
+Before a print (inside the 5-day window; the run-up itself is measured over the last 24 hours):
 * positioned - price has already run at least 1.5 24-hour standard deviations in the last 24 hours. The
   rumour has been traded; a print that only meets forecast tends to be sold (or bought) against the run.
 * flat - no run-up to unwind. The print itself is the catalyst.
 
-After a print (up to 48 hours on), once two hourly candles from the print have closed:
+After a print (up to 5 days on), once two hourly candles from the print have closed:
 * sell_the_news - there was a run-up into it, and price has since given back at least half of it. The
   side that bought the rumour is the trapped side.
 * spike_faded - the first-hour reaction was at least two hourly standard deviations, and price has since
@@ -29,8 +29,9 @@ import pandas as pd
 H = 3_600_000
 LOOKBACK_H = 168            # a week of hourly returns sets "normal"
 RUNUP_H = 24
-PRE_WINDOW_MS = 48 * H      # prints further out are listed, not read
-POST_WINDOW_MS = 48 * H
+WINDOW_DAYS = 5             # his Section 5.3: five days before a print to five days after (was 48 hours)
+PRE_WINDOW_MS = WINDOW_DAYS * 24 * H      # prints further out are listed, not read
+POST_WINDOW_MS = WINDOW_DAYS * 24 * H
 FOLLOW_H = 24               # how long after a print its outcome is judged over
 STRETCH_Z = 1.5             # a run-up of 1.5 24h standard deviations counts as positioned (a random walk
                             # does that on about one day in eight; at 1.0 it was one in three)
@@ -187,5 +188,5 @@ def read_event(df: pd.DataFrame | None, cluster: dict, now_ms: int) -> EventRead
 
 
 def read_all(df: pd.DataFrame | None, events: list[dict], now_ms: int) -> list[EventRead]:
-    """Every high-impact USD print from 48 hours ago onward, oldest first."""
+    """Every high-impact USD print from the window's start (5 days ago) onward, oldest first."""
     return [read_event(df, c, now_ms) for c in clusters(events) if c["time_ms"] >= now_ms - POST_WINDOW_MS]

@@ -30,7 +30,6 @@ ZONE_ATR = 0.25          # the entry zone: a quarter ATR either side of the leve
 STOP_ATR = 0.5           # the fallback invalidation: half an ATR past the zone's far edge
 TF_WORDS = {"15m": "15-minute", "1h": "1-hour", "4h": "4-hour", "1d": "daily", "1w": "weekly", "1M": "monthly"}
 HORIZON_WORDS = {"next 4h": "the next 4 hours", "next 24h": "the next 24 hours"}
-WARN_AHEAD_MS = {"next 4h": 24 * 3_600_000, "next 24h": 24 * 3_600_000}    # how far ahead the warning looks
 WEEK_MS = 7 * 86_400_000
 PKT_OFFSET_MS = 5 * 3_600_000
 
@@ -148,22 +147,33 @@ def _flow(derivs: dict | None) -> str:
     return (bits[0][0].upper() + bits[0][1:] + ("; " + "; ".join(bits[1:]) if bits[1:] else "") + ".") if bits else ""
 
 
+def _in_words(ms: int) -> str:
+    h = ms / 3_600_000
+    if h < 1:
+        return "under an hour"
+    if h < 36:
+        return f"{h:.0f} hours"
+    return f"{h / 24:.0f} days"
+
+
 def _warning(side: str, now_ms: int, ev, horizon_label: str, f=None, atr: float | None = None) -> str:
     """The next high-impact US print inside the window, a dollar move against the trade, the weekend, and any
     bigger level standing between the zone and Target 1 that does not bar the trade outright."""
     from core.confluence import levels_before_target
+    from core.indicators.event_trap import PRE_WINDOW_MS
     bits = []
     if f is not None and f.zone and atr:
         for label, p in levels_before_target(side, f.zone, atr, f.targets[0], getattr(ev, "htf_levels", ()))[:2]:
             bits.append(f"a {label} at {_money(p)} stands between the zone and Target 1; expect a pause there")
-    ahead = WARN_AHEAD_MS.get(horizon_label, WEEK_MS)
+    ahead = PRE_WINDOW_MS                      # the event window: five days ahead on every desk
     prints = sorted((p for p in getattr(ev, "prints", ()) or ()
                      if getattr(p, "state", "") in ("scheduled", "flat", "positioned")
                      and now_ms < p.time_ms <= now_ms + ahead), key=lambda p: p.time_ms)
     if prints:
         p = prints[0]
         day = datetime.fromtimestamp(p.time_ms / 1000, timezone.utc)
-        line = f"a high-impact US print, {p.title}, lands at {_utc(p.time_ms)} UTC ({_pkt(p.time_ms)} PKT) {day:%a}"
+        line = f"a high-impact US print, {p.title}, lands at {_utc(p.time_ms)} UTC ({_pkt(p.time_ms)} PKT) {day:%a %d %b}"
+        line += f", {_in_words(p.time_ms - now_ms)} away; the event window is open"
         if p.state == "positioned" and getattr(p, "runup_pct", None) is not None:
             line += f"; BTC has already moved {p.runup_pct:+.1f}% into it, so a print that only meets forecast can reverse that"
         bits.append(line)

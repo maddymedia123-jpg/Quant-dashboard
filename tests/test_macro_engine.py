@@ -88,8 +88,12 @@ def test_a_random_walk_rarely_reads_as_positioned():
     assert 0.05 < share < 0.22, share
 
 
-def test_a_print_more_than_two_days_out_is_listed_not_read():
-    assert _read(EVENT - 72 * H, lambda h: 100.0).state == "scheduled"
+def test_a_print_beyond_the_five_day_window_is_listed_not_read():
+    assert et.PRE_WINDOW_MS == et.POST_WINDOW_MS == 5 * 24 * H, "owner's decision 4 Nov: five days either side"
+    assert _read(EVENT - 6 * 24 * H, lambda h: 100.0).state == "scheduled"
+    assert _read(EVENT - 72 * H, lambda h: 100.0).state == "flat", "three days out is inside the window now"
+    assert _read(EVENT + 4 * 24 * H, lambda h: 100.0).state != "no_data", "four days after, the outcome still shows"
+    assert _read(EVENT + 6 * 24 * H, lambda h: 100.0).state == "no_data"
 
 
 # ---------- after a print ----------
@@ -140,9 +144,11 @@ def test_prints_in_the_same_minute_are_one_event_and_minor_ones_are_ignored():
     assert et.read_event(_candles(EVENT - H, lambda h: 100.0), cs[0], EVENT - H).title == "CPI m/m · CPI y/y"
 
 
-def test_prints_more_than_two_days_old_drop_out():
-    reads = et.read_all(_candles(EVENT + 60 * H, lambda h: 100.0), [_event()], EVENT + 60 * H)
-    assert reads == []
+def test_prints_older_than_the_five_day_window_drop_out():
+    late = EVENT + 6 * 24 * H
+    assert et.read_all(_candles(late, lambda h: 100.0), [_event()], late) == []
+    inside = EVENT + 60 * H                       # two and a half days on: still inside the window now
+    assert len(et.read_all(_candles(inside, lambda h: 100.0), [_event()], inside)) == 1
 
 
 # ---------- narratives ----------

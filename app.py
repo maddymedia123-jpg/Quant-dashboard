@@ -768,14 +768,13 @@ def category_tab(key):
             render_protocols(profile)
             render_war_room(profile)
         panels.render(panels.agent_summary_html(a, report))
-        if key in ("live", "intraday"):
-            # a print inside these horizons is part of the trade: show it only when there is something to read
-            try:
-                _active = [r for r in _event_reads(_data_stamp()) if r.state in panels.ACTIVE_EVENT_STATES]
-                if _active:
-                    panels.render(panels.event_traps_html(_active, now_ms))
-            except Exception as e:  # noqa: BLE001
-                st.warning(f"Event traps unavailable: {e}")
+        # a print inside the five-day window is part of every desk's trade: shown when there is something to read
+        try:
+            _active = [r for r in _event_reads(_data_stamp()) if r.state in panels.ACTIVE_EVENT_STATES]
+            if _active:
+                panels.render(panels.event_traps_html(_active, now_ms))
+        except Exception as e:  # noqa: BLE001
+            st.warning(f"Event traps unavailable: {e}")
         if key in ("weekly", "monthly"):
             panels.render(panels.calendar_html(m, now_ms))
             # weekly positioning belongs on the weekly and monthly view only: it is three to ten days
