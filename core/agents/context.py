@@ -106,7 +106,8 @@ def _calendar_events(m: MarketSnapshot) -> dict:
         hi = [{"title": e["title"], "country": e["country"], "impact": e["impact"], "date": e["date"],
                "forecast": e["forecast"], "previous": e["previous"]}
               for e in m.calendar.events if e.get("impact") == "High" and e.get("country") in ("USD",)]
-        return {"source": m.calendar.source, "usd_high_impact_this_week": hi[:12]}
+        return {"source": m.calendar.source, "usd_high_impact_this_week": hi[:16],
+                "note": "the feed carries the current week only; the event window is five days before to five days after each print, as far as the feed reaches"}
     return {"source": "curated (calendar unavailable)", "events": MACRO_EVENTS}
 
 

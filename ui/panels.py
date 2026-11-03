@@ -1555,7 +1555,7 @@ def event_traps_html(reads, now_ms: int) -> str:
     """Buy the rumour, sell the news: positioning into each high-impact USD print and what it did after."""
     from core.trades import fmt_when
     if not reads:
-        return card_html("Event traps", "<p class='muted'>No high-impact USD prints from 48 hours ago onward.</p>",
+        return card_html("Event traps", "<p class='muted'>No high-impact USD prints inside the window (five days either side).</p>",
                          "neutral")
     body = "<div class='ti-rows'>"
     for r in reads:

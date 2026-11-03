@@ -142,7 +142,8 @@ def test_the_warning_names_the_next_print_the_dollar_and_the_weekend():
                                         runup_pct=2.3),),
                              rates={"available": True, "DTWEXBGS": {"value": 120.0, "change_1w": 0.9}})
     w = ls.lines(bull, DERIVS, 18, NOON, ev)["warning"]
-    assert w.startswith("Watch: a high-impact US print, FOMC rate decision, lands at 11:00 UTC (16:00 PKT) Tue")
+    assert w.startswith("Watch: a high-impact US print, FOMC rate decision, lands at 11:00 UTC (16:00 PKT) Tue 22 Sep, "
+                        "5 hours away; the event window is open")
     assert "moved +2.3% into it" in w and "the dollar has risen 0.8% this week, a headwind for a long" in w
     saturday = NOON + 4 * 86_400_000
     assert "weekend tape" in ls.lines(bull, DERIVS, 18, saturday)["warning"]
@@ -155,8 +156,12 @@ def test_the_warning_names_the_next_print_the_dollar_and_the_weekend():
     assert barred["verdict"] == "WAIT" and barred["bar"]["price"] == 80_910.0
     assert barred["directive"].startswith("WAIT. 3 of 7 confluences agree, but a weekly level at $80,910 sits just above the zone")
     assert "What to expect: no trade yet. WAIT: 3 of 7" in barred["phase_now"]
-    # a print already released, or outside the window, is not a warning
-    late = evidence_for_a_long(prints=(NS(title="CPI", time_ms=NOON + 3 * 86_400_000, state="scheduled"),))
+    # the window is five days either side (owner, 4 Nov): three days out warns on every desk, six does not
+    soon = evidence_for_a_long(prints=(NS(title="CPI", time_ms=NOON + 3 * 86_400_000, state="flat"),))
+    for tf, horizon in (("1h", "next 4h"), ("1w", "next 30 days")):
+        w3 = ls.lines(desk("BULLISH", 0.6, 80_000.0, tf=tf, horizon=horizon), DERIVS, 50, NOON, soon)["warning"]
+        assert "CPI, lands at 06:00 UTC (11:00 PKT) Fri 25 Sep, 3 days away" in w3, (tf, w3)
+    late = evidence_for_a_long(prints=(NS(title="CPI", time_ms=NOON + 6 * 86_400_000, state="scheduled"),))
     assert ls.lines(bull, DERIVS, 50, NOON, late)["warning"].startswith("Nothing scheduled")
 
 
