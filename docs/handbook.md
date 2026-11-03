@@ -1,7 +1,7 @@
 # Quant Dashboard — System Handbook
 
 *What exists, how it fits together, what is still open. Written for Hammad. Kept in the repo at
-`docs/handbook.md` and updated with every merge; last revised 2 November 2026.*
+`docs/handbook.md` and updated with every merge; last revised 4 November 2026.*
 
 Everything below is in the code on `main` and live unless a line says otherwise. Nothing here is planned
 work dressed up as done.
@@ -73,6 +73,26 @@ the timeframe cascade (states A strong setup, B pause, C trend losing control, N
 derivatives (OI, funding, liquidations, max pain and gamma over the desk's own window), kill zones (NY
 13–17 UTC measured at 1.8× normal turn rate; Asian and London no better than chance), and the forecast
 pane (median of 4,000 simulated paths, 68% band, measured to hold 72–74% on 1h to 1d).
+
+**Desk summary and the confluence gate (his v22 Section 9, live 4 November).** Every desk ends with the
+same summary in his layout: Big Picture; Timeline (what is happening, what to expect, the turning window in
+UTC and PKT); the bounce zone with its plain reason; Targets 1, 2 and 3 as the highs (or lows) to expect;
+the safety line; the verified confluences; the directive; the warning line. The zone is the nearest level
+the bias acts from, a quarter ATR either side. The trade is cancelled by a 4-hour close beyond the safety
+line on Live Recon and Intraday, and by the desk's own candle (daily, weekly) on Weekly and Monthly. The
+trade box opens only when at least three of seven independent families agree with the zone; fewer is WAIT
+naming what is missing; two families pointing the other way is WAIT naming the conflict. The seven, each
+read from its own feed so no single read can open the gate: a harmonic completing in the zone; a put wall
+(for a long) or call wall (for a short) in the zone; order flow on the desk's chart (absorption at the
+level, or flow confirming); positioning read the contrarian way (extreme fear under 25 or greed over 75,
+under 45% or over 60% of accounts long, a negative or a high premium to hold: the crowded side is the one
+that gets forced out, so extreme fear plus a crowded short is a bullish trigger); structure (a failed break
+is the trap it is, a swept-and-reclaimed pool, a value-area edge in the zone); macro (the broad dollar
+±0.25% on the week, the 2-year yield ±0.10 points, which side the last news print trapped); and the measured
+turning window, counting only while it is on. A missing feed is a family that says nothing, never one that
+agrees. The warning names the next high-impact US print inside the window (24 hours on the short desks, a
+week on the long ones), a dollar move against the trade, and the weekend. Not in the gate yet: the
+higher-timeframe bar within half an ATR of a weekly or monthly level (the next build).
 
 **The war room, per desk:** five bullish and five bearish domain agents (Quant, Auction, Order Flow, ICT,
 Derivatives) each score a 100-point checklist of 22 weighted items. The model only answers "does this
@@ -151,8 +171,8 @@ Built from candles and the derivatives feeds at 00:00 UTC each day, audited ever
   over the last ten days, bounded 0.8–1.3. Neutral on the 60-day backtest; kept because it is honest.
 - **Liquidation gravity (built, OFF):** pulling paths toward liquidation zones and dealer walls made the
   60-day level-touch Brier worse at every strength (0.141 at k 0.5 against 0.105 off). It runs in shadow
-  at k 0.5; the record panel shows shadow hits beside live hits. The shadow record over live weeks
-  decides whether it ever steers.
+  at k 0.5; its hits sit on their own labelled card (Liquidation gravity · shadow ledger) under the track
+  record, never inside the live line. The shadow record over live weeks decides whether it ever steers.
 - **Sticky Monday Master Plan:** written once on the first pass after Monday 00:00 UTC from the Weekly
   desk and the Deribit gamma profile. Weekly bias, put and call walls, baseline floor and ceiling, weekly
   flip. Does not move during the week.
@@ -235,6 +255,7 @@ report runs and are not stored, so there is nothing to read back. See section 9.
 
 | Ask | Status |
 | --- | --- |
+| Confluence gate and v22 summary layout on every desk | Built 4 Nov: three of seven families must agree before a desk's trade box opens; WAIT names what is missing or what conflicts (section 3) |
 | Desks disagree in one batch (one message when the four desks conflict) | Not built. Needs your rule for what counts as disagreement and when to send |
 | Cautions too trigger-happy inside chop windows | Not built. Proposal: raise the caution threshold inside a chop window, or suppress cautions there and keep invalidation only |
 | Lockout after two failed plans | Built as specified (message 5). Open: whether a third plan should ever be allowed on a very busy day |

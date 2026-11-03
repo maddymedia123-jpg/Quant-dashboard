@@ -2267,27 +2267,39 @@ def scorecard_html(cards: dict) -> str:
 
 # ---------- the summary box at the foot of every desk ----------
 def layman_summary_html(a: CategoryAnalysis, label: str, derivs: dict | None, fear_greed: int | None,
-                        now_ms: int) -> str:
-    """His Section 6, in his exact standardized format, at the foot of every desk."""
+                        now_ms: int, evidence=None) -> str:
+    """His Section 9 (v22), in his layout, at the foot of every desk: big picture, timeline, the zone and
+    why, three targets, the safety line, the seven confluences, the directive, the warning."""
     from core.layman_summary import lines
 
-    s = lines(a, derivs, fear_greed, now_ms)
+    s = lines(a, derivs, fear_greed, now_ms, evidence)
     e = lambda t: html.escape(t, quote=False)  # noqa: E731
+    long = s["side"] == "LONG"
+    first = "the first high to expect" if long else "the first low to expect"
+    marks = {True: ("✔", "up"), False: ("✘", "down"), None: ("–", "muted")}
+    rows = "".join(f"<li class='{marks[c['agrees']][1]}'>{marks[c['agrees']][0]} {e(c['label'][0].upper() + c['label'][1:])}: "
+                   f"{e(c['note'])}</li>" for c in s["confluences"]) or "<li class='muted'>– No level to judge against.</li>"
+    verb = "Buy" if long else "Sell" if s["side"] == "SHORT" else "No zone"
+    zone_line = f"{verb} {e(s['entry'])} · {e(s['bias'])}" if s["entry"] != "—" else e(s["bias"])
+    tone = {"TRADE": "up" if long else "down", "WAIT": "warn"}.get(s["verdict"], "muted")
     return (f"<div class='ti-read ti-layman'><span class='ti-kicker'>Summary · {html.escape(label)}</span>"
-            f"<p><strong>📌 LAYMAN SUMMARY</strong><br>{e(s['summary'])}</p>"
-            "<p><strong>📊 Quantitative Swing Trade Framework</strong></p><ul>"
-            f"<li>Directional Bias: {e(s['bias'])}</li>"
-            f"<li>Exact Entry Zone: {e(s['entry'])}</li>"
-            f"<li>Hard Invalidation Level: {e(s['invalidation'])}</li>"
-            f"<li>Multi-Tier Target Levels:<ul><li>Target 1: {e(s['target1'])}</li>"
-            f"<li>Target 2: {e(s['target2'])}</li></ul></li></ul>"
-            "<p><strong>⏳ Time Reversal Windows &amp; Timeline (PKT)</strong></p><ul>"
-            f"<li>Window 1 (Active Peak Window): {e(s['window1'])}</li>"
-            f"<li>Window 2 (Cycle Confluence): {e(s['window2'])}</li>"
-            f"<li>Kill zones, measured: {e(s['kill_zones'])}</li></ul>"
-            f"<p><strong>❌ Bias Invalidation Condition:</strong><br>{e(s['condition'])}</p>"
-            "<p class='muted ti-note'>Levels come from this desk's own analysis; the entry zone is the nearest "
-            "level the bias acts from, a quarter ATR either side. Not trading advice.</p></div>")
+            f"<p><strong>🧭 BIG PICTURE</strong><br>{e(s['summary'])}</p>"
+            "<p><strong>🕒 TIMELINE</strong></p><ul>"
+            f"<li>Now: {e(s['phase_now'])}</li>"
+            f"<li>Turning window: {e(s['window1'])}</li></ul>"
+            f"<p class='muted ti-note'>Kill zones, measured: {e(s['kill_zones'])}</p>"
+            f"<p><strong>🎯 BOUNCE ZONE</strong><br>{zone_line}<br><span class='muted'>Why: {e(s['zone_why'])}</span></p>"
+            "<p><strong>📈 TARGETS</strong></p><ul>"
+            f"<li>Target 1 ({first}): {e(s['target1'])}</li>"
+            f"<li>Target 2: {e(s['target2'])}</li>"
+            f"<li>Target 3: {e(s['target3'])}</li></ul>"
+            f"<p><strong>🛡 SAFETY LINE</strong><br>{e(s['safety'])}</p>"
+            f"<p><strong>✅ VERIFIED CONFLUENCES · {e(s['score'])}, 3 needed</strong></p><ul class='ti-confl'>{rows}</ul>"
+            f"<p class='ti-directive {tone}'><strong>📣 DIRECTIVE</strong><br>{e(s['directive'])}</p>"
+            f"<p><strong>⚠️ WARNING</strong><br>{e(s['warning'])}</p>"
+            "<p class='muted ti-note'>Levels come from this desk's own analysis; the zone is the nearest level the "
+            "bias acts from, a quarter ATR either side. The trade box opens only when three of the seven "
+            "confluences agree, each read from its own feed. Not trading advice.</p></div>")
 
 
 def sine_experimental_html(warning, ny_now: bool, record, history_note: str = "") -> str:
@@ -2690,21 +2702,32 @@ def _qf_record_line(rec: dict, name: str) -> str:
             f"(a range day is right whenever its box holds, so it is counted apart) · predicted high "
             f"within tolerance {rec['high_hit']} · low {rec['low_hit']} · high's time within 2h "
             f"{rec['high_time_hit']} · low's {rec['low_time_hit']} · closed inside the 68% envelope "
-            f"{rec['band_held']} · invalidated {rec['invalidated']}</p>" + _qf_shadow_line(rec))
+            f"{rec['band_held']} · invalidated {rec['invalidated']}</p>")
 
 
-def _qf_shadow_line(rec: dict) -> str:
+def _qf_shadow_line(rec: dict, name: str = "Live") -> str:
     """Liquidation gravity's shadow record against the live plan on the same days, or nothing."""
     n = rec.get("shadow_days") or 0
     if not n:
         return ""
-    return (f"<p class='muted'>Liquidation gravity, shadow only, on the {n} of those days with a level to pull: "
+    return (f"<p><strong>{name}:</strong> shadow only, on the {n} of those days with a level to pull: "
             f"it would have put the high within tolerance {rec['shadow_high_hit']} times (the live plan {rec['live_high_hit_on_shadow_days']}) "
             f"and the low {rec['shadow_low_hit']} times (the live plan {rec['live_low_hit_on_shadow_days']}).</p>")
 
 
+def qf_shadow_card_html(live: dict, backtest: dict | None = None) -> str:
+    """Hammad's ask: the shadow ledger visible on its own, labelled, never mixed into the live record."""
+    body = _qf_shadow_line(live, "Live") + (_qf_shadow_line(backtest, "Backtest") if backtest else "")
+    if not body:
+        return ""
+    return card_html("Liquidation gravity · shadow ledger", body + (
+        "<p class='muted ti-note'>A parallel record only: the live plan is never steered by it. It stays in shadow "
+        "until it beats the live plan on enough days to mean something.</p>"))
+
+
 def qf_record_html(backtest: dict | None, live: dict, history: list[dict]) -> str:
-    """How the morning plans have done: replayed on past days, and live once days finish."""
+    """How the morning plans have done: replayed on past days, and live once days finish. The shadow
+    ledger follows on its own card."""
     from core.qf_alerts import REGIME_WORD
     from core.trades import fmt_date
     body = _qf_record_line(live, "Live")
@@ -2725,4 +2748,4 @@ def qf_record_html(backtest: dict | None, live: dict, history: list[dict]) -> st
     if rows:
         body += ("<table><thead><tr><th>Day · plan</th><th>Regime</th><th>Status</th><th>Result</th></tr></thead>"
                  f"<tbody>{rows}</tbody></table>")
-    return card_html("Track record", body)
+    return card_html("Track record", body) + qf_shadow_card_html(live, backtest)

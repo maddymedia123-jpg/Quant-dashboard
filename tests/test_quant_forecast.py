@@ -299,7 +299,7 @@ def test_liquidation_gravity_pulls_the_paths_and_is_shadow_only():
     rec = qf.record([o, {**o, "shadow_high_hit": False}, qf.score_plan(_plan_fixed(), day)])
     assert (rec["shadow_days"], rec["shadow_high_hit"], rec["live_high_hit_on_shadow_days"]) == (2, 1, 0)
     from ui import panels
-    h = panels._qf_record_line(rec, "Backtest")
+    h = panels._qf_shadow_line(rec, "Backtest")        # its own card now (qf_shadow_card_html), not the record line
     assert "shadow only, on the 2 of those days" in h and "within tolerance 1 times (the live plan 0)" in h
 
 
@@ -446,6 +446,15 @@ def test_the_chart_and_panels_build_from_a_plan():
                                                  "status": "active", "outcome": None}])):
         assert markup.startswith("<div class=\"ti-card")
     assert "the 2nd locks the day" in panels.qf_status_html("on track", None, [])
+    # Hammad: the shadow ledger visible, on its own labelled card, never inside the live record's paragraph
+    shadow = {"days": 3, "scenario_a_right": 2, "high_hit": 1, "low_hit": 1, "high_time_hit": 0, "low_time_hit": 0,
+              "band_held": 2, "invalidated": 0, "shadow_days": 2, "shadow_high_hit": 1, "shadow_low_hit": 0,
+              "live_high_hit_on_shadow_days": 1, "live_low_hit_on_shadow_days": 1}
+    rec = panels.qf_record_html(None, shadow, [])
+    assert rec.count("<div class=\"ti-card") == 2 and "Liquidation gravity · shadow ledger" in rec
+    track, ledger = rec.split("Liquidation gravity · shadow ledger")
+    assert "shadow" not in track.lower() and "shadow only, on the 2 of those days" in ledger
+    assert panels.qf_shadow_card_html(live) == "", "no shadow days, no card"
     assert "Volatility schedule" in panels.qf_schedule_html(p, DAY0) and "bps" in panels.qf_schedule_html(p, DAY0)
     # message 6: the timeline tree fades what passed and glows on what is active; the directive is pure figures
     tl = panels.qf_timeline_html(p, DAY0 + 5 * H, df)

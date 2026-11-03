@@ -550,6 +550,19 @@ def _desk_harmonics(category: str, data_stamp: str):
     return find_all(m.spot.frames, PROFILES[category].timeframes, desk_derivs.gamma_for(category, m))
 
 
+def _desk_evidence(category: str, data_stamp: str):
+    """What the summary's confluence gate reads: the desk's harmonics, its break reads, its liquidity,
+    this week's prints and the dollar and yields - each the cached read the cards above already show."""
+    from core.agents.context import _rates
+    from core.confluence import Evidence
+    return Evidence(harmonics=tuple(h for found in _desk_harmonics(category, data_stamp).values() for h in found),
+                    breaks=tuple(_desk_breaks(category, data_stamp).values()),
+                    liquidity=_desk_state(category, data_stamp).get("liquidity"),
+                    prints=tuple(_event_reads(data_stamp)),
+                    rates=_rates(m),
+                    futures=m.futures if m.futures.available else None)
+
+
 def render_protocols(profile) -> None:
     """The deterministic reads - volatility, structure, liquidity - and each sub-agent's own deck, one at
     a time behind a switch, as the design lays them out."""
@@ -760,9 +773,15 @@ def category_tab(key):
                     list(zip(_d1["timestamp"].astype("int64"), _d1["close"].astype(float))) if _d1 is not None else None)))
             except Exception as e:  # noqa: BLE001
                 st.warning(f"Exchange flows unavailable: {e}")
-        # his Section 6: every desk ends with the same standardized layman summary
+        # his Section 9: every desk ends with the same standardized summary, gated by seven confluences
+        try:
+            _ev = _desk_evidence(key, _data_stamp())
+        except Exception as e:  # noqa: BLE001 - a missing feed is a family that says nothing, not a blank desk
+            st.warning(f"Confluence evidence incomplete this refresh: {e}")
+            _ev = None
         panels.render(panels.layman_summary_html(a, CATEGORIES[key].label, _own,
-                                                 m.sentiment.fear_greed if m.sentiment.available else None, now_ms))
+                                                 m.sentiment.fear_greed if m.sentiment.available else None,
+                                                 now_ms, _ev))
 
 
 if screen in CATEGORIES:

@@ -1,0 +1,115 @@
+"""His v22 Section 9: a trade needs three of seven independent confluences at the zone; fewer is a WAIT that
+names what is missing, two against it is a WAIT that names the conflict."""
+from types import SimpleNamespace as NS
+
+from core import confluence as cf
+from core.layman_summary import framework
+from tests.test_layman_summary import DERIVS, NOON, desk, lvl
+
+ON = NOON + 7 * 3_600_000          # 13:00 UTC, inside the measured 12:00-16:00 turning window
+H = 3_600_000
+
+
+def long_zone():
+    """A bullish desk buying the $80,800 floor: zone $80,750 - $80,850."""
+    return framework(desk("BULLISH", 0.6, 80_000.0))
+
+
+def full_evidence():
+    """Every family pointing up at the floor."""
+    return cf.Evidence(
+        harmonics=(NS(name="Gartley", side="bullish", stage="in_zone", prz=(80_700.0, 80_820.0),
+                      targets=(81_600.0, 82_300.0), invalidation=80_400.0),),
+        derivs={**DERIVS, "gamma": {"put_wall": 80_800.0, "call_wall": 83_000.0},
+                "funding": {"latest_8h_rate": -0.0002}},
+        fear_greed=18,
+        futures=NS(long_account_pct=0.40, long_short_ratio=None),
+        breaks=(NS(timeframe="1h", available=True, state="failed", direction="down", edge=80_800.0),),
+        liquidity={"1h": {"cumulative_delta": {"state": "bullish absorption"},
+                          "pools": {"buyside": None, "sellside": None, "recent_sweep": None},
+                          "volume_profile": {"available": True, "value_area_low": 80_000.0, "value_area_high": 82_000.0}}},
+        prints=(NS(title="CPI", time_ms=NOON - 3 * H, state="spike_faded", trapped="shorts"),),
+        rates={"available": True, "DTWEXBGS": {"value": 120.0, "change_1w": -0.6},
+               "DGS2": {"value": 3.6, "change_1w": -0.15}},
+    )
+
+
+def test_every_family_reads_its_own_evidence_and_seven_of_seven_opens_the_trade():
+    g = cf.read(long_zone(), desk("BULLISH", 0.6, 80_000.0), full_evidence(), ON)
+    assert [f.key for f in g.families] == ["pattern", "options", "flow", "positioning", "structure", "macro", "timing"]
+    assert all(f.side == "LONG" for f in g.families), [(f.key, f.side, f.note) for f in g.families]
+    assert g.verdict == "TRADE" and g.side == "LONG" and len(g.agreeing) == 7 and not g.opposing
+    notes = " ".join(f.note for f in g.families)
+    assert "Gartley" in notes and "$80,800" in notes and "turning window is on now" in notes
+
+
+def test_fewer_than_three_waits_and_names_what_is_missing():
+    g = cf.read(long_zone(), desk("BULLISH", 0.6, 80_000.0), cf.Evidence(), NOON)
+    assert g.verdict == "WAIT" and len(g.agreeing) == 0
+    assert g.reason.startswith("WAIT: 0 of 7 confluences agree, 3 are needed")
+    assert "a pattern completing at the zone" in g.reason and "the turning window" in g.reason
+    assert all(f.side == "NONE" for f in g.families)
+    assert "next turning window" in g.families[-1].note
+
+
+def test_three_agreeing_is_enough_and_one_against_is_said_not_fatal():
+    ev = cf.Evidence(harmonics=full_evidence().harmonics, derivs=full_evidence().derivs, fear_greed=18,
+                     rates={"available": True, "DTWEXBGS": {"value": 120.0, "change_1w": 0.9}})
+    g = cf.read(long_zone(), desk("BULLISH", 0.6, 80_000.0), ev, NOON)
+    assert g.verdict == "TRADE" and [f.key for f in g.agreeing] == ["pattern", "options", "positioning"]
+    assert [f.key for f in g.opposing] == ["macro"] and "the dollar" in g.reason
+
+
+def test_two_families_against_the_zone_wait_on_the_conflict():
+    ev = full_evidence()
+    ev = cf.Evidence(**{**ev.__dict__,
+                        "harmonics": (NS(name="Bat", side="bearish", stage="completed", prz=(80_760.0, 80_840.0),
+                                         targets=(80_000.0, 79_500.0), invalidation=81_200.0),),
+                        "derivs": {**ev.derivs, "gamma": {"put_wall": 78_000.0, "call_wall": 80_820.0}}})
+    g = cf.read(long_zone(), desk("BULLISH", 0.6, 80_000.0), ev, ON)
+    assert g.verdict == "WAIT" and len(g.agreeing) == 5 and [f.key for f in g.opposing] == ["pattern", "options"]
+    assert g.reason.startswith("WAIT: a pattern completing at the zone and an options wall at the zone point the other way")
+
+
+def test_extreme_fear_and_a_crowded_short_read_as_a_bullish_trigger():
+    """Hammad's note: positioning is contrarian - the crowd that is trapped is the one that gets forced out."""
+    fam = cf.positioning(18, NS(long_account_pct=0.38, long_short_ratio=None), None)
+    assert fam.side == "LONG" and "extreme fear" in fam.note and "crowded short" in fam.note
+    fam = cf.positioning(82, NS(long_account_pct=None, long_short_ratio=1.8), {"funding": {"latest_8h_rate": 0.0005}})
+    assert fam.side == "SHORT" and "extreme greed" in fam.note and "crowded long" in fam.note
+    fam = cf.positioning(15, NS(long_account_pct=0.70, long_short_ratio=None), None)
+    assert fam.side == "NONE" and "both ways" in fam.note
+    assert cf.positioning(50, NS(long_account_pct=0.52, long_short_ratio=None), None).side == "NONE"
+
+
+def test_structure_reads_a_failed_break_as_the_trap_it_is_then_sweeps_then_the_value_edge():
+    zone, atr = (80_750.0, 80_850.0), 200.0
+    failed_up = (NS(timeframe="4h", available=True, state="failed", direction="up", edge=81_600.0),)
+    assert cf.structure("4h", zone, atr, failed_up, None).side == "SHORT"
+    swept = {"4h": {"cumulative_delta": {}, "pools": {"sellside": {"price": 80_790.0, "swept": True, "reclaimed": True},
+                                                       "buyside": None, "recent_sweep": None}, "volume_profile": {}}}
+    fam = cf.structure("4h", zone, atr, (), swept)
+    assert fam.side == "LONG" and "swept" in fam.note and "reclaimed" in fam.note
+    edge = {"4h": {"cumulative_delta": {}, "pools": {}, "volume_profile": {"available": True, "value_area_low": 80_830.0,
+                                                                            "value_area_high": 82_000.0}}}
+    assert cf.structure("4h", zone, atr, (), edge).side == "LONG"
+    assert cf.structure("4h", zone, atr, (), None).side == "NONE"
+
+
+def test_timing_counts_only_while_the_measured_window_is_on():
+    assert cf.timing("LONG", NOON).side == "NONE"
+    on = cf.timing("LONG", ON)
+    assert on.side == "LONG" and "12:00" in on.note and "17:00" in on.note, "UTC and PKT both named"
+
+
+def test_no_level_is_no_setup():
+    a = desk("BULLISH", 0.6, None, atr=None)
+    g = cf.read(framework(a), a, full_evidence(), ON)
+    assert g.verdict == "NO SETUP" and g.side == "NONE"
+
+
+def test_the_notes_carry_no_indicator_words():
+    g = cf.read(long_zone(), desk("BULLISH", 0.6, 80_000.0), full_evidence(), ON)
+    text = (g.reason + " ".join(f.note + f.label for f in g.families)).lower()
+    for word in ("ema", "rsi", "σ", "fibonacci", "cvd", "squeeze", "moving average", "funding", "gamma", "delta"):
+        assert word not in text, word

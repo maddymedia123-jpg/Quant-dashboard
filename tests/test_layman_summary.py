@@ -30,7 +30,7 @@ def test_a_bearish_desk_sells_the_ceiling_with_the_stop_above_and_targets_below(
     assert s["entry"] == "$81,550 – $81,650"                      # a quarter ATR either side
     assert s["invalidation"] == "$82,600"                         # the desk's own, beyond the zone
     assert (s["target1"], s["target2"]) == ("$80,800", "$80,200")
-    assert s["condition"] == "A 1-hour candle closing above $82,600 cancels the short."
+    assert s["condition"] == "A 4-hour candle closing above $82,600 cancels the short.", "his 4-hour close rule"
 
 
 def test_a_bullish_desk_mirrors_it():
@@ -49,7 +49,7 @@ def test_an_invalidation_inside_the_zone_is_pushed_past_it():
 def test_sideways_takes_his_example_from_the_nearer_edge_and_names_both_ways_out():
     s = ls.lines(desk("NEUTRAL", 0.1, None), DERIVS, 50, NOON)     # $300 above the floor, $500 below the ceiling
     assert s["bias"] == "Range-Bound / Conditional Long on Floor Retest at $80,800"
-    assert ("tilts lower on a 1-hour close below the $80,800 floor and higher above the $81,600 ceiling; "
+    assert ("tilts lower on a 4-hour close below the $80,800 floor and higher above the $81,600 ceiling; "
             "the long setup is cancelled below $80,650") in s["summary"]
     near_top = desk("NEUTRAL", 0.1, None, levels=[lvl("support", 80_200.0), lvl("resistance", 81_300.0)])
     assert ls.lines(near_top, DERIVS, 50, NOON)["bias"].startswith("Range-Bound / Conditional Short on Ceiling Retest")
@@ -77,15 +77,61 @@ def test_no_history_says_so_instead_of_inventing_levels():
     assert s["entry"] == "—" and s["target1"] == "—" and s["condition"] == "No clear line yet."
 
 
-def test_the_box_follows_his_format_in_order_with_no_indicator_words():
+def test_the_box_follows_his_v22_layout_in_order_with_no_indicator_words():
     h = panels.layman_summary_html(desk(), "Live Recon", DERIVS, 32, NOON)
-    order = ["📌 LAYMAN SUMMARY", "📊 Quantitative Swing Trade Framework", "Directional Bias:", "Exact Entry Zone:",
-             "Hard Invalidation Level:", "Target 1:", "Target 2:", "⏳ Time Reversal Windows &amp; Timeline (PKT)",
-             "Window 1 (Active Peak Window):", "Window 2 (Cycle Confluence):", "❌ Bias Invalidation Condition:"]
+    order = ["🧭 BIG PICTURE", "🕒 TIMELINE", "Now: What's happening:", "What to expect:", "Turning window:",
+             "🎯 BOUNCE ZONE", "Sell $81,550 – $81,650", "Why:", "📈 TARGETS", "Target 1 (the first low to expect):",
+             "Target 2:", "Target 3:", "🛡 SAFETY LINE", "✅ VERIFIED CONFLUENCES · 0 of 7 agree, 3 needed",
+             "📣 DIRECTIVE", "WAIT. 0 of 7 confluences agree", "⚠️ WARNING"]
     at = [h.index(x) for x in order]
-    assert at == sorted(at)
-    for word in ("EMA", "RSI", "σ", "Fibonacci", "CVD", "squeeze", "moving average", "funding"):
+    assert at == sorted(at), order
+    assert "\n\n" not in h and "<pre" not in h
+    for word in ("EMA", "RSI", "σ", "Fibonacci", "CVD", "squeeze", "moving average", "funding", "gamma"):
         assert word.lower() not in h.lower(), word
+
+
+def evidence_for_a_long(**extra):
+    """Three families behind the $80,800 floor: a pattern in the zone, a put wall in it, extreme fear."""
+    from core.confluence import Evidence
+    return Evidence(harmonics=(NS(name="Gartley", side="bullish", stage="in_zone", prz=(80_700.0, 80_820.0),
+                               targets=(81_600.0, 82_300.0), invalidation=80_400.0),),
+                    derivs={**DERIVS, "gamma": {"put_wall": 80_800.0, "call_wall": 84_000.0}}, fear_greed=18, **extra)
+
+
+def test_the_gate_opens_the_directive_with_three_targets_and_closes_it_naming_what_is_missing():
+    bull = desk("BULLISH", 0.6, 80_000.0)
+    s = ls.lines(bull, DERIVS, 18, NOON, evidence_for_a_long())
+    assert s["verdict"] == "TRADE" and s["score"] == "3 of 7 agree"
+    assert s["directive"] == ("BUY $80,750 – $80,850. Targets $81,600, $82,300, $82,900. "
+                               "Out on a 4-hour close below $80,000.")
+    assert s["target3"] == "$82,900" and "backed by a Gartley in its zone" in s["zone_why"]
+    assert "What to expect: a bounce from the zone toward $81,600, then $82,300" in s["phase_now"]
+    assert [c["agrees"] for c in s["confluences"]] == [True, True, None, True, None, None, None]
+    assert s["safety"].startswith("$80,000. A 4-hour candle closing below $80,000 cancels the long.")
+    bare = ls.lines(bull, None, None, NOON)
+    assert bare["verdict"] == "WAIT" and bare["directive"].startswith("WAIT. 0 of 7 confluences agree, 3 are needed. Missing: ")
+    assert "nothing else backs it yet" in bare["zone_why"]
+    # the mood and derivatives the caller already passes count as evidence even without an Evidence object
+    assert ls.lines(bull, {"funding": {"latest_8h_rate": -0.0002}}, 15, NOON)["confluences"][3]["agrees"] is True
+    h = panels.layman_summary_html(bull, "Live Recon", DERIVS, 18, NOON, evidence_for_a_long())
+    assert "Buy $80,750 – $80,850" in h and "✔ A pattern completing at the zone: a Gartley" in h and "BUY $80,750" in h
+    assert "Target 1 (the first high to expect): $81,600" in h
+
+
+def test_the_warning_names_the_next_print_the_dollar_and_the_weekend():
+    bull = desk("BULLISH", 0.6, 80_000.0)
+    ev = evidence_for_a_long(prints=(NS(title="FOMC rate decision", time_ms=NOON + 5 * 3_600_000, state="positioned",
+                                        runup_pct=2.3),),
+                             rates={"available": True, "DTWEXBGS": {"value": 120.0, "change_1w": 0.9}})
+    w = ls.lines(bull, DERIVS, 18, NOON, ev)["warning"]
+    assert w.startswith("Watch: a high-impact US print, FOMC rate decision, lands at 11:00 UTC (16:00 PKT) Tue")
+    assert "moved +2.3% into it" in w and "the dollar has risen 0.8% this week, a headwind for a long" in w
+    saturday = NOON + 4 * 86_400_000
+    assert "weekend tape" in ls.lines(bull, DERIVS, 18, saturday)["warning"]
+    assert ls.lines(bull, DERIVS, 50, NOON)["warning"].startswith("Nothing scheduled")
+    # a print already released, or outside the window, is not a warning
+    late = evidence_for_a_long(prints=(NS(title="CPI", time_ms=NOON + 3 * 86_400_000, state="scheduled"),))
+    assert ls.lines(bull, DERIVS, 50, NOON, late)["warning"].startswith("Nothing scheduled")
 
 
 def test_kill_zones_are_shown_with_their_measured_odds_and_the_dead_ones_said_to_be():
@@ -93,6 +139,12 @@ def test_kill_zones_are_shown_with_their_measured_odds_and_the_dead_ones_said_to
     assert "New York session 18:00–22:00 PKT: 30% of turns, 1.8x chance" in s
     assert "Asian session (05:00–09:00 PKT) and London open (12:00–15:00 PKT): no better than chance" in s
     assert "Kill zones, measured:" in panels.layman_summary_html(desk(), "Live Recon", DERIVS, 50, NOON)
+
+
+def test_the_weekly_desk_keeps_its_own_candle_for_the_safety_line():
+    s = ls.lines(desk("BULLISH", 0.4, 80_000.0, tf="1d", horizon="next 7 days"), DERIVS, 60, NOON)
+    assert s["condition"] == "A daily candle closing below $80,000 cancels the long."
+    assert ls.rule_tf("1h") == "4h" and ls.rule_tf("4h") == "4h" and ls.rule_tf("1w") == "1w"
 
 
 def test_the_two_turning_windows_are_said_to_be_one_afternoon():
