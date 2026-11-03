@@ -136,6 +136,27 @@ def test_a_named_anomaly_trap_shows_in_the_summary_and_on_its_own_card():
     assert "the shorts are the crowd that gets forced out" in card and "\n\n" not in card
 
 
+def test_the_weekend_switches_the_words_to_sweep_and_rejection_and_flags_the_desk():
+    bull = desk("BULLISH", 0.6, 80_000.0)
+    saturday = NOON + 4 * 86_400_000
+    week = ls.lines(bull, DERIVS, 18, NOON, evidence_for_a_long())
+    wk = ls.lines(bull, DERIVS, 18, saturday, evidence_for_a_long())
+    assert week["weekend"] is None and wk["weekend"]["weekend"] is True and wk["weekend"]["ends_utc"] == "Sun 22:00 UTC"
+    assert week["verdict"] == wk["verdict"] == "TRADE"
+    assert week["directive"].endswith("Out on a 4-hour close below $80,000.")
+    assert wk["directive"].endswith("Out on a 4-hour close below $80,000. Weekend: trade the sweep and rejection at the zone, not breakout continuation.")
+    assert "What to expect: weekend playbook: a sweep through the zone and a rejection back inside the range" in wk["phase_now"]
+    assert "the first target $81,600 is the realistic one until weekday volume returns" in wk["phase_now"]
+    h = panels.layman_summary_html(bull, "Live Recon", DERIVS, 18, saturday, evidence_for_a_long())
+    assert "🛋 WEEKEND TAPE" in h and h.index("🧭 BIG PICTURE") < h.index("🛋 WEEKEND TAPE") < h.index("🕒 TIMELINE")
+    assert "🛋 WEEKEND TAPE" not in panels.layman_summary_html(bull, "Live Recon", DERIVS, 18, NOON, evidence_for_a_long())
+    from core.indicators.weekend import read as weekend_read
+    card = panels.weekend_html(weekend_read(saturday))
+    assert card.startswith("<div class=\"ti-card warn") and "Weekend tape</h4>" in card and "sweep and rejection" in card
+    assert panels.weekend_html(weekend_read(NOON)) is None
+    assert "Weekend tape ahead" in panels.weekend_html(weekend_read(NOON + 3 * 86_400_000 + 12 * 3_600_000))
+
+
 def test_the_warning_names_the_next_print_the_dollar_and_the_weekend():
     bull = desk("BULLISH", 0.6, 80_000.0)
     ev = evidence_for_a_long(prints=(NS(title="FOMC rate decision", time_ms=NOON + 5 * 3_600_000, state="positioned",
@@ -147,6 +168,8 @@ def test_the_warning_names_the_next_print_the_dollar_and_the_weekend():
     assert "moved +2.3% into it" in w and "the dollar has risen 0.8% this week, a headwind for a long" in w
     saturday = NOON + 4 * 86_400_000
     assert "weekend tape" in ls.lines(bull, DERIVS, 18, saturday)["warning"]
+    friday_evening = NOON + 3 * 86_400_000 + 12 * 3_600_000          # Fri 18:00 UTC
+    assert "the weekend tape starts at Fri 21:00 UTC (02:00 PKT), in 3 hours" in ls.lines(bull, DERIVS, 50, friday_evening)["warning"]
     assert ls.lines(bull, DERIVS, 50, NOON)["warning"].startswith("Nothing scheduled")
     # a bigger level on the path that is too far out to bar the trade is named here instead
     walled = ls.lines(bull, DERIVS, 18, NOON, evidence_for_a_long(htf_levels=(("weekly level", 81_200.0),)))

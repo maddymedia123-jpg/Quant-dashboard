@@ -184,11 +184,12 @@ def _warning(side: str, now_ms: int, ev, horizon_label: str, f=None, atr: float 
             bits.append(f"the dollar has risen {pct:.1f}% this week, a headwind for a long")
         elif side == "SHORT" and pct <= -0.25:
             bits.append(f"the dollar has fallen {abs(pct):.1f}% this week, a headwind for a short")
-    now = datetime.fromtimestamp(now_ms / 1000, timezone.utc)
-    if now.weekday() >= 5:
+    from core.indicators.weekend import read as weekend_read
+    wk = weekend_read(now_ms)
+    if wk.phase == "weekend":
         bits.append("weekend tape: thin volume, so moves run further and reverse faster than the levels suggest")
-    elif now.weekday() == 4 and now.hour >= 18:
-        bits.append("the weekend starts within hours: thin volume ahead")
+    elif wk.phase == "starting":
+        bits.append(wk.note[0].lower() + wk.note[1:].rstrip("."))
     if not bits:
         return "Nothing scheduled: no high-impact US print, dollar move against the trade, weekend or bigger level inside this window."
     return "Watch: " + "; ".join(bits) + "."
@@ -226,6 +227,8 @@ def lines(a, derivs: dict | None, fear_greed: int | None, now_ms: int, evidence=
     else:
         flip = ""
     summary = " ".join(s for s in (state, " ".join(x for x in (_mood(fear_greed), _flow(derivs)) if x), flip) if s)
+    from core.indicators.weekend import read as weekend_read
+    wk = weekend_read(now_ms)
 
     # the gate: the desk's own derivatives and mood are part of the evidence even when the caller passes none
     ev = evidence or confluence.Evidence()
@@ -246,6 +249,13 @@ def lines(a, derivs: dict | None, fear_greed: int | None, now_ms: int, evidence=
                   + f"; the trade is off on a {tfw} close {beyond} {_money(f.invalidation)}")
         directive = (f"{'BUY' if long else 'SELL'} {entry}. Targets {', '.join(_money(t) for t in targets)}. "
                      f"Out on a {tfw} close {beyond} {_money(f.invalidation)}.")
+        if wk.active:
+            # his weekend modifier: the language shifts from continuation to sweep and rejection at the edges
+            expect = (f"weekend playbook: a sweep through the zone and a rejection back inside the range rather than a "
+                      f"clean {'bounce' if long else 'rejection'}; the first target {_money(targets[0]) if targets else ''} "
+                      f"is the realistic one until weekday volume returns; the trade is off on a {tfw} close {beyond} "
+                      f"{_money(f.invalidation)}")
+            directive += " Weekend: trade the sweep and rejection at the zone, not breakout continuation."
     elif g.verdict == "WAIT":
         expect = "no trade yet. " + g.reason
         directive = "WAIT. " + g.reason[len("WAIT: "):]
@@ -288,6 +298,7 @@ def lines(a, derivs: dict | None, fear_greed: int | None, now_ms: int, evidence=
         "warning": _warning(f.side, now_ms, ev, a.vol.horizon_label, f, a.vol.atr),
         "bar": None if g.bar is None else {"label": g.bar.label, "price": g.bar.price, "note": g.bar.note},
         "anomaly": None if g.trap is None else g.trap.to_state(),
+        "weekend": wk.to_state() if wk.phase != "weekday" else None,
     }
 
 

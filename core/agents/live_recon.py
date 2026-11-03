@@ -213,6 +213,9 @@ def build_state(m, analyses: dict, now_ms: int | None = None, profile: ReconProf
                 state["smc"][tf]["harmonics"] = [h.to_state() for h in found]
             except Exception as e:  # noqa: BLE001 - a pattern scan must not take the state down
                 state["smc"][tf]["harmonics"] = {"available": False, "note": f"{type(e).__name__}: {e}"}
+    # his weekend modifier: the session the judges are reading, with the playbook that goes with it
+    from core.indicators.weekend import read as weekend_read
+    state["session"] = weekend_read(now).to_state()
     # his Section 5.3: the named anomaly trap on this desk, so the judges and the Head read it by name
     try:
         from core.indicators import anomaly_trap

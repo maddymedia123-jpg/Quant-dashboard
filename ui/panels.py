@@ -302,6 +302,14 @@ def anchored_direction_html(a: CategoryAnalysis, v, now_ms: int) -> str:
     return card_html("Market direction · anchored", body, tone)
 
 
+def weekend_html(w) -> str | None:
+    """His weekend microstructure modifier, flagged at the top of every desk while it applies."""
+    if w.phase == "weekday":
+        return None
+    title = "Weekend tape" if w.active else "Weekend tape ahead"
+    return card_html(title, f"<p>{html.escape(w.note)}</p>", "warn")
+
+
 def anomaly_trap_html(t) -> str:
     """His Section 5.3 on the desk: the named trap, its ingredients, and what price and the flow are doing."""
     ing = " + ".join((t.mood,) + tuple(t.crowd))
@@ -2296,6 +2304,8 @@ def layman_summary_html(a: CategoryAnalysis, label: str, derivs: dict | None, fe
     tone = {"TRADE": "up" if long else "down", "WAIT": "warn"}.get(s["verdict"], "muted")
     return (f"<div class='ti-read ti-layman'><span class='ti-kicker'>Summary · {html.escape(label)}</span>"
             f"<p><strong>🧭 BIG PICTURE</strong><br>{e(s['summary'])}</p>"
+            + (f"<p class='ti-directive warn'><strong>🛋 WEEKEND TAPE</strong><br>{e(s['weekend']['note'])}</p>"
+               if s.get("weekend") else "")
             + (f"<p class='ti-directive {'up' if s['anomaly']['side'] == 'LONG' else 'down'}'><strong>🪤 ANOMALY TRAP</strong><br>"
                f"{e(s['anomaly']['headline'])}</p>" if s.get("anomaly") else "")
             + "<p><strong>🕒 TIMELINE</strong></p><ul>"
