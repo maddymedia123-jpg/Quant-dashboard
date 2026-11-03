@@ -237,7 +237,7 @@ Every message is scanned against a banned-jargon list before it goes out.
 | Plan alerts (1-agent report) | WATCH when price reaches the zone, CONFIRMED on the confirm close, NO SETUP, TARGET 1–3, STOPPED, EXPIRED | Plain words, from the plan's numbers |
 | Cascade | Only moves into A (strong setup) or C (trend losing control), after the state holds (Live 5 min, Intraday 15 min, Weekly 1 h, Monthly 4 h); a return to the same state within the repeat window (3 h / 6 h / 24 h / 72 h) stays silent | Desk and price, old state → new state, what changed |
 | TRAP | Declared, and settled | "A dip below X should fail and bounce" |
-| Market Pulse | Each 4-hour close (from the Live desk, or a live plan if one is open) and when a report with a sided plan is run | Your Pulse template: direction, Target 1, stop, turning window, US releases, BTC headlines, Fed odds within 7 days |
+| Market Pulse | Every hour boundary, one message naming the closes it covers: "1h + 2h + 4h candle closes" at 00:00, 04:00, 08:00, 12:00, 16:00 and 20:00 UTC, "1h + 2h" on the other even hours, "1h" otherwise (from the Live desk, or a live plan if one is open); and when a report with a sided plan is run. Live 4 Nov; it was the 4-hour close only | Your Pulse template: direction, Target 1, stop, turning window, US releases, BTC headlines, Fed odds within 7 days |
 | Trade alerts | A pinned trade's target, stop, trap on its levels, monitoring checkpoint | From the card |
 
 Telegram is implemented and switches on the moment a bot token and chat id are added to the VM's
@@ -296,6 +296,7 @@ report runs and are not stored, so there is nothing to read back. See section 9.
 
 | Ask | Status |
 | --- | --- |
+| Market Pulse on every 1H, 2H and 4H close (Section 10) | Built 4 Nov: one message per hour boundary naming which closes it covers; a message older than 30 minutes is skipped, not sent late; the 4-hour close keeps its old ledger key so nothing double-sent at the switch (section 6) |
 | Weekend modifier (flag, sweep-and-rejection wording) | Built 4 Nov: Friday 21:00 to Sunday 22:00 UTC; desk card, summary wording and directive, a clean weekend break does not count in the gate, session in the judges' state (section 3) |
 | Event window five days either side of each high-impact print | Built 4 Nov: event-trap reads, the card on every desk and the summary warning span five days before to five days after, as far as the feed reaches. Open: the feed is the current week only (no next-week file exists); storing prints to hold the full five days across the week boundary needs your go (section 3) |
 | Named anomaly traps (Section 5.3: Bullish squeeze trap, Liquidation flush trap) | Built 4 Nov: on the desk, in the summary, in the gate's positioning family and in the judges' state; SET when the flow already disagrees with the crowd, FORMING before (section 3) |
@@ -339,7 +340,7 @@ report runs and are not stored, so there is nothing to read back. See section 9.
 2. **Invalidation definition.** 4-hour close or two hourly closes in a row. Confirm.
 3. **Cautions in chop windows.** Suppress, raise the bar, or leave.
 4. **Desks-disagree alert.** Define it, or drop it.
-5. **Which desk speaks in the 4-hour Pulse.** Live Recon today, by our choice.
+5. **Which desk speaks in the Pulse.** Live Recon today, by our choice.
 6. **Gemini billing** (fixes the 15-agent failures) and **Telegram credentials** (switches it on).
 7. **Sine wave card:** keep collecting, or remove.
 8. **Liquidation gravity:** review the shadow record together after four live weeks.

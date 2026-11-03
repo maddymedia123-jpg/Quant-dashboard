@@ -1,4 +1,5 @@
-"""Market Pulse Dispatch: his template, once per report and once per fresh 4h close, plain words only."""
+"""Market Pulse Dispatch: his template, once per report and once per fresh hour boundary (the 1H, 2H and 4H
+closes, named), plain words only."""
 import json
 from types import SimpleNamespace as NS
 
@@ -72,6 +73,24 @@ def test_one_per_close_and_only_while_fresh():
     assert a.dedup_key == b.dedup_key == f"pulse:4h:{CLOSE}", "the ledger's unique key makes it one message"
     assert pulse.close_event(live(), market(), CLOSE + 31 * 60_000) is None, "a late pulse is skipped, not sent"
     assert pulse.close_event(None, market(), CLOSE) is None
+
+
+def test_every_hour_boundary_sends_one_pulse_naming_the_closes_it_covers():
+    """Owner's decision 4 Nov (his Section 10): the 1H, 2H and 4H closes, one message per boundary."""
+    four = pulse.close_event(live(), market(), CLOSE + 60_000)
+    assert four.dedup_key == f"pulse:4h:{CLOSE}" and "DISPATCH · 1h + 2h + 4h candle closes · Live desk" in four.headline
+    one = pulse.close_event(live(), market(), CLOSE + H + 60_000)
+    assert one.dedup_key == f"pulse:1h:{CLOSE + H}" and "DISPATCH · 1h candle close · Live desk" in one.headline
+    two = pulse.close_event(live(), market(), CLOSE + 2 * H + 60_000)
+    assert two.dedup_key == f"pulse:2h:{CLOSE + 2 * H}" and "DISPATCH · 1h + 2h candle closes · Live desk" in two.headline
+    three = pulse.close_event(live(), market(), CLOSE + 3 * H + 60_000)
+    assert three.dedup_key == f"pulse:1h:{CLOSE + 3 * H}" and "1h candle close ·" in three.headline
+    assert pulse.close_event(live(), market(), CLOSE + H + 31 * 60_000) is None, "an hourly pulse is as perishable as a 4h one"
+    assert [pulse.closes_at(CLOSE + k * H) for k in range(5)] == [["1h", "2h", "4h"], ["1h"], ["1h", "2h"], ["1h"], ["1h", "2h", "4h"]]
+    # with a live plan the hourly pulse speaks from the plan too, and still names the closes
+    row = {"report_id": "TIR1-9", "ts_ms": CLOSE - 2 * H, "plan": json.dumps(PLAN), "plan_outcome": None}
+    e = pulse.close_event(live("BULLISH"), market(), CLOSE + H + 60_000, plan_row=row)
+    assert e.dedup_key == f"pulse:1h:{CLOSE + H}" and "1h candle close · plan from report TIR1-9" in e.headline
 
 
 def test_a_report_with_a_plan_speaks_from_the_plan():

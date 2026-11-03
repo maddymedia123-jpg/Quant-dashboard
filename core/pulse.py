@@ -5,7 +5,10 @@ pages open):
 
   * a report is run   - from the report's plan when it has one (direction, Target 1, the stop), and from
                         the Live desk otherwise; keyed on the report id
-  * a 4h candle close - from the Live desk (next 4 hours); keyed on the close
+  * a candle close    - every hour boundary (his Section 10: the 1H, 2H and 4H closes), one message per
+                        boundary that names which closes it covers ("1h + 2h + 4h candle closes" at
+                        00:00, 04:00, ... UTC; "1h + 2h" on the other even hours; "1h" otherwise); from
+                        the Live desk (next 4 hours), or a live plan; keyed on the close
 
 Both are checked on every page load, so with no page open nothing is sent. A close or a report older than
 SEND_WITHIN_MS is skipped rather than sent late: a three-hour-old pulse reads as news and is not.
@@ -19,7 +22,8 @@ import json
 from core.alerts import Event
 
 HOUR_MS = 3_600_000
-CLOSE_MS = 4 * HOUR_MS
+CLOSE_MS = HOUR_MS                       # the pulse cadence: every hour boundary (was every 4 hours)
+CLOSE_NAMES = ((1, "1h"), (2, "2h"), (4, "4h"))
 SEND_WITHIN_MS = 30 * 60_000
 NEWS_WITHIN_MS = 6 * HOUR_MS             # headlines from the last six hours
 EVENTS_WITHIN_MS = 24 * HOUR_MS          # high-impact US prints in the next day
@@ -214,22 +218,41 @@ def text(read: dict, m, now_ms: int, basis: str) -> str:
         "⚠️ IMPORTANT NEWS / EVENT WARNINGS:", _news(m, now_ms), RULE])
 
 
+def closes_at(close_ms: int) -> list[str]:
+    """Which candles closed on this hour boundary: the 1h always; the 2h on even UTC hours; the 4h at 00:00,
+    04:00, 08:00, 12:00, 16:00 and 20:00 UTC (the exchange's candles are UTC-aligned)."""
+    hours = close_ms // HOUR_MS
+    return [name for n, name in CLOSE_NAMES if hours % n == 0]
+
+
+def close_label(close_ms: int) -> str:
+    names = closes_at(close_ms)
+    return " + ".join(names) + (" candle closes" if len(names) > 1 else " candle close")
+
+
+def close_key(close_ms: int) -> str:
+    """The ledger key: the coarsest candle that closed. A 4h boundary keeps its old key, so the deploy that
+    added the hourly cadence could not send a second message for a close already sent."""
+    return f"pulse:{closes_at(close_ms)[-1]}:{close_ms}"
+
+
 def close_event(live, m, now_ms: int, plan_row: dict | None = None) -> Event | None:
-    """The pulse for the 4h candle that just closed, while that close is still fresh. With a live plan it
-    speaks from the plan (the report's zone, target and stop); otherwise from the Live desk."""
+    """The pulse for the candle(s) that just closed on the last hour boundary, while that close is still
+    fresh. With a live plan it speaks from the plan (the report's zone, target and stop); otherwise from
+    the Live desk. The basis line names every candle that closed, so the reader knows which closes it covers."""
     close = now_ms - now_ms % CLOSE_MS
     if now_ms - close > SEND_WITHIN_MS:
         return None
     price = getattr(m.spot, "last", None)
+    label, key = close_label(close), close_key(close)
     if plan_live(plan_row, now_ms):
         read = plan_read(plan_row, price if price is not None else getattr(live, "price", None))
         if read is not None:
-            basis = f"4h candle close · plan from report {plan_row.get('report_id', '')}".strip()
-            return Event("pulse", f"pulse:4h:{close}", text(read, m, now_ms, basis), price)
+            basis = f"{label} · plan from report {plan_row.get('report_id', '')}".strip()
+            return Event("pulse", key, text(read, m, now_ms, basis), price)
     if live is None:
         return None
-    return Event("pulse", f"pulse:4h:{close}", text(desk_read(live), m, now_ms, "4h candle close · Live desk"),
-                 live.price)
+    return Event("pulse", key, text(desk_read(live), m, now_ms, f"{label} · Live desk"), live.price)
 
 
 def report_event(report_row: dict | None, live, m, now_ms: int) -> Event | None:

@@ -80,7 +80,7 @@ In the ledger, a directional desk call hits when price moves more than 0.25 sigm
 
 **Cascade alerts.** States: A strong setup, B pause, C trend losing control, N no bigger trend. Only moves into A or C are sent, after the state holds. Same-episode rule: a return to the same state within the repeat window (Live 3h, Intraday 6h, Weekly 24h, Monthly 72h) stays silent. TRAP alerts go out when a trap is declared and when it settles.
 
-**Market Pulse.** A plain-words dispatch at each 4-hour close and when a report with a plan is run, for the next 4 hours.
+**Market Pulse.** A plain-words dispatch on every hour boundary, one message naming the candles that closed ("1h + 2h + 4h candle closes" at 00:00, 04:00, 08:00, 12:00, 16:00 and 20:00 UTC; "1h + 2h" on the other even hours; "1h" otherwise), and when a report with a plan is run, for the next 4 hours. Alert keys read pulse:1h:, pulse:2h: and pulse:4h: followed by the close's millisecond stamp.
 
 **Monday plan.** Written once after Monday 00:00 UTC. It does not move during the week.
 
