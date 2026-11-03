@@ -697,6 +697,14 @@ def category_tab(key):
         except Exception:  # noqa: BLE001 - the strip falls back to the 24h snapshot, labelled 24h
             _own = None
         kpi_strip(panels.kpis_for(a, m, _own))
+        # his weekend microstructure modifier: flagged on every desk while it applies
+        try:
+            from core.indicators.weekend import read as _weekend_read
+            _wk_card = panels.weekend_html(_weekend_read(now_ms))
+            if _wk_card:
+                panels.render(_wk_card)
+        except Exception as e:  # noqa: BLE001
+            st.warning(f"Weekend flag unavailable: {e}")
         # the cascade sits in the quick read: bias above, the anchor, the engine below
         try:
             v_ = verdicts.get(key)

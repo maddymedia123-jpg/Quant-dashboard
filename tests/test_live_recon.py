@@ -42,6 +42,8 @@ def test_state_carries_the_three_live_recon_timeframes_and_is_json_safe(market_a
     assert state["spot"]["price"] and "macro_calendar" in state
     # his Section 5.3: the judges always get the anomaly-trap read by name, or the reason there is none
     assert "name" in state["anomaly_trap"] and (state["anomaly_trap"]["name"] or state["anomaly_trap"]["note"])
+    # his weekend modifier: the judges always know which session they are reading and the playbook for it
+    assert state["session"]["weekend"] in (True, False) and "playbook" in state["session"]
 
 
 # ---- scoring ----

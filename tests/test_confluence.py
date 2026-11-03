@@ -97,6 +97,22 @@ def test_structure_reads_a_failed_break_as_the_trap_it_is_then_sweeps_then_the_v
     assert cf.structure("4h", zone, atr, (), None).side == "NONE"
 
 
+def test_on_the_weekend_a_clean_break_is_not_trusted_but_the_sweep_playbook_still_counts():
+    zone, atr = (80_750.0, 80_850.0), 200.0
+    clean = (NS(timeframe="1h", available=True, state="qualified", direction="up", edge=80_600.0),)
+    assert cf.structure("1h", zone, atr, clean, None).side == "LONG"
+    wk = cf.structure("1h", zone, atr, clean, None, weekend=True)
+    assert wk.side == "NONE" and wk.note == "the 1h break above $80,600 came on weekend tape and is not trusted until a weekday close confirms it"
+    failed = (NS(timeframe="1h", available=True, state="failed", direction="down", edge=80_800.0),)
+    assert cf.structure("1h", zone, atr, clean + failed, None, weekend=True).side == "LONG", "the trap still counts"
+    # through the gate: Saturday reads the same evidence with the break discounted
+    ev = cf.Evidence(breaks=clean, harmonics=full_evidence().harmonics, derivs=full_evidence().derivs, fear_greed=18)
+    saturday = NOON + 4 * 86_400_000
+    weekday_gate = cf.read(long_zone(), desk("BULLISH", 0.6, 80_000.0), ev, NOON)
+    weekend_gate = cf.read(long_zone(), desk("BULLISH", 0.6, 80_000.0), ev, saturday)
+    assert weekday_gate.families[4].side == "LONG" and weekend_gate.families[4].side == "NONE"
+
+
 def test_timing_counts_only_while_the_measured_window_is_on():
     assert cf.timing("LONG", NOON).side == "NONE"
     on = cf.timing("LONG", ON)

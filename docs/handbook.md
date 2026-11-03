@@ -111,6 +111,16 @@ as its own line under the Big Picture in the summary, speaks for the positioning
 gate, and goes to the desk's judges and Head in their state by name. Greed without leverage building is
 greed, not a flush, and is not named.
 
+**Weekend modifier (your Section 4, live 4 November).** The weekend is Friday 21:00 UTC (the US cash close,
+when volume thins) to Sunday 22:00 UTC (the CME open), one definition read everywhere. While it applies:
+every desk carries a "Weekend tape" card at the top, and from six hours before, a "Weekend tape ahead" card;
+the summary adds a Weekend tape line under the Big Picture, the directive ends "Weekend: trade the sweep and
+rejection at the zone, not breakout continuation", and "what to expect" is worded as a sweep through the zone
+and a rejection back inside the range with the first target as the realistic one; in the confluence gate a
+clean break on weekend tape does not count as structure (a failed break, a reclaimed sweep or a value edge
+still does, that is the weekend playbook); and the war-room state carries the session and its playbook, so
+the judges and the Head read it. The Quant Forecast daily plan is unchanged: its own regime handles the day.
+
 **Event window: five days either side (your Section 5.3, live 4 November).** Buy the rumour, sell the news
 is read from five days before each high-impact US print to five days after (it was 48 hours). Inside the
 window the print shows as flat or positioned (the run-up itself is still measured over the last 24 hours
@@ -286,6 +296,7 @@ report runs and are not stored, so there is nothing to read back. See section 9.
 
 | Ask | Status |
 | --- | --- |
+| Weekend modifier (flag, sweep-and-rejection wording) | Built 4 Nov: Friday 21:00 to Sunday 22:00 UTC; desk card, summary wording and directive, a clean weekend break does not count in the gate, session in the judges' state (section 3) |
 | Event window five days either side of each high-impact print | Built 4 Nov: event-trap reads, the card on every desk and the summary warning span five days before to five days after, as far as the feed reaches. Open: the feed is the current week only (no next-week file exists); storing prints to hold the full five days across the week boundary needs your go (section 3) |
 | Named anomaly traps (Section 5.3: Bullish squeeze trap, Liquidation flush trap) | Built 4 Nov: on the desk, in the summary, in the gate's positioning family and in the judges' state; SET when the flow already disagrees with the crowd, FORMING before (section 3) |
 | Higher-timeframe bar (Weekly/Monthly level within half an ATR on the path to Target 1 → WAIT) | Built 4 Nov: a level inside the zone is the entry and never bars; farther levels before Target 1 go in the warning (section 3) |

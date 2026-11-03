@@ -29,6 +29,7 @@ LONG, SHORT, NONE = "LONG", "SHORT", "NONE"
 NEED = 3                          # families that must agree before the trade box opens
 ZONE_PAD_ATR = 0.25               # a level counts as "at the zone" this far outside it
 # the positioning thresholds live with the anomaly trap, which reads the same crowd
+from core.indicators.weekend import is_weekend  # noqa: E402
 from core.indicators.anomaly_trap import (FEAR_EXTREME, GREED_EXTREME, LONG_ACCOUNTS_CROWDED,  # noqa: E402
                                           PREMIUM_CROWDED_LONG, PREMIUM_CROWDED_SHORT,
                                           SHORT_ACCOUNTS_CROWDED, from_evidence, long_share)
@@ -186,12 +187,20 @@ def positioning(fear_greed: int | None, futures, derivs: dict | None, trap=None)
     return fam
 
 
-def structure(chart_tf: str, zone: tuple[float, float], atr: float, breaks, liquidity: dict | None) -> Family:
-    """The first thing that fires, chart timeframe first: a break read, then a sweep, then a value edge."""
+def structure(chart_tf: str, zone: tuple[float, float], atr: float, breaks, liquidity: dict | None,
+              weekend: bool = False) -> Family:
+    """The first thing that fires, chart timeframe first: a break read, then a sweep, then a value edge. On the
+    weekend (his microstructure modifier) a clean break is not breakout continuation and does not count; a
+    failed break, a reclaimed sweep or a value edge is the weekend playbook and still does."""
     reads = sorted((b for b in breaks or () if getattr(b, "available", False)),
                    key=lambda b: 0 if b.timeframe == chart_tf else 1)
+    untrusted = None
     for b in reads:
         up = b.direction == "up"
+        if weekend and b.state in ("qualified", "pullback"):
+            untrusted = untrusted or (f"the {b.timeframe} break {'above' if up else 'below'} {_money(b.edge)} came on "
+                                      "weekend tape and is not trusted until a weekday close confirms it")
+            continue
         if b.state == "failed":
             return Family("structure", LABEL["structure"], SHORT if up else LONG,
                           f"the {b.timeframe} break {'above' if up else 'below'} {_money(b.edge)} failed: "
@@ -218,7 +227,8 @@ def structure(chart_tf: str, zone: tuple[float, float], atr: float, breaks, liqu
             if _at(vp.get("value_area_high"), zone, atr):
                 return Family("structure", LABEL["structure"], SHORT,
                               f"the zone is the top edge of where the {tf} volume traded ({_money(vp['value_area_high'])})")
-    return Family("structure", LABEL["structure"], NONE, "no failed break, reclaimed sweep or value edge at the zone")
+    return Family("structure", LABEL["structure"], NONE,
+                  untrusted or "no failed break, reclaimed sweep or value edge at the zone")
 
 
 def macro(rates: dict | None, prints) -> Family:
@@ -298,7 +308,7 @@ def judge(side: str, zone: tuple[float, float], atr: float, chart_tf: str, ev: E
             options(ev.derivs, zone, atr),
             flow(chart_tf, ev.liquidity),
             positioning(ev.fear_greed, ev.futures, ev.derivs, trap),
-            structure(chart_tf, zone, atr, ev.breaks, ev.liquidity),
+            structure(chart_tf, zone, atr, ev.breaks, ev.liquidity, weekend=is_weekend(now_ms)),
             macro(ev.rates, ev.prints),
             timing(side, now_ms))
 
