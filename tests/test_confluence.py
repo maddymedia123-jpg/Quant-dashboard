@@ -29,6 +29,7 @@ def full_evidence():
                           "pools": {"buyside": None, "sellside": None, "recent_sweep": None},
                           "volume_profile": {"available": True, "value_area_low": 80_000.0, "value_area_high": 82_000.0}}},
         prints=(NS(title="CPI", time_ms=NOON - 3 * H, state="spike_faded", trapped="shorts"),),
+        price_change_24h_pct=-2.3,
         rates={"available": True, "DTWEXBGS": {"value": 120.0, "change_1w": -0.6},
                "DGS2": {"value": 3.6, "change_1w": -0.15}},
     )
@@ -139,8 +140,29 @@ def test_the_bar_mirrors_for_a_short_and_reads_only_the_desks_above():
     assert cf.HIGHER == {"live": ("weekly", "monthly"), "intraday": ("weekly", "monthly"), "weekly": ("monthly",), "monthly": ()}
 
 
+def test_a_named_anomaly_trap_speaks_for_the_positioning_family():
+    """His Section 5.3: extreme fear plus a crowded short, with the flow absorbing, is the Bullish squeeze trap."""
+    g = cf.read(long_zone(), desk("BULLISH", 0.6, 80_000.0), full_evidence(), ON)
+    assert g.trap is not None and g.trap.name == "Bullish squeeze trap" and g.trap.status == "set"
+    pos = g.families[3]
+    assert pos.side == "LONG" and pos.note.startswith("Bullish squeeze trap (set): extreme fear (18/100) + a crowded short")
+    assert "the shorts are the crowd that gets forced out" in pos.note
+    # without the mood there is no trap, and the family falls back to its votes
+    quiet = cf.read(long_zone(), desk("BULLISH", 0.6, 80_000.0), cf.Evidence(**{**full_evidence().__dict__, "fear_greed": 50}), ON)
+    assert quiet.trap is None and quiet.families[3].note.startswith("a crowded short")
+    # a flush trap points the other way and opposes a long zone
+    greedy = cf.Evidence(fear_greed=82, futures=NS(long_account_pct=0.66, long_short_ratio=None),
+                         derivs={"open_interest": [{"over": "4h", "change_pct": 2.0}]}, price_change_24h_pct=1.5)
+    g2 = cf.read(long_zone(), desk("BULLISH", 0.6, 80_000.0), greedy, NOON)
+    assert g2.trap.name == "Liquidation flush trap" and g2.families[3].side == "SHORT" and [f.key for f in g2.opposing] == ["positioning"]
+    # no zone at all still reports the trap
+    a = desk("BULLISH", 0.6, None, atr=None)
+    assert cf.read(framework(a), a, full_evidence(), ON).trap is not None
+
+
 def test_the_notes_carry_no_indicator_words():
     g = cf.read(long_zone(), desk("BULLISH", 0.6, 80_000.0), full_evidence(), ON)
     text = (g.reason + " ".join(f.note + f.label for f in g.families)).lower()
-    for word in ("ema", "rsi", "σ", "fibonacci", "cvd", "squeeze", "moving average", "funding", "gamma", "delta"):
+    # "squeeze" on its own is allowed: his Section 5.3 names the Bullish squeeze trap; the indicator is the squeeze score
+    for word in ("ema", "rsi", "σ", "fibonacci", "cvd", "squeeze score", "moving average", "funding", "gamma", "delta"):
         assert word not in text, word

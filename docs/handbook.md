@@ -99,6 +99,18 @@ level). A level inside the zone is the entry, not a wall, so it never bars (your
 out but still before Target 1 is named in the warning as a pause, not a bar. Live Recon and Intraday read
 the Weekly and Monthly desks' levels, Weekly reads Monthly's, Monthly has none above it.
 
+**Named anomaly traps (your Section 5.3, live 4 November).** Positioning read against the candle, on every
+desk. Extreme fear (under 25) plus a crowded short (45% or fewer accounts long, or shorts paying to hold)
+is the **Bullish squeeze trap**. Extreme greed (over 75) plus over-leveraged longs (60% or more accounts
+long or a high premium to hold, with open positions growing over the desk's window or at a 30-day high) is
+the **Liquidation flush trap**. Each is SET when the order flow on the desk's chart already disagrees with
+the crowd (buyers absorbing a falling tape, or sellers meeting every bid on a rising one) and FORMING when
+the crowd is there but the flow has not turned. Contrarian by design: the trapped crowd is the one that
+gets forced out, so a squeeze trap leans long and a flush trap leans short. It shows as a card on the desk,
+as its own line under the Big Picture in the summary, speaks for the positioning family in the confluence
+gate, and goes to the desk's judges and Head in their state by name. Greed without leverage building is
+greed, not a flush, and is not named.
+
 **The war room, per desk:** five bullish and five bearish domain agents (Quant, Auction, Order Flow, ICT,
 Derivatives) each score a 100-point checklist of 22 weighted items. The model only answers "does this
 condition hold" with a probability; weights and arithmetic are code. Judged by TypeSafe Jev, Gemini as
@@ -260,6 +272,7 @@ report runs and are not stored, so there is nothing to read back. See section 9.
 
 | Ask | Status |
 | --- | --- |
+| Named anomaly traps (Section 5.3: Bullish squeeze trap, Liquidation flush trap) | Built 4 Nov: on the desk, in the summary, in the gate's positioning family and in the judges' state; SET when the flow already disagrees with the crowd, FORMING before (section 3) |
 | Higher-timeframe bar (Weekly/Monthly level within half an ATR on the path to Target 1 → WAIT) | Built 4 Nov: a level inside the zone is the entry and never bars; farther levels before Target 1 go in the warning (section 3) |
 | Confluence gate and v22 summary layout on every desk | Built 4 Nov: three of seven families must agree before a desk's trade box opens; WAIT names what is missing or what conflicts (section 3) |
 | Desks disagree in one batch (one message when the four desks conflict) | Not built. Needs your rule for what counts as disagreement and when to send |

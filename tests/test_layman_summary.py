@@ -86,7 +86,7 @@ def test_the_box_follows_his_v22_layout_in_order_with_no_indicator_words():
     at = [h.index(x) for x in order]
     assert at == sorted(at), order
     assert "\n\n" not in h and "<pre" not in h
-    for word in ("EMA", "RSI", "σ", "Fibonacci", "CVD", "squeeze", "moving average", "funding", "gamma"):
+    for word in ("EMA", "RSI", "σ", "Fibonacci", "CVD", "squeeze score", "moving average", "funding", "gamma"):
         assert word.lower() not in h.lower(), word
 
 
@@ -116,6 +116,24 @@ def test_the_gate_opens_the_directive_with_three_targets_and_closes_it_naming_wh
     h = panels.layman_summary_html(bull, "Live Recon", DERIVS, 18, NOON, evidence_for_a_long())
     assert "Buy $80,750 – $80,850" in h and "✔ A pattern completing at the zone: a Gartley" in h and "BUY $80,750" in h
     assert "Target 1 (the first high to expect): $81,600" in h
+
+
+def test_a_named_anomaly_trap_shows_in_the_summary_and_on_its_own_card():
+    bull = desk("BULLISH", 0.6, 80_000.0)
+    ev = evidence_for_a_long(futures=NS(long_account_pct=0.40, long_short_ratio=None), price_change_24h_pct=-2.3,
+                             liquidity={"1h": {"cumulative_delta": {"state": "bullish absorption"}, "pools": {}, "volume_profile": {}}})
+    s = ls.lines(bull, DERIVS, 18, NOON, ev)
+    assert s["anomaly"]["name"] == "Bullish squeeze trap" and s["anomaly"]["status"] == "set"
+    assert s["confluences"][3]["note"].startswith("Bullish squeeze trap (set)")
+    h = panels.layman_summary_html(bull, "Live Recon", DERIVS, 18, NOON, ev)
+    assert "🪤 ANOMALY TRAP" in h and h.index("🧭 BIG PICTURE") < h.index("🪤 ANOMALY TRAP") < h.index("🕒 TIMELINE")
+    from core.confluence import Evidence
+    calm = Evidence(**{**ev.__dict__, "fear_greed": 50})          # the bundle carries the mood; the bare argument is the fallback
+    assert "🪤 ANOMALY TRAP" not in panels.layman_summary_html(bull, "Live Recon", DERIVS, 50, NOON, calm)
+    from core.indicators.anomaly_trap import from_evidence
+    card = panels.anomaly_trap_html(from_evidence(ev, "1h"))
+    assert card.startswith("<div class=\"ti-card up") and "Anomaly trap · Bullish squeeze trap · SET" in card
+    assert "the shorts are the crowd that gets forced out" in card and "\n\n" not in card
 
 
 def test_the_warning_names_the_next_print_the_dollar_and_the_weekend():

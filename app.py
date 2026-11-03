@@ -558,8 +558,16 @@ def _desk_evidence(category: str, data_stamp: str):
     # the higher-timeframe bar reads the levels of the desks above this one (Weekly, Monthly), never its own
     htf = tuple((f"{k} level", float(lv.price)) for k in HIGHER.get(category, ()) if analyses.get(k) is not None
                 for lv in analyses[k].levels)
+    try:
+        own = desk_derivs.read(category, m, now_ms)
+    except Exception:  # noqa: BLE001 - the gate then reads the derivatives the summary passes, or none
+        own = None
+    desk = analyses.get(category)
     return Evidence(harmonics=tuple(h for found in _desk_harmonics(category, data_stamp).values() for h in found),
-                    htf_levels=htf,
+                    htf_levels=htf, derivs=own,
+                    fear_greed=m.sentiment.fear_greed if m.sentiment.available else None,
+                    price_change_24h_pct=desk.price_change_24h_pct if desk is not None else None,
+                    oi_history=tuple(desk_derivs.oi_history(m)),
                     breaks=tuple(_desk_breaks(category, data_stamp).values()),
                     liquidity=_desk_state(category, data_stamp).get("liquidity"),
                     prints=tuple(_event_reads(data_stamp)),
@@ -709,6 +717,14 @@ def category_tab(key):
                 panels.render(panels.harmonics_html(_harm))
         except Exception as e:  # noqa: BLE001
             st.warning(f"Harmonic scan unavailable this refresh: {e}")
+        # his Section 5.3: the data-versus-candle anomaly trap, from the same evidence the summary's gate reads
+        try:
+            from core.indicators.anomaly_trap import from_evidence
+            _trap = from_evidence(_desk_evidence(key, _data_stamp()), a.chart_tf, now_ms)
+            if _trap is not None:
+                panels.render(panels.anomaly_trap_html(_trap))
+        except Exception as e:  # noqa: BLE001 - a trap read must not blank the desk
+            st.warning(f"Anomaly trap read unavailable this refresh: {e}")
         if key == "live":
             # experimental and labelled so: tracked live from its go-live date, never fed to agents or alerts
             try:

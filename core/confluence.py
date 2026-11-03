@@ -22,17 +22,16 @@ Everything here is code over the desk's own numbers; nothing comes from a model'
 for the layman summary, so they name no indicator."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 
 LONG, SHORT, NONE = "LONG", "SHORT", "NONE"
 NEED = 3                          # families that must agree before the trade box opens
 ZONE_PAD_ATR = 0.25               # a level counts as "at the zone" this far outside it
-FEAR_EXTREME, GREED_EXTREME = 25, 75
-PREMIUM_CROWDED_LONG = 0.0003     # 8-hour perpetual premium: a high price to stay long
-PREMIUM_CROWDED_SHORT = -0.0001   # a negative premium: shorts are paying
-LONG_ACCOUNTS_CROWDED = 0.60      # share of accounts long
-SHORT_ACCOUNTS_CROWDED = 0.45
+# the positioning thresholds live with the anomaly trap, which reads the same crowd
+from core.indicators.anomaly_trap import (FEAR_EXTREME, GREED_EXTREME, LONG_ACCOUNTS_CROWDED,  # noqa: E402
+                                          PREMIUM_CROWDED_LONG, PREMIUM_CROWDED_SHORT,
+                                          SHORT_ACCOUNTS_CROWDED, from_evidence, long_share)
 HTF_BAR_ATR = 0.5                 # a higher-timeframe level this far beyond the zone bars the path
 HIGHER = {"live": ("weekly", "monthly"), "intraday": ("weekly", "monthly"), "weekly": ("monthly",), "monthly": ()}
 DOLLAR_WEEK_PCT = 0.25            # the broad dollar index, one-week change, in percent
@@ -62,6 +61,8 @@ class Evidence:
     prints: tuple = ()                # core.indicators.event_trap.EventRead
     rates: dict | None = None         # core.agents.context._rates(m)
     htf_levels: tuple = ()            # (label, price) from the desks above this one, e.g. ("weekly level", 80_910.0)
+    price_change_24h_pct: float | None = None   # the candle side of the anomaly trap
+    oi_history: tuple = ()            # (ms, BTC) open interest, for "at a 30-day high"
 
 
 @dataclass(frozen=True)
@@ -88,6 +89,7 @@ class Gate:
     agreeing: tuple[Family, ...] = field(default=())
     opposing: tuple[Family, ...] = field(default=())
     bar: Bar | None = None         # the higher-timeframe level barring the path, if any
+    trap: object | None = None     # core.indicators.anomaly_trap.AnomalyTrap, if the crowd is extreme against the candle
 
     @property
     def missing(self) -> tuple[Family, ...]:
@@ -152,18 +154,20 @@ def flow(chart_tf: str, liquidity: dict | None) -> Family:
     return Family("flow", LABEL["flow"], word[0], word[1])
 
 
-def positioning(fear_greed: int | None, futures, derivs: dict | None) -> Family:
-    """Contrarian by design: the crowded side is the one that gets forced out."""
+def positioning(fear_greed: int | None, futures, derivs: dict | None, trap=None) -> Family:
+    """Contrarian by design: the crowded side is the one that gets forced out. A named anomaly trap (his
+    Section 5.3) is this family at its strongest and speaks for it."""
+    if trap is not None:
+        return Family("positioning", LABEL["positioning"], trap.side,
+                      f"{trap.name} ({trap.status}): {' + '.join((trap.mood,) + trap.crowd)}; {trap.flow}: "
+                      f"the {trap.trapped} are the crowd that gets forced out")
     votes = []
     if fear_greed is not None:
         if fear_greed < FEAR_EXTREME:
             votes.append((LONG, f"extreme fear ({fear_greed}/100)"))
         elif fear_greed > GREED_EXTREME:
             votes.append((SHORT, f"extreme greed ({fear_greed}/100)"))
-    pct = getattr(futures, "long_account_pct", None)
-    ratio = getattr(futures, "long_short_ratio", None)
-    if pct is None and ratio is not None:
-        pct = ratio / (1 + ratio)
+    pct = long_share(futures)
     if pct is not None:
         if pct <= SHORT_ACCOUNTS_CROWDED:
             votes.append((LONG, f"a crowded short ({pct:.0%} of accounts long)"))
@@ -288,11 +292,12 @@ def levels_before_target(side: str, zone: tuple[float, float], atr: float, targe
 
 
 # ---------- the gate ----------
-def judge(side: str, zone: tuple[float, float], atr: float, chart_tf: str, ev: Evidence, now_ms: int) -> tuple[Family, ...]:
+def judge(side: str, zone: tuple[float, float], atr: float, chart_tf: str, ev: Evidence, now_ms: int,
+          trap=None) -> tuple[Family, ...]:
     return (pattern(ev.harmonics, zone, atr),
             options(ev.derivs, zone, atr),
             flow(chart_tf, ev.liquidity),
-            positioning(ev.fear_greed, ev.futures, ev.derivs),
+            positioning(ev.fear_greed, ev.futures, ev.derivs, trap),
             structure(chart_tf, zone, atr, ev.breaks, ev.liquidity),
             macro(ev.rates, ev.prints),
             timing(side, now_ms))
@@ -329,7 +334,9 @@ def read(f, a, ev: Evidence | None, now_ms: int) -> Gate:
     """The gate for a desk: `f` is its layman framework (side and zone), `a` its analysis."""
     ev = ev or Evidence()
     atr = getattr(getattr(a, "vol", None), "atr", None)
+    trap = from_evidence(ev, a.chart_tf, now_ms)
     if f.side not in (LONG, SHORT) or f.zone is None or not atr:
-        return gate(NONE, ())
-    return gate(f.side, judge(f.side, f.zone, atr, a.chart_tf, ev, now_ms),
-                htf_bar(f.side, f.zone, atr, f.targets[0], ev.htf_levels))
+        return replace(gate(NONE, ()), trap=trap)
+    g = gate(f.side, judge(f.side, f.zone, atr, a.chart_tf, ev, now_ms, trap),
+             htf_bar(f.side, f.zone, atr, f.targets[0], ev.htf_levels))
+    return replace(g, trap=trap)

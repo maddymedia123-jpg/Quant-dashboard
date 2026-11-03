@@ -213,6 +213,18 @@ def build_state(m, analyses: dict, now_ms: int | None = None, profile: ReconProf
                 state["smc"][tf]["harmonics"] = [h.to_state() for h in found]
             except Exception as e:  # noqa: BLE001 - a pattern scan must not take the state down
                 state["smc"][tf]["harmonics"] = {"available": False, "note": f"{type(e).__name__}: {e}"}
+    # his Section 5.3: the named anomaly trap on this desk, so the judges and the Head read it by name
+    try:
+        from core.indicators import anomaly_trap
+        trap = anomaly_trap.read(m.sentiment.fear_greed if getattr(m.sentiment, "available", False) else None,
+                                 m.futures if getattr(m.futures, "available", False) else None,
+                                 desk_derivs.read(profile.category, m, now),
+                                 state["liquidity"].get(desk.chart_tf) if desk is not None else None,
+                                 desk.price_change_24h_pct if desk is not None else None, oi_history, now)
+        state["anomaly_trap"] = (trap.to_state() if trap is not None else
+                                 {"name": None, "note": "no anomaly trap: the crowd is not extreme against the candle"})
+    except Exception as e:  # noqa: BLE001 - the trap read must not take the war room down
+        state["anomaly_trap"] = {"name": None, "note": f"{type(e).__name__}: {e}"}
     return state
 
 
