@@ -111,6 +111,16 @@ as its own line under the Big Picture in the summary, speaks for the positioning
 gate, and goes to the desk's judges and Head in their state by name. Greed without leverage building is
 greed, not a flush, and is not named.
 
+**Short-horizon traps (your Section 1.4, live 4 November).** A trap on the 15-minute or 1-hour candle is
+short-horizon. It is still found, judged and anchored (the Live desk owns those candles in the sweep), but
+it is shown and traded on the Live desk only: the Intraday desk reads the 1-hour candle and no longer
+carries 1-hour traps in its TRAP warning band, and a swing desk's pinned trade is not warned off by a
+15-minute or 1-hour trap sitting on its entry, stop or target. Wherever a short-horizon trap is written
+(the Live desk's band, the TRAP desk's cards, the on-watch and settled lists, the Discord alert, the MCP
+`traps` tool with a `horizon` field of short or swing) it carries the label "short-horizon". The desk
+summaries and the Market Pulse never read the trap ledger, by construction: a test fails if either module
+ever imports it. Traps on the 4-hour candle and longer are unchanged and read by every desk on that candle.
+
 **Weekend modifier (your Section 4, live 4 November).** The weekend is Friday 21:00 UTC (the US cash close,
 when volume thins) to Sunday 22:00 UTC (the CME open), one definition read everywhere. While it applies:
 every desk carries a "Weekend tape" card at the top, and from six hours before, a "Weekend tape ahead" card;
@@ -296,6 +306,7 @@ report runs and are not stored, so there is nothing to read back. See section 9.
 
 | Ask | Status |
 | --- | --- |
+| Short-horizon trap labels (Section 1.4) | Built 4 Nov: 15m and 1h traps labelled short-horizon, shown and traded on the Live desk only, never in a summary or the Pulse; 4h and longer unchanged (section 3) |
 | Market Pulse on every 1H, 2H and 4H close (Section 10) | Built 4 Nov: one message per hour boundary naming which closes it covers; a message older than 30 minutes is skipped, not sent late; the 4-hour close keeps its old ledger key so nothing double-sent at the switch (section 6) |
 | Weekend modifier (flag, sweep-and-rejection wording) | Built 4 Nov: Friday 21:00 to Sunday 22:00 UTC; desk card, summary wording and directive, a clean weekend break does not count in the gate, session in the judges' state (section 3) |
 | Event window five days either side of each high-impact print | Built 4 Nov: event-trap reads, the card on every desk and the summary warning span five days before to five days after, as far as the feed reaches. Open: the feed is the current week only (no next-week file exists); storing prints to hold the full five days across the week boundary needs your go (section 3) |

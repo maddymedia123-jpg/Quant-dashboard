@@ -1010,6 +1010,13 @@ TRAP_LABEL = {"bull_trap": "bull trap", "bear_trap": "bear trap"}
 TRAP_SIDES = ("bull_trap", "bear_trap")
 
 
+def _trap_tf(row) -> str:
+    """The trap's timeframe as written: a 15m or 1h trap carries the short-horizon label."""
+    from core.traps import tf_label
+    raw = row.get("timeframe") if isinstance(row, dict) else getattr(row, "timeframe", None)
+    return tf_label(raw)
+
+
 def _trap_side(row) -> tuple[str, str]:
     """The side as stored and as written. An unrecognised side is named as unknown rather than described
     as a bear trap by falling through a `== "bull_trap"` branch, and never printed as the word None."""
@@ -1081,7 +1088,7 @@ def trap_card_html(row: dict, now_ms: int, category_label: str = "", price_now: 
             + f" · sub-agents {fmt_num(score, 0) if score is not None else '—'}/100"
             + (f" · Head: {html.escape(head)}" if head else ""))
     body = (f"<span class='ti-card-meta'>#{html.escape(str(row.get('id') or '?'))}</span>"
-            f"<div class='ti-h3'>{html.escape(str(row.get('timeframe') or '—'))} at {fmt_num(row.get('level'), 0, '$')}</div>"
+            f"<div class='ti-h3'>{html.escape(_trap_tf(row))} at {fmt_num(row.get('level'), 0, '$')}</div>"
             f"<p class='muted'>{meta}</p>")
     inval, plays = row.get("invalidation"), row.get("plays_out")
     if side_key == "bull_trap":
@@ -1171,7 +1178,7 @@ def trap_watch_html(candidates: list, now_ms: int, swept_ms: int | None = None, 
         for c in candidates[:8]:
             _key, label = _trap_side(c)
             factors = f"{c.strength} factor{'s' if c.strength != 1 else ''}"
-            body += (f"<div class='ti-watch'><span>{html.escape(label)}</span><strong>{html.escape(str(c.timeframe))}</strong>"
+            body += (f"<div class='ti-watch'><span>{html.escape(label)}</span><strong>{html.escape(_trap_tf(c))}</strong>"
                      f"<span>{fmt_num(c.level, 0, '$')}</span><span class='muted'>{factors}: "
                      f"{html.escape('; '.join(c.evidence[:2]))}</span></div>")
         body += "</div>"
@@ -1194,7 +1201,7 @@ def trap_settled_html(settled: list[dict], now_ms: int, labels: dict | None = No
         _key, label = _trap_side(r)
         desk = labels.get(r.get("category"), r.get("category") or "")
         status = str(r.get("status") or "").replace("_", " ")
-        body += (f"<div class='ti-watch'><span>{html.escape(label)}</span><strong>{html.escape(str(r.get('timeframe') or '?'))}</strong>"
+        body += (f"<div class='ti-watch'><span>{html.escape(label)}</span><strong>{html.escape(_trap_tf(r))}</strong>"
                  f"<span><strong>{html.escape(status)}</strong> at {fmt_num(r.get('resolved_price'), 0, '$')}"
                  + (f" <span class='muted'>· {html.escape(desk)}</span>" if desk else "")
                  + f"</span><span class='muted'>{_trap_age(r.get('resolved_ms') or r.get('declared_ms'), now_ms)} ago</span></div>")
@@ -1210,7 +1217,7 @@ def trap_warning_html(rows: list[dict], now_ms: int) -> str | None:
     for r in active[:3]:
         side_key, side = _trap_side(r)
         word = {"bull_trap": "above", "bear_trap": "below"}.get(side_key, "at")
-        lines += (f"<p><strong>{html.escape(side)}</strong> · {html.escape(str(r.get('timeframe') or '—'))} at "
+        lines += (f"<p><strong>{html.escape(side)}</strong> · {html.escape(_trap_tf(r))} at "
                   f"{fmt_num(r.get('level'), 0, '$')} · invalidated {word} {fmt_num(r.get('invalidation'), 0, '$')} · "
                   f"declared {_trap_age(r.get('declared_ms'), now_ms)} ago</p>")
     if len(active) > 3:
