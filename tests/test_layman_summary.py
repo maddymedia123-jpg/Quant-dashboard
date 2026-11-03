@@ -129,6 +129,14 @@ def test_the_warning_names_the_next_print_the_dollar_and_the_weekend():
     saturday = NOON + 4 * 86_400_000
     assert "weekend tape" in ls.lines(bull, DERIVS, 18, saturday)["warning"]
     assert ls.lines(bull, DERIVS, 50, NOON)["warning"].startswith("Nothing scheduled")
+    # a bigger level on the path that is too far out to bar the trade is named here instead
+    walled = ls.lines(bull, DERIVS, 18, NOON, evidence_for_a_long(htf_levels=(("weekly level", 81_200.0),)))
+    assert walled["verdict"] == "TRADE" and walled["bar"] is None
+    assert walled["warning"].startswith("Watch: a weekly level at $81,200 stands between the zone and Target 1; expect a pause there")
+    barred = ls.lines(bull, DERIVS, 18, NOON, evidence_for_a_long(htf_levels=(("weekly level", 80_910.0),)))
+    assert barred["verdict"] == "WAIT" and barred["bar"]["price"] == 80_910.0
+    assert barred["directive"].startswith("WAIT. 3 of 7 confluences agree, but a weekly level at $80,910 sits just above the zone")
+    assert "What to expect: no trade yet. WAIT: 3 of 7" in barred["phase_now"]
     # a print already released, or outside the window, is not a warning
     late = evidence_for_a_long(prints=(NS(title="CPI", time_ms=NOON + 3 * 86_400_000, state="scheduled"),))
     assert ls.lines(bull, DERIVS, 50, NOON, late)["warning"].startswith("Nothing scheduled")

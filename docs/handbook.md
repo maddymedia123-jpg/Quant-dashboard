@@ -91,8 +91,13 @@ is the trap it is, a swept-and-reclaimed pool, a value-area edge in the zone); m
 ±0.25% on the week, the 2-year yield ±0.10 points, which side the last news print trapped); and the measured
 turning window, counting only while it is on. A missing feed is a family that says nothing, never one that
 agrees. The warning names the next high-impact US print inside the window (24 hours on the short desks, a
-week on the long ones), a dollar move against the trade, and the weekend. Not in the gate yet: the
-higher-timeframe bar within half an ATR of a weekly or monthly level (the next build).
+week on the long ones), a dollar move against the trade, and the weekend.
+
+**The higher-timeframe bar (live 4 November).** Over the gate: a Weekly or Monthly level within half an ATR
+beyond the zone, on the path to Target 1, bars the trade even when three families agree (WAIT, naming the
+level). A level inside the zone is the entry, not a wall, so it never bars (your note). A level farther
+out but still before Target 1 is named in the warning as a pause, not a bar. Live Recon and Intraday read
+the Weekly and Monthly desks' levels, Weekly reads Monthly's, Monthly has none above it.
 
 **The war room, per desk:** five bullish and five bearish domain agents (Quant, Auction, Order Flow, ICT,
 Derivatives) each score a 100-point checklist of 22 weighted items. The model only answers "does this
@@ -255,6 +260,7 @@ report runs and are not stored, so there is nothing to read back. See section 9.
 
 | Ask | Status |
 | --- | --- |
+| Higher-timeframe bar (Weekly/Monthly level within half an ATR on the path to Target 1 → WAIT) | Built 4 Nov: a level inside the zone is the entry and never bars; farther levels before Target 1 go in the warning (section 3) |
 | Confluence gate and v22 summary layout on every desk | Built 4 Nov: three of seven families must agree before a desk's trade box opens; WAIT names what is missing or what conflicts (section 3) |
 | Desks disagree in one batch (one message when the four desks conflict) | Not built. Needs your rule for what counts as disagreement and when to send |
 | Cautions too trigger-happy inside chop windows | Not built. Proposal: raise the caution threshold inside a chop window, or suppress cautions there and keep invalidation only |

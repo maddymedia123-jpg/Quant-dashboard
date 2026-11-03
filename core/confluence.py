@@ -13,6 +13,11 @@ The seven families, each judged on its own feed so no single read can open the g
     macro         the dollar and the 2-year yield over the week, and which side the last news print trapped
     timing        the measured turning window, counting only while it is on
 
+Over the gate sits the higher-timeframe bar (Hammad, v22): a Weekly or Monthly level within half an ATR
+beyond the zone, on the path to Target 1, bars the trade even when three families agree. A level inside
+the zone is allowed - the zone is where the trade is entered, so a level there is the entry, not a wall -
+and a level farther out but still before Target 1 is only named in the warning.
+
 Everything here is code over the desk's own numbers; nothing comes from a model's text. Notes are written
 for the layman summary, so they name no indicator."""
 from __future__ import annotations
@@ -28,6 +33,8 @@ PREMIUM_CROWDED_LONG = 0.0003     # 8-hour perpetual premium: a high price to st
 PREMIUM_CROWDED_SHORT = -0.0001   # a negative premium: shorts are paying
 LONG_ACCOUNTS_CROWDED = 0.60      # share of accounts long
 SHORT_ACCOUNTS_CROWDED = 0.45
+HTF_BAR_ATR = 0.5                 # a higher-timeframe level this far beyond the zone bars the path
+HIGHER = {"live": ("weekly", "monthly"), "intraday": ("weekly", "monthly"), "weekly": ("monthly",), "monthly": ()}
 DOLLAR_WEEK_PCT = 0.25            # the broad dollar index, one-week change, in percent
 YIELD_WEEK_PTS = 0.10             # the US 2-year yield, one-week change, in percentage points
 PKT_MS = 5 * 3_600_000
@@ -54,6 +61,7 @@ class Evidence:
     liquidity: dict | None = None     # timeframe -> core.indicators.liquidity.summarise(...)
     prints: tuple = ()                # core.indicators.event_trap.EventRead
     rates: dict | None = None         # core.agents.context._rates(m)
+    htf_levels: tuple = ()            # (label, price) from the desks above this one, e.g. ("weekly level", 80_910.0)
 
 
 @dataclass(frozen=True)
@@ -65,6 +73,13 @@ class Family:
 
 
 @dataclass(frozen=True)
+class Bar:
+    label: str
+    price: float
+    note: str
+
+
+@dataclass(frozen=True)
 class Gate:
     side: str                      # the zone's side: LONG, SHORT or NONE
     verdict: str                   # TRADE, WAIT or NO SETUP
@@ -72,6 +87,7 @@ class Gate:
     reason: str
     agreeing: tuple[Family, ...] = field(default=())
     opposing: tuple[Family, ...] = field(default=())
+    bar: Bar | None = None         # the higher-timeframe level barring the path, if any
 
     @property
     def missing(self) -> tuple[Family, ...]:
@@ -236,6 +252,41 @@ def timing(side: str, now_ms: int) -> Family:
     return Family("timing", LABEL["timing"], NONE, f"next turning window {span} {day:%a %d %b}")
 
 
+# ---------- the higher-timeframe bar ----------
+def _on_path(side: str, zone: tuple[float, float], target1: float | None, price: float) -> bool:
+    """Beyond the zone's far edge, on the way to Target 1 (or anywhere beyond when there is no target)."""
+    if side == LONG:
+        return price > zone[1] and (target1 is None or price < target1)
+    return price < zone[0] and (target1 is None or price > target1)
+
+
+def htf_bar(side: str, zone: tuple[float, float], atr: float, target1: float | None, htf_levels) -> Bar | None:
+    """The nearest higher-timeframe level within half an ATR beyond the zone on the path to Target 1."""
+    if side not in (LONG, SHORT) or not atr:
+        return None
+    edge = zone[1] if side == LONG else zone[0]
+    near = [(label, p) for label, p in htf_levels or () if _on_path(side, zone, target1, p)
+            and abs(p - edge) <= HTF_BAR_ATR * atr]
+    if not near:
+        return None
+    label, p = min(near, key=lambda lp: abs(lp[1] - edge))
+    above = side == LONG
+    return Bar(label, p, f"a {label} at {_money(p)} sits just {'above' if above else 'below'} the zone, between it "
+                         f"and Target 1: the path is barred until a close {'above' if above else 'below'} it, or "
+                         f"until that level is the zone")
+
+
+def levels_before_target(side: str, zone: tuple[float, float], atr: float, target1: float | None, htf_levels) -> list:
+    """Higher-timeframe levels on the path to Target 1 that do not bar it (farther than the bar's band),
+    nearest first - the warning names them."""
+    if side not in (LONG, SHORT) or not atr:
+        return []
+    edge = zone[1] if side == LONG else zone[0]
+    out = [(label, p) for label, p in htf_levels or () if _on_path(side, zone, target1, p)
+           and abs(p - edge) > HTF_BAR_ATR * atr]
+    return sorted(out, key=lambda lp: abs(lp[1] - edge))
+
+
 # ---------- the gate ----------
 def judge(side: str, zone: tuple[float, float], atr: float, chart_tf: str, ev: Evidence, now_ms: int) -> tuple[Family, ...]:
     return (pattern(ev.harmonics, zone, atr),
@@ -247,7 +298,7 @@ def judge(side: str, zone: tuple[float, float], atr: float, chart_tf: str, ev: E
             timing(side, now_ms))
 
 
-def gate(side: str, families: tuple[Family, ...]) -> Gate:
+def gate(side: str, families: tuple[Family, ...], bar: Bar | None = None) -> Gate:
     if side not in (LONG, SHORT):
         return Gate(NONE, "NO SETUP", families, "NO SETUP: no level to trade from.")
     agreeing = tuple(f for f in families if f.side == side)
@@ -256,16 +307,22 @@ def gate(side: str, families: tuple[Family, ...]) -> Gate:
     if len(opposing) >= 2:
         reason = (f"WAIT: {' and '.join(f.label for f in opposing)} point the other way: "
                   + "; ".join(f.note for f in opposing) + ".")
-        return Gate(side, "WAIT", families, reason, agreeing, opposing)
-    if len(agreeing) >= NEED:
+    elif len(agreeing) >= NEED and bar is None:
         reason = f"TRADE: {len(agreeing)} of {n} confluences agree"
         if opposing:
             reason += f"; {opposing[0].label} points the other way: {opposing[0].note}"
         return Gate(side, "TRADE", families, reason + ".", agreeing, opposing)
-    missing = [f.label for f in families if f.side != side]
-    reason = (f"WAIT: {len(agreeing)} of {n} confluences agree, {NEED} are needed. Missing: "
-              + ", ".join(missing) + ".")
-    return Gate(side, "WAIT", families, reason, agreeing, opposing)
+    elif len(agreeing) >= NEED:
+        # the higher-timeframe bar: enough agrees, but the path to Target 1 runs straight into a bigger level
+        reason = f"WAIT: {len(agreeing)} of {n} confluences agree, but {bar.note}."
+        return Gate(side, "WAIT", families, reason, agreeing, opposing, bar)
+    else:
+        missing = [f.label for f in families if f.side != side]
+        reason = (f"WAIT: {len(agreeing)} of {n} confluences agree, {NEED} are needed. Missing: "
+                  + ", ".join(missing) + ".")
+    if bar is not None:
+        reason += f" Also {bar.note}."
+    return Gate(side, "WAIT", families, reason, agreeing, opposing, bar)
 
 
 def read(f, a, ev: Evidence | None, now_ms: int) -> Gate:
@@ -274,4 +331,5 @@ def read(f, a, ev: Evidence | None, now_ms: int) -> Gate:
     atr = getattr(getattr(a, "vol", None), "atr", None)
     if f.side not in (LONG, SHORT) or f.zone is None or not atr:
         return gate(NONE, ())
-    return gate(f.side, judge(f.side, f.zone, atr, a.chart_tf, ev, now_ms))
+    return gate(f.side, judge(f.side, f.zone, atr, a.chart_tf, ev, now_ms),
+                htf_bar(f.side, f.zone, atr, f.targets[0], ev.htf_levels))

@@ -148,9 +148,14 @@ def _flow(derivs: dict | None) -> str:
     return (bits[0][0].upper() + bits[0][1:] + ("; " + "; ".join(bits[1:]) if bits[1:] else "") + ".") if bits else ""
 
 
-def _warning(side: str, now_ms: int, ev, horizon_label: str) -> str:
-    """The next high-impact US print inside the window, a dollar move against the trade, the weekend."""
+def _warning(side: str, now_ms: int, ev, horizon_label: str, f=None, atr: float | None = None) -> str:
+    """The next high-impact US print inside the window, a dollar move against the trade, the weekend, and any
+    bigger level standing between the zone and Target 1 that does not bar the trade outright."""
+    from core.confluence import levels_before_target
     bits = []
+    if f is not None and f.zone and atr:
+        for label, p in levels_before_target(side, f.zone, atr, f.targets[0], getattr(ev, "htf_levels", ()))[:2]:
+            bits.append(f"a {label} at {_money(p)} stands between the zone and Target 1; expect a pause there")
     ahead = WARN_AHEAD_MS.get(horizon_label, WEEK_MS)
     prints = sorted((p for p in getattr(ev, "prints", ()) or ()
                      if getattr(p, "state", "") in ("scheduled", "flat", "positioned")
@@ -175,7 +180,7 @@ def _warning(side: str, now_ms: int, ev, horizon_label: str) -> str:
     elif now.weekday() == 4 and now.hour >= 18:
         bits.append("the weekend starts within hours: thin volume ahead")
     if not bits:
-        return "Nothing scheduled: no high-impact US print, dollar move against the trade or weekend inside this window."
+        return "Nothing scheduled: no high-impact US print, dollar move against the trade, weekend or bigger level inside this window."
     return "Watch: " + "; ".join(bits) + "."
 
 
@@ -270,7 +275,8 @@ def lines(a, derivs: dict | None, fear_greed: int | None, now_ms: int, evidence=
                          "agrees": None if x.side == "NONE" else x.side == f.side, "note": x.note}
                         for x in g.families],
         "directive": directive,
-        "warning": _warning(f.side, now_ms, ev, a.vol.horizon_label),
+        "warning": _warning(f.side, now_ms, ev, a.vol.horizon_label, f, a.vol.atr),
+        "bar": None if g.bar is None else {"label": g.bar.label, "price": g.bar.price, "note": g.bar.note},
     }
 
 

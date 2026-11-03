@@ -554,8 +554,12 @@ def _desk_evidence(category: str, data_stamp: str):
     """What the summary's confluence gate reads: the desk's harmonics, its break reads, its liquidity,
     this week's prints and the dollar and yields - each the cached read the cards above already show."""
     from core.agents.context import _rates
-    from core.confluence import Evidence
+    from core.confluence import HIGHER, Evidence
+    # the higher-timeframe bar reads the levels of the desks above this one (Weekly, Monthly), never its own
+    htf = tuple((f"{k} level", float(lv.price)) for k in HIGHER.get(category, ()) if analyses.get(k) is not None
+                for lv in analyses[k].levels)
     return Evidence(harmonics=tuple(h for found in _desk_harmonics(category, data_stamp).values() for h in found),
+                    htf_levels=htf,
                     breaks=tuple(_desk_breaks(category, data_stamp).values()),
                     liquidity=_desk_state(category, data_stamp).get("liquidity"),
                     prints=tuple(_event_reads(data_stamp)),

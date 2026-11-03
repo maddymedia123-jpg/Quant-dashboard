@@ -108,6 +108,37 @@ def test_no_level_is_no_setup():
     assert g.verdict == "NO SETUP" and g.side == "NONE"
 
 
+def test_a_weekly_level_just_beyond_the_zone_bars_the_path_but_one_inside_the_zone_is_the_entry():
+    """Hammad's note b: test the path from the zone toward Target 1, not the zone itself."""
+    a, f = desk("BULLISH", 0.6, 80_000.0), long_zone()          # zone $80,750 - $80,850, Target 1 $81,600, ATR 200
+    ev = full_evidence()
+    assert cf.read(f, a, ev, ON).verdict == "TRADE"
+    barred = cf.read(f, a, cf.Evidence(**{**ev.__dict__, "htf_levels": (("weekly level", 80_910.0),)}), ON)
+    assert barred.verdict == "WAIT" and barred.bar.price == 80_910.0 and len(barred.agreeing) == 7
+    assert barred.reason == ("WAIT: 7 of 7 confluences agree, but a weekly level at $80,910 sits just above the zone, "
+                             "between it and Target 1: the path is barred until a close above it, or until that level "
+                             "is the zone.")
+    inside = cf.read(f, a, cf.Evidence(**{**ev.__dict__, "htf_levels": (("monthly level", 80_800.0), ("weekly level", 80_850.0))}), ON)
+    assert inside.verdict == "TRADE" and inside.bar is None, "a level inside or at the edge of the zone is the entry, not a wall"
+    far = cf.read(f, a, cf.Evidence(**{**ev.__dict__, "htf_levels": (("weekly level", 81_200.0),)}), ON)
+    assert far.verdict == "TRADE" and far.bar is None, "farther than half an ATR: named in the warning, not a bar"
+    beyond = cf.read(f, a, cf.Evidence(**{**ev.__dict__, "htf_levels": (("weekly level", 81_700.0), ("weekly level", 80_600.0))}), ON)
+    assert beyond.verdict == "TRADE", "past Target 1, or behind the zone, is not on the path"
+    # when the gate is already a WAIT the bar is still said
+    thin = cf.read(f, a, cf.Evidence(htf_levels=(("weekly level", 80_910.0),)), NOON)
+    assert thin.verdict == "WAIT" and thin.reason.startswith("WAIT: 0 of 7") and thin.reason.endswith("Also a weekly level at $80,910 sits just above the zone, between it and Target 1: the path is barred until a close above it, or until that level is the zone.")
+
+
+def test_the_bar_mirrors_for_a_short_and_reads_only_the_desks_above():
+    zone, atr = (81_550.0, 81_650.0), 200.0                       # a short at the $81,600 ceiling, Target 1 $80,800
+    assert cf.htf_bar("SHORT", zone, atr, 80_800.0, (("monthly level", 81_480.0),)).price == 81_480.0
+    assert cf.htf_bar("SHORT", zone, atr, 80_800.0, (("monthly level", 81_600.0), ("monthly level", 81_700.0))) is None
+    assert cf.htf_bar("SHORT", zone, atr, 80_800.0, (("monthly level", 81_400.0),)) is None   # 0.75 ATR: warning only
+    assert [p for _, p in cf.levels_before_target("SHORT", zone, atr, 80_800.0,
+                                                   (("monthly level", 81_400.0), ("weekly level", 81_000.0), ("weekly level", 80_700.0)))] == [81_400.0, 81_000.0]
+    assert cf.HIGHER == {"live": ("weekly", "monthly"), "intraday": ("weekly", "monthly"), "weekly": ("monthly",), "monthly": ()}
+
+
 def test_the_notes_carry_no_indicator_words():
     g = cf.read(long_zone(), desk("BULLISH", 0.6, 80_000.0), full_evidence(), ON)
     text = (g.reason + " ".join(f.note + f.label for f in g.families)).lower()
