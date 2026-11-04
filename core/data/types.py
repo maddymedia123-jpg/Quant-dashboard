@@ -217,6 +217,14 @@ class FxSnapshot(Availability):
     stale: bool = False
     age_days: Optional[float] = None
     boj_rate_pct: Optional[float] = None
+    # roadmap item 11: ICE's DXY formula on the ECB's six per-dollar rates, labelled reconstructed
+    dxy: Optional[float] = None
+    dxy_as_of_ms: Optional[int] = None
+    dxy_week_ago: Optional[float] = None
+    dxy_change_1w_pct: Optional[float] = None
+    dxy_month_ago: Optional[float] = None
+    dxy_change_1m_pct: Optional[float] = None
+    dxy_note: Optional[str] = None
 
 
 class ExchangeFlowSnapshot(Availability):
