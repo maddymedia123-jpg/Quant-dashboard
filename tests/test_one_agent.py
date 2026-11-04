@@ -37,7 +37,8 @@ OUT = {"bull_case": dict(_CASE, conviction=4), "bear_case": dict(_CASE, convicti
        "trade_plan": {"existing_position_management": "trim", "new_entry_conditions": "short a rejection",
                       "position_sizing": "1%", "stop_loss": "84,200", "take_profit_ladder": ["82,820"],
                       "max_leverage": "5x", "time_rules": []},
-       "plan": PLAN, "category_summaries": {"live": "L", "intraday": "I", "weekly": "W", "monthly": "M"}}
+       "plan": PLAN, "category_summaries": {"live": "L", "intraday": "I", "weekly": "W", "monthly": "M"},
+       "horizon_framing": "The 4h range sits inside the day; the short needs the day's low taken."}
 
 
 class Fake:
@@ -249,6 +250,40 @@ def test_the_director_reads_each_desk_over_its_own_window(ctx):
                        "weekly": "the next 7 days", "monthly": "the next 30 days"}
     assert state["desk_derivatives"]["weekly"]["liquidations"]["over"] == "7d"
     assert "desk_derivatives[desk]" in one_agent.ONE_AGENT_TEXT
+
+
+def test_the_director_is_handed_the_horizons_and_hands_back_the_framing(ctx):
+    """Roadmap item 12: the 4-hour zone against the 24-hour horizon is computed in code, given to the
+    Director as a block, asked for as sentences, and the plan is checked against the day's edges."""
+    m, analyses = ctx[0], ctx[1]
+    state = one_agent.director_state(m, analyses)
+    hz = state["horizons"]
+    assert set(hz) >= {"four_hour", "twenty_four_hour", "framing", "method"}
+    assert hz["four_hour"]["desk"] == "live" and hz["twenty_four_hour"]["desk"] == "intraday"
+    assert hz["four_hour"]["candle"] and hz["twenty_four_hour"]["day"] and hz["twenty_four_hour"]["day_vwap"]
+    assert hz["framing"]["state"] in ("inside", "probe_above", "probe_below", "expansion", "unknown")
+    assert "horizon_framing" in one_agent.ONE_AGENT_TEXT and "`horizons` block" in one_agent.ONE_AGENT_TEXT
+    assert "horizon_framing" in one_agent.system_prompt(), "the schema hint asks for it"
+    fake = Fake([OUT])
+    rep = one_agent.run_one_agent_sync(fake, m, analyses, "fake-model")
+    assert rep.director is not None
+    assert rep.director.horizon_framing == OUT["horizon_framing"]
+    check = rep.director.horizon_check
+    assert check and check["verdict"] in ("tactical", "reaches_beyond", "outside", "unknown")
+    assert check["framing_state"] == hz["framing"]["state"] and check["framing_note"] == hz["framing"]["note"]
+    user = fake.calls[0][1]
+    assert '"horizons":' in user and '"framing":' in user
+
+
+def test_an_answer_without_the_framing_still_validates(ctx):
+    """A report made before the framing existed, or a model that skips the field, loses nothing else."""
+    m, analyses = ctx[0], ctx[1]
+    out = {k: v for k, v in OUT.items() if k != "horizon_framing"}
+    rep = one_agent.run_one_agent_sync(Fake([out]), m, analyses, "fake-model")
+    assert rep.director is not None and rep.director.horizon_framing == "" and rep.director.horizon_check is not None
+    from core.agents.schemas import DirectorReport
+    d = DirectorReport.model_validate({k: v for k, v in OUT.items() if k in DirectorReport.model_fields and k != "horizon_framing"})
+    assert d.horizon_framing == "" and d.horizon_check is None
 
 
 # ---------- cancelled: the setup breaks before any confirming close (4 Nov election-day fix 1) ----------

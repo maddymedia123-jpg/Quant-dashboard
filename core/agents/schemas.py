@@ -123,6 +123,10 @@ class DirectorReport(BaseModel):
     scenarios: list[Scenario]
     trade_plan: TradePlan
     category_summaries: dict[str, str] = Field(default_factory=dict)
+    # roadmap item 12: the 4-hour execution zone framed against the 24-hour horizon - the Director's
+    # sentences, and the code's own check of the plan against the day's edges (core.indicators.horizons)
+    horizon_framing: str = ""
+    horizon_check: Optional[dict[str, Any]] = None
 
     @model_validator(mode="after")
     def _normalise(self):
@@ -212,6 +216,7 @@ class OneAgentOutput(BaseModel):
     plan: PlanLevels
     category_summaries: dict[str, str] = Field(default_factory=dict)
     data_quality_flags: list[str] = Field(default_factory=list)
+    horizon_framing: str = ""
 
 
 class AgentRun(BaseModel):

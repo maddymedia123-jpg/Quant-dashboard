@@ -512,6 +512,7 @@ def director_html(report) -> str:
         plan += "<span class='ti-label'>Take-profit ladder</span>" + _li(tp.take_profit_ladder)
     if tp.time_rules:
         plan += "<span class='ti-label'>Time rules</span>" + _li(tp.time_rules)
+    plan += horizon_block_html(d)
     tone = {"BULL_TRAP": "down", "BEAR_TRAP": "up", "RANGE_TRAP": "warn"}.get(d.trap_classification, "neutral")
     body = (f"<div class='ti-two'><div><span class='ti-label'>Trap classification</span>"
             f"<div class='ti-verdict xl'>{CLASS_WORDS.get(d.trap_classification, d.trap_classification)}</div>"
@@ -519,6 +520,30 @@ def director_html(report) -> str:
             f"<div><span class='ti-label'>Probability-weighted scenarios</span>{scen}</div></div>"
             f"<div class='ti-foot'><span class='ti-label'>Trade plan</span>{plan}</div>")
     return card_html(f"Report {report.report_id}", body, tone)
+
+
+HORIZON_WORDS = {"tactical": ("tactical, inside the day", "up"), "reaches_beyond": ("needs the day's edge taken", "warn"),
+                 "outside": ("a trade at the day's edge", "warn"), "no_trade": ("no plan", "neutral"),
+                 "unknown": ("not framed", "neutral")}
+
+
+def horizon_block_html(d) -> str:
+    """The 4-hour execution zone against the 24-hour horizon (roadmap item 12): the computed framing, the
+    Director's sentences and the plan's verdict. Empty for a report made before the framing existed."""
+    check = getattr(d, "horizon_check", None) or {}
+    words = getattr(d, "horizon_framing", "") or ""
+    if not check and not words:
+        return ""
+    body = "<span class='ti-label'>4-hour zone vs 24-hour horizon</span>"
+    if check.get("framing_note"):
+        body += f"<p class='muted'>{html.escape(str(check['framing_note']))}.</p>"
+    if words:
+        body += f"<p>{html.escape(words)}</p>"
+    verdict = check.get("verdict")
+    if verdict and verdict != "no_trade":
+        label, tone = HORIZON_WORDS.get(verdict, (verdict, "neutral"))
+        body += f"<p>{chip(label, tone)} {html.escape(str(check.get('note') or ''))}.</p>"
+    return body
 
 
 def director_lists_html(report) -> str:
