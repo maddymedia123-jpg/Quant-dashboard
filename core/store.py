@@ -917,6 +917,14 @@ class Store:
                                % ",".join("?" * len(ids)), tuple(ids))
             self._conn.commit()
 
+    def set_market_alert_headline(self, alert_id: int, headline: str) -> bool:
+        """Rewrite one alert's text before it is sent: a scheduled agent run claims its row first and
+        writes the result into it when the run has finished (core.scheduled_runs)."""
+        with self._lock:
+            cur = self._conn.execute("UPDATE market_alerts SET headline=? WHERE id=?", (headline, int(alert_id)))
+            self._conn.commit()
+            return cur.rowcount == 1
+
     def mark_market_notified(self, ids: list[int]) -> int:
         if not ids:
             return 0
