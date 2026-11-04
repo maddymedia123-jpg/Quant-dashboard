@@ -38,7 +38,7 @@ class Event:
 
     @property
     def urgent(self) -> bool:
-        return self.kind in ("stop", "trap", "shift")
+        return self.kind in ("stop", "trap", "shift", "reversal")
 
 
 def detect_events(trade: dict, price: float | None, progress=None, traps=(), checkpoints=(),

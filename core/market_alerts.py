@@ -63,8 +63,16 @@ def explain(previous: str, cascade) -> str:
     if state == "A":
         return f"{big.capitalize()} trend is {word} and the {engines} now agree. Best conditions for {side}."
     if state == "C":
-        return (f"The {engines} turned against the {big} {word}trend and are holding there. "
-                "Watch for a reversal.")
+        # election-day fix 5: the level, the count and what confirms it, not "watch for a reversal"
+        # the anchored VWAP in plain words: the average price since the bias candle opened
+        beyond = "above" if trend == "bearish" else "below"
+        level = f"${cascade.vwap:,.0f}" if cascade.vwap else f"the {big} average price"
+        first = f"the {big} average price {level}" if cascade.vwap else level
+        n = cascade.closes_beyond_vwap or 0
+        closes = f"{n} times" if n != 1 else "once"
+        at = f"the {_tf(anchor.timeframe)}" if anchor else "the anchor candle"
+        return (f"The {engines} have closed {closes} {beyond} {first} against the {big} {word}trend. "
+                f"Confirmation is {at} closing {beyond} {level}; until then this is a warning, not a trade.")
     # B: the trend stands; the shorter timeframes are mixed or leaning against it without having taken over
     if previous == "A":
         return f"{big.capitalize()} trend is still {word}, but the {engines} lost their push. A breather, not a reversal."
@@ -135,7 +143,10 @@ HOLD_MS = {"live": 5 * 60_000, "intraday": 15 * 60_000, "weekly": 60 * 60_000, "
 # A desk that leaves A or C and comes back within this long is in the same episode, not a new one: on
 # 29 Oct the Live desk went C at 16:00, 16:17 and 18:55, flapping through B and N between, and each return
 # outlasted the 5-minute hold - three identical "Downtrend losing control" messages in three hours.
-REPEAT_MS = {"live": 3 * 3_600_000, "intraday": 6 * 3_600_000, "weekly": 24 * 3_600_000, "monthly": 72 * 3_600_000}
+# 4 Nov: the Live desk's "Downtrend losing control" went out at 07:28, 10:29, 14:37 and 19:12 UTC, each just
+# outside the 3-hour window. Eight hours now (fix 5), and a confirmed reversal counts as the episode too.
+REPEAT_MS = {"live": 8 * 3_600_000, "intraday": 12 * 3_600_000, "weekly": 24 * 3_600_000, "monthly": 72 * 3_600_000}
+CONFIRMED = "confirmed"               # the dedup state word of a REVERSAL CONFIRMED alert
 
 
 def same_episode(recent: list[dict] | None, desk: str, state: str, now_ms: int) -> bool:
@@ -159,5 +170,54 @@ def important_cascade_event(desk: str, label: str, track: dict, cascade, now_ms:
         return None
     if same_episode(recent, desk, state, now_ms):
         return None
+    if state == "C" and same_episode(recent, desk, CONFIRMED, now_ms):
+        return None                            # the reversal was already confirmed: no warning after the fact
     # keyed on when the state began: the same episode is one message, a new one later is another
     return cascade_event(desk, label, prior, cascade, since, price)
+
+
+def confirming_close(cascade, frames: dict, since_ms: int, now_ms: int) -> dict | None:
+    """The first COMPLETED anchor candle that closed after the control shift began and closed beyond the
+    anchored VWAP against the bias trend: {"t_ms", "close_ms", "close"}, or None. The candle still forming
+    never counts: a close is a close."""
+    from core.config import TF_MINUTES
+    bias, anchor, vwap = cascade.bias, cascade.anchor, cascade.vwap
+    if bias is None or anchor is None or vwap is None or bias.direction not in ("bullish", "bearish"):
+        return None
+    df = (frames or {}).get(anchor.timeframe)
+    bar = TF_MINUTES.get(anchor.timeframe, 0) * 60_000
+    if df is None or not len(df) or not bar:
+        return None
+    for t, close in zip(df["timestamp"].astype("int64"), df["close"].astype(float)):
+        end = int(t) + bar
+        if end <= int(since_ms) or end > int(now_ms):
+            continue                           # closed before the shift began, or still forming
+        if (bias.direction == "bearish" and close > vwap) or (bias.direction == "bullish" and close < vwap):
+            return {"t_ms": int(t), "close_ms": end, "close": float(close)}
+    return None
+
+
+def reversal_event(desk: str, label: str, track: dict, cascade, frames: dict, now_ms: int,
+                   price: float | None = None, recent: list[dict] | None = None) -> Event | None:
+    """REVERSAL CONFIRMED (election-day fix 5): a desk in C whose anchor candle has closed beyond the anchored
+    VWAP against the bias trend, once per episode. 4 Nov replayed: the 04:00-08:00 4h candle closed 78,140
+    above the day's VWAP against the daily downtrend; this goes out at 08:00, six hours before the spike."""
+    if track.get("state") != "C" or cascade.state != "C":
+        return None
+    since = int(track.get("since_ms") or now_ms)
+    hit = confirming_close(cascade, frames, since, now_ms)
+    if hit is None or same_episode(recent, desk, CONFIRMED, now_ms):
+        return None
+    trend = cascade.bias.direction
+    big, anchor_tf = _tf(cascade.bias.timeframe), _tf(cascade.anchor.timeframe)
+    beyond, word = ("above", "down") if trend == "bearish" else ("below", "up")
+    off, side = ("Shorts", "upside") if trend == "bearish" else ("Longs", "downside")
+    back = "below" if trend == "bearish" else "above"
+    from core.qf_alerts import at_label
+    tf = DESK_TF.get(desk)
+    head = (f"{label}{f' ({tf})' if tf else ''}" + (f" · BTC ${price:,.0f}" if price else "") + "\n"
+            f"REVERSAL CONFIRMED: the {anchor_tf} closed {beyond} the {big} average price ${cascade.vwap:,.0f} at ${hit['close']:,.0f} "
+            f"({at_label(hit['close_ms'])}) against the {big} {word}trend.\n"
+            f"{off} are off: the {big} {word}trend has lost control. Expect {side} expansion. "
+            f"Wrong only on a {anchor_tf} close back {back} ${cascade.vwap:,.0f}.")
+    return Event("reversal", f"cascade:{desk}:C->{CONFIRMED}:{hit['t_ms']}", head, price)

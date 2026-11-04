@@ -6,6 +6,10 @@ import pytest
 
 from core import market_alerts as ma
 from core.alerts import URGENT_MARK, Dispatcher, Event
+from dataclasses import replace
+
+import pandas as pd
+
 from core.indicators.cascade import Cascade, TimeframeRead
 from core.store import Store
 
@@ -70,7 +74,13 @@ def test_the_explanation_follows_where_the_desk_came_from():
     assert "lost their push" in said["A"]
     assert "stopped fighting it" in said["C"]
     assert "picked a direction again" in said["N"]
-    assert "turned against the daily uptrend" in ma.cascade_event("live", "Live Recon", "B", cascade("C"), NOW).headline
+    c = ma.cascade_event("live", "Live Recon", "B", cascade("C"), NOW).headline
+    assert "have closed 0 times below the daily average price against the daily uptrend" in c
+    assert "Confirmation is the 4h closing below the daily average price; until then this is a warning, not a trade." in c
+    assert "vwap" not in c.lower(), "jargon the bot may not say"
+    assert "Watch for a reversal" not in c, "fix 5: the level and the confirmation rule, not a vague watch"
+    lvl = ma.cascade_event("live", "Live Recon", "B", replace(cascade("C", "bearish"), vwap=77_512.0, closes_beyond_vwap=2), NOW).headline
+    assert "The 1h/15m have closed 2 times above the daily average price $77,512 against the daily downtrend. Confirmation is the 4h closing above $77,512" in lvl
     flat = ma.cascade_event("live", "Live Recon", "B", cascade("N", "neutral"), NOW).headline
     assert "No bigger trend" in flat and "not breakouts" in flat
 
@@ -267,9 +277,11 @@ def test_a_return_to_the_same_state_within_hours_is_the_same_episode(store):
     assert ma.important_cascade_event("live", "Live Recon", t, cascade("C"), NOW + 23 * MIN, recent=sent) is None
     store.track_cascade("live", "B", NOW + 60 * MIN)
     t = store.track_cascade("live", "C", NOW + 175 * MIN)
-    assert ma.important_cascade_event("live", "Live Recon", t, cascade("C"), NOW + 181 * MIN, recent=sent) is None, "under 3h"
+    assert ma.important_cascade_event("live", "Live Recon", t, cascade("C"), NOW + 181 * MIN, recent=sent) is None, "under 8h"
     t = store.track_cascade("live", "C", NOW + 190 * MIN)
-    assert ma.important_cascade_event("live", "Live Recon", t, cascade("C"), NOW + 190 * MIN, recent=sent) is not None, "a new episode after 3h"
+    assert ma.important_cascade_event("live", "Live Recon", t, cascade("C"), NOW + 190 * MIN, recent=sent) is None, "4 Nov: 10:29 was 3h01 after 07:28"
+    t = store.track_cascade("live", "C", NOW + 8 * 60 * MIN + 7 * MIN)
+    assert ma.important_cascade_event("live", "Live Recon", t, cascade("C"), NOW + 8 * 60 * MIN + 7 * MIN, recent=sent) is not None, "a new episode after 8h"
     # a different state is not the same episode, nor is another desk's alert
     t = store.track_cascade("live", "A", NOW + 30 * MIN)
     assert ma.important_cascade_event("live", "Live Recon", t, cascade("A"), NOW + 36 * MIN, recent=sent) is not None
@@ -280,3 +292,80 @@ def test_a_return_to_the_same_state_within_hours_is_the_same_episode(store):
 def test_the_first_reading_after_a_reboot_is_not_news(store):
     t = store.track_cascade("live", "A", NOW)
     assert ma.important_cascade_event("live", "Live Recon", t, cascade("A"), NOW + 99 * MIN) is None
+
+
+# ---------- election-day fix 5: REVERSAL CONFIRMED on the anchor candle's close ----------
+DAY = 1_793_750_400_000                       # 4 Nov 2026 00:00 UTC
+FOUR_H = [(DAY, 77_454, 76_496), (DAY + 4 * H, 76_496, 78_140), (DAY + 8 * H, 78_140, 78_477),
+          (DAY + 12 * H, 78_477, 80_296)]      # the real 4h candles: (open time, open, close)
+
+
+def four_hour(rows):
+    return pd.DataFrame({"timestamp": [t for t, _, _ in rows], "open": [o for _, o, _ in rows],
+                         "high": [max(o, c) + 50 for _, o, c in rows], "low": [min(o, c) - 50 for _, o, c in rows],
+                         "close": [c for _, _, c in rows], "volume": [100.0] * len(rows)})
+
+
+def test_the_fourth_of_november_reversal_is_confirmed_at_0800_six_hours_before_the_spike(store):
+    """The Live desk went C at 07:23 UTC (the 1h had closed twice above the day's VWAP against the daily
+    downtrend). The 04:00-08:00 4h candle closed 78,140 above that VWAP: REVERSAL CONFIRMED goes out at
+    08:00, once; the warning at 07:28 stays a warning, and the 10:29 / 14:37 / 19:12 repeats never go out."""
+    c = replace(cascade("C", "bearish"), vwap=77_512.0, closes_beyond_vwap=2)
+    since = DAY + 7 * H + 23 * MIN
+    store.track_cascade("live", "B", DAY + 7 * H)
+    t = store.track_cascade("live", "C", since)
+    frames = {"4h": four_hour(FOUR_H[:2]), "1h": pd.DataFrame()}
+    warn = ma.important_cascade_event("live", "Live Recon", t, c, since + 5 * MIN, 78_271.0, recent=[])
+    assert warn is not None and "until then this is a warning, not a trade" in warn.headline
+    # 07:59: the 4h candle is still forming, so nothing confirms yet
+    assert ma.reversal_event("live", "Live Recon", t, c, frames, DAY + 7 * H + 59 * MIN, 78_100.0, recent=[]) is None
+    r = ma.reversal_event("live", "Live Recon", t, c, frames, DAY + 8 * H + 2 * MIN, 78_140.0, recent=[])
+    assert r is not None and r.kind == "reversal" and r.urgent
+    assert r.dedup_key == f"cascade:live:C->confirmed:{DAY + 4 * H}"
+    assert r.headline.split("\n") == [
+        "Live Recon (1h) · BTC $78,140",
+        "REVERSAL CONFIRMED: the 4h closed above the daily average price $77,512 at $78,140 (08:00 UTC (13:00 PKT)) against the daily downtrend.",
+        "Shorts are off: the daily downtrend has lost control. Expect upside expansion. Wrong only on a 4h close back below $77,512.",
+    ]
+    sent = [{"ts_ms": DAY + 8 * H + 2 * MIN, "dedup_key": r.dedup_key}]
+    # the next 4h close (12:00, 78,477) does not confirm it again, and the C warning is silent for 8 hours after
+    later = {"4h": four_hour(FOUR_H[:3])}
+    assert ma.reversal_event("live", "Live Recon", t, c, later, DAY + 12 * H + 2 * MIN, 78_477.0, recent=sent) is None
+    store.track_cascade("live", "B", DAY + 10 * H)
+    t2 = store.track_cascade("live", "C", DAY + 10 * H + 29 * MIN)
+    assert ma.important_cascade_event("live", "Live Recon", t2, c, DAY + 10 * H + 35 * MIN, recent=sent) is None, "10:29"
+    store.track_cascade("live", "B", DAY + 14 * H)
+    t3 = store.track_cascade("live", "C", DAY + 14 * H + 37 * MIN)
+    assert ma.important_cascade_event("live", "Live Recon", t3, c, DAY + 14 * H + 43 * MIN, recent=sent) is None, "14:37"
+
+
+def test_a_reversal_needs_a_completed_anchor_close_against_the_trend_and_a_vwap(store):
+    c = replace(cascade("C", "bearish"), vwap=77_512.0, closes_beyond_vwap=2)
+    since = DAY + 7 * H + 23 * MIN
+    store.track_cascade("live", "B", DAY + 7 * H)
+    t = store.track_cascade("live", "C", since)
+    # a 4h candle that closed below the VWAP (with the trend) confirms nothing
+    low = {"4h": four_hour([(DAY, 77_454, 76_496), (DAY + 4 * H, 76_496, 77_300)])}
+    assert ma.reversal_event("live", "Live Recon", t, c, low, DAY + 8 * H + 2 * MIN, recent=[]) is None
+    # a candle that closed before the shift began does not count, even above the VWAP
+    early = {"4h": four_hour([(DAY, 77_454, 77_900)])}
+    assert ma.reversal_event("live", "Live Recon", t, c, early, DAY + 8 * H + 2 * MIN, recent=[]) is None
+    # no VWAP, no anchor frame, or a desk no longer in C: nothing
+    assert ma.reversal_event("live", "Live Recon", t, cascade("C", "bearish"), {"4h": four_hour(FOUR_H[:2])}, DAY + 8 * H + 2 * MIN, recent=[]) is None
+    assert ma.reversal_event("live", "Live Recon", t, c, {}, DAY + 8 * H + 2 * MIN, recent=[]) is None
+    tb = store.track_cascade("live", "B", DAY + 8 * H + MIN)
+    assert ma.reversal_event("live", "Live Recon", tb, replace(c, state="B"), {"4h": four_hour(FOUR_H[:2])}, DAY + 8 * H + 2 * MIN, recent=[]) is None
+    # the mirror: a bullish bias is confirmed by a close BELOW the VWAP
+    up = replace(cascade("C", "bullish"), vwap=80_000.0, closes_beyond_vwap=2,
+                 anchor=TimeframeRead("1d", "anchor", "neutral", "MIXED", "unclear"))      # the Intraday desk anchors on the daily
+    store.track_cascade("intraday", "B", DAY + 7 * H)
+    tu = store.track_cascade("intraday", "C", since)
+    with_day = {"1d": pd.DataFrame({"timestamp": [DAY - 24 * H], "open": [80_500.0], "high": [80_600.0], "low": [79_300.0],
+                                    "close": [79_400.0], "volume": [100.0]})}
+    assert ma.reversal_event("intraday", "Intraday", tu, up, with_day, DAY + 8 * H, recent=[]) is None, "closed 00:00, before 07:23"
+    nxt = {"1d": pd.DataFrame({"timestamp": [DAY], "open": [77_454.0], "high": [81_200.0], "low": [75_700.0],
+                               "close": [79_400.0], "volume": [100.0]})}
+    r = ma.reversal_event("intraday", "Intraday", tu, up, nxt, DAY + 24 * H + MIN, 79_400.0, recent=[])
+    assert r is not None and "the daily closed below the daily average price $80,000 at $79,400" in r.headline and "Longs are off" in r.headline
+    assert "vwap" not in r.headline.lower()
+    assert "Wrong only on a daily close back above $80,000." in r.headline and r.dedup_key == f"cascade:intraday:C->confirmed:{DAY}"

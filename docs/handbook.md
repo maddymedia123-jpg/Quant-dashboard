@@ -145,7 +145,16 @@ setup up" arrived after the first big candle. The fixes, each merged live in thi
   the reaction (sell-the-news, spike faded, confirmed, absorbed, or "the reaction is still being traded");
   the US prints of the next 24 hours, High and Medium (Medium labelled "(medium impact)": on 4 November
   ISM Services was Medium and went unnamed); then the headlines and the Fed odds as before.
-- *Fix 5, cascade reversal alerts with a confirmation rule and firmer words.* Next.
+- *Fix 5, cascade reversal alerts: a confirmation rule, firmer words, no flapping, live 5 November.* The
+  "losing control" warning now names the level: how many times the engine candles have closed beyond the
+  day's average price (the anchored VWAP, in plain words), the price itself, and what confirms it ("the 4h
+  closing above $77,512; until then this is a warning, not a trade"). A new message, REVERSAL CONFIRMED
+  (urgent), goes out once per episode when a completed anchor candle (Live 4h, Intraday 1D) that closed
+  after the shift began closed beyond that average price against the bigger trend: "Shorts are off: the
+  daily downtrend has lost control. Expect upside expansion. Wrong only on a 4h close back below $77,512."
+  Replayed on 4 November it fires at 08:00 UTC at 78,140, six hours before the spike. The Live repeat
+  window is 8 hours (was 3; the four repeats that day were 3 to 4½ hours apart), Intraday 12 (was 6),
+  and a confirmed reversal silences the warning for the same window.
 - *Fix 6, scheduled agent runs after a High-impact print and after a day-plan invalidation.* Next.
 
 **Per-desk chart switch (your Section 3 "Main Chart View", live 4 November; Live default changed 5 November).**
@@ -304,7 +313,8 @@ Every message is scanned against a banned-jargon list before it goes out.
 | Quant Forecast plan | 00:00 UTC, and Scenario B after an invalidation | Regime, directive, timeline line |
 | CAUTION / MODEL HELD / INVALIDATED / LOCKOUT | As the tiers fire | Your tier wording, with the timeline line |
 | Plan alerts (1-agent report) | WATCH when price reaches the zone, CONFIRMED on the confirm close, NO SETUP, TARGET 1–3, STOPPED, EXPIRED | Plain words, from the plan's numbers |
-| Cascade | Only moves into A (strong setup) or C (trend losing control), after the state holds (Live 5 min, Intraday 15 min, Weekly 1 h, Monthly 4 h); a return to the same state within the repeat window (3 h / 6 h / 24 h / 72 h) stays silent | Desk and price, old state → new state, what changed |
+| Cascade | Only moves into A (strong setup) or C (trend losing control), after the state holds (Live 5 min, Intraday 15 min, Weekly 1 h, Monthly 4 h); a return to the same state within the repeat window (8 h / 12 h / 24 h / 72 h, fix 5) stays silent. The C warning names the engine closes beyond the day's average price and the confirming close | Desk and price, old state → new state, what changed |
+| Reversal confirmed (fix 5, 5 Nov) | A desk in C whose completed anchor candle (Live 4h, Intraday 1D, Weekly 1W, Monthly 1M) closed beyond the day's average price against the bigger trend, once per repeat window; urgent | Desk and price; the close, the level and the trend it broke; who is off, the expected expansion, what makes it wrong again |
 | TRAP | Declared, and settled | "A dip below X should fail and bounce" |
 | Market Pulse | Every hour boundary, one message naming the closes it covers: "1h + 2h + 4h candle closes" at 00:00, 04:00, 08:00, 12:00, 16:00 and 20:00 UTC, "1h + 2h" on the other even hours, "1h" otherwise (from the Live desk, or a live plan if one is open); and when a report with a sided plan is run. Live 4 Nov; it was the 4-hour close only. Speaks from the open plan while there is one; a plan the tracker cancels hands the Pulse back to the Live desk the same minute (fix 1, 5 Nov). The event section leads with the event regime, then the last day's High prints with their read, then the next day's High and Medium prints (fixes 3 and 4, 5 Nov) | Your Pulse template: direction, Target 1, stop, turning window, US releases, BTC headlines, Fed odds within 7 days |
 | Trade alerts | A pinned trade's target, stop, trap on its levels, monitoring checkpoint | From the card |
@@ -369,6 +379,7 @@ report runs and are not stored, so there is nothing to read back. See section 9.
 | Election-day fix 2: Live Recon opens on the 4-hour chart | Done 5 Nov: your Main Chart View; 1h is the other view (section 3) |
 | Election-day fix 3: event regime (Section 6.2) | Live 5 Nov: an election / FOMC / Fed-chair print puts the Quant Forecast, the Pulse, the desk summaries and the war-room state into event mode from 24h before to 48h after (section 3) |
 | Election-day fix 4: the Pulse names the scheduled prints | Live 5 Nov: regime first, last day's High prints with their read, next day's High and Medium prints (section 3) |
+| Election-day fix 5: cascade reversal confirmation | Live 5 Nov: the warning names the level and the confirming close; REVERSAL CONFIRMED on the anchor candle's close beyond the day's average price; 8h / 12h repeat windows (section 3) |
 | Per-desk chart switch (Section 3, Main Chart View) | Built 4 Nov: the desk's own candle by default, one coarser view a click away (4h / 1D / 3D / 2W); the call, forecast, summary and alerts stay on the desk's candle (section 3) |
 | Derived candles 12H / 3D / 0.5W / 2W and the cascade read order (Section 3) | Built 4 Nov: built from the fetched candles each refresh; each war room reads your cascade order as briefs beside its three timeframes; 24H is the daily candle (section 3) |
 | Short-horizon trap labels (Section 1.4) | Built 4 Nov: 15m and 1h traps labelled short-horizon, shown and traded on the Live desk only, never in a summary or the Pulse; 4h and longer unchanged (section 3) |
