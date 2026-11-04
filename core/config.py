@@ -27,6 +27,14 @@ CATEGORIES: dict[str, Category] = {
     "monthly": Category("monthly", "Monthly", "1w", "1M", 4, "next month"),
 }
 
+# His v22 Section 3 "Main Chart View" (owner 4 Nov): each desk draws its own candle by default, with one
+# coarser view a switch away. The call, the forecast, the summary and every read stay on the default;
+# only the candles drawn, and the overlays read on them, change (core.indicators.category.view_analysis).
+CHART_VIEWS: dict[str, tuple[str, str]] = {"live": ("1h", "4h"), "intraday": ("4h", "1d"),
+                                          "weekly": ("1d", "3d"), "monthly": ("1w", "2w")}
+# Every candle size the snapshot can carry, shortest first: the next one up is a view's context.
+TF_LADDER: tuple[str, ...] = ("15m", "1h", "4h", "12h", "1d", "3d", "0.5w", "1w", "2w", "1M", "3M")
+
 # Fetched from the exchange. 15m is still fetched: the 24h change, the trade desk's first checkpoint
 # and the TRAP sweep's finest look all read it.
 TIMEFRAMES: tuple[str, ...] = ("15m", "1h", "4h", "1d", "1w")

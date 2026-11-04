@@ -53,6 +53,31 @@ def price_change_24h(frames: dict[str, pd.DataFrame]) -> float | None:
     return None
 
 
+def view_analysis(cat: Category, view_tf: str, frames: dict[str, pd.DataFrame], futures: FuturesSnapshot,
+                  base: CategoryAnalysis) -> CategoryAnalysis | None:
+    """The desk's chart on a coarser candle (his Section 3 Main Chart View). The EMAs, RSI, divergences,
+    trendlines, patterns and Fibonacci zones are re-read on the view's candles; the levels the desk's call
+    stands on are kept from the base analysis, so the call is drawn where it was made. The horizon is the
+    same span of time in the view's bars. Returns the base itself for its own timeframe, and None when
+    the view's frame is missing or too short, so the caller can say so and fall back."""
+    import math
+    from dataclasses import replace
+    from core.config import TF_LADDER, TF_MINUTES
+
+    if view_tf == cat.chart_tf:
+        return base
+    if view_tf not in TF_MINUTES:
+        return None
+    bars = max(1, math.ceil(cat.horizon_bars * TF_MINUTES[cat.chart_tf] / TF_MINUTES[view_tf]))
+    if TF_MINUTES.get(cat.context_tf, 0) > TF_MINUTES[view_tf]:
+        ctx = cat.context_tf
+    else:
+        above = [tf for tf in TF_LADDER if TF_MINUTES[tf] > TF_MINUTES[view_tf]]
+        ctx = above[0] if above else view_tf
+    v = analyze_category(Category(cat.key, cat.label, view_tf, ctx, bars, cat.horizon_label), frames, futures)
+    return None if v is None else replace(v, levels=list(base.levels))
+
+
 def analyze_category(cat: Category, frames: dict[str, pd.DataFrame], futures: FuturesSnapshot) -> CategoryAnalysis | None:
     df = frames.get(cat.chart_tf)
     if df is None or len(df) < 30:

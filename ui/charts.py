@@ -30,7 +30,9 @@ def chart_payload(a: CategoryAnalysis, dark: bool, signal: bool = False) -> dict
     t = (df["timestamp"] // 1000).astype("int64").tolist()
     last_t = t[-1]
     interval = TF_MINUTES[a.chart_tf] * 60
-    horizon = CATEGORIES[a.key].horizon_bars
+    cat = CATEGORIES[a.key]
+    # the desk's horizon as a span of time, in this chart's bars: a coarser view keeps the same reach
+    horizon = max(1, math.ceil(cat.horizon_bars * TF_MINUTES[cat.chart_tf] / TF_MINUTES[a.chart_tf]))
 
     candles = [{"time": t[i], "open": _f(df["open"].iloc[i]), "high": _f(df["high"].iloc[i]),
                 "low": _f(df["low"].iloc[i]), "close": _f(df["close"].iloc[i])} for i in range(n)]
@@ -102,7 +104,7 @@ def chart_payload(a: CategoryAnalysis, dark: bool, signal: bool = False) -> dict
 
     return {
         "theme": {k: p[k] for k in ("panel", "border", "grid", "text", "muted", "accent", "up", "down", "fib", "fibFuture", "now")},
-        "title": f"{a.label} · {a.chart_tf}",
+        "title": f"{a.label} · {a.chart_tf}" + (f" view · call on {cat.chart_tf}" if a.chart_tf != cat.chart_tf else ""),
         "candles": candles, "whitespace": whitespace, "emas": emas, "levels": levels,
         "trendlines": trendlines, "fibs": fibs, "now": last_t,
         "retracements": retracements, "patterns": patterns,
