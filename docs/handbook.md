@@ -13,7 +13,7 @@ work dressed up as done.
 | Piece | What it does | Where |
 | --- | --- | --- |
 | **Dashboard** | The Streamlit terminal: nine screens, TradingView-style charts, the war rooms, the reports, the Quant Forecast | Streamlit Cloud, redeploys on every merge to `main` |
-| **24/7 worker** | One pass a minute, whether or not a page is open: fetches the market, builds the four desks, anchors and scores, settles traps, sends every alert and the Market Pulse. Makes no model calls. | Google Cloud VM, `quant-worker.service` |
+| **24/7 worker** | One pass a minute, whether or not a page is open: fetches the market, builds the four desks, anchors and scores, settles traps, sends every alert and the Market Pulse. Its only model calls are the scheduled agent runs (fix 6, 5 Nov): the Director and the Live war room after a High-impact print settles and after a day-plan invalidation, six a day at most. | Google Cloud VM, `quant-worker.service` |
 | **Order-book recorder** | One snapshot of the Gate.io BTC perp book every 5 seconds, kept 35 days locally | Same VM, `quant-book.service` (recording since 28 Oct 2026) |
 | **MCP server** | Read-only access for AI assistants (Claude, Gemini, ChatGPT, Cursor): 14 tools over the shared store | Same VM, behind HTTPS, token in the address |
 | **Shared store** | Turso (hosted SQLite): every anchor, call, score, trap, trade, alert, report, plan and book report. The dashboard and the worker read and write the same database. | Turso, US-East |
@@ -155,7 +155,16 @@ setup up" arrived after the first big candle. The fixes, each merged live in thi
   Replayed on 4 November it fires at 08:00 UTC at 78,140, six hours before the spike. The Live repeat
   window is 8 hours (was 3; the four repeats that day were 3 to 4½ hours apart), Intraday 12 (was 6),
   and a confirmed reversal silences the warning for the same window.
-- *Fix 6, scheduled agent runs after a High-impact print and after a day-plan invalidation.* Next.
+- *Fix 6, scheduled agent runs, live 5 November.* The worker runs the 1-agent Director and the Live war
+  room on its own, twice over: 15 minutes after a High-impact USD print (the first 15-minute candle of the
+  reaction has closed) and when a Quant Forecast day plan is invalidated. Each trigger runs once (its key is
+  a row in the alert ledger, written before the run, so two processes cannot both run it), never within 30
+  minutes of the last run, and at most six times a day; a throttled trigger is recorded as skipped, not
+  retried, and a print or invalidation older than two hours (a reboot) is not re-run. The Discord line is
+  the run's result: "Agents ran after US CPI m/m (High) at 13:30 UTC. Director: report TIR1-… (engineered
+  trap, plan SHORT). Live war room: BEARISH (anchored the window's summary)." The report's own Market
+  Pulse and plan alerts follow as they do for a report run by hand. Nothing runs on fixture data or
+  without a model key.
 
 **Per-desk chart switch (your Section 3 "Main Chart View", live 4 November; Live default changed 5 November).**
 Each desk's chart has a two-way switch above it: Live opens on the 4-hour chart (your Main Chart View) with
@@ -380,6 +389,7 @@ report runs and are not stored, so there is nothing to read back. See section 9.
 | Election-day fix 3: event regime (Section 6.2) | Live 5 Nov: an election / FOMC / Fed-chair print puts the Quant Forecast, the Pulse, the desk summaries and the war-room state into event mode from 24h before to 48h after (section 3) |
 | Election-day fix 4: the Pulse names the scheduled prints | Live 5 Nov: regime first, last day's High prints with their read, next day's High and Medium prints (section 3) |
 | Election-day fix 5: cascade reversal confirmation | Live 5 Nov: the warning names the level and the confirming close; REVERSAL CONFIRMED on the anchor candle's close beyond the day's average price; 8h / 12h repeat windows (section 3) |
+| Election-day fix 6: scheduled agent runs | Live 5 Nov: the worker runs the Director + Live war room 15 min after a High-impact USD print and after a day-plan invalidation; once per trigger, 30 min apart, six a day at most (section 3) |
 | Per-desk chart switch (Section 3, Main Chart View) | Built 4 Nov: the desk's own candle by default, one coarser view a click away (4h / 1D / 3D / 2W); the call, forecast, summary and alerts stay on the desk's candle (section 3) |
 | Derived candles 12H / 3D / 0.5W / 2W and the cascade read order (Section 3) | Built 4 Nov: built from the fetched candles each refresh; each war room reads your cascade order as briefs beside its three timeframes; 24H is the daily candle (section 3) |
 | Short-horizon trap labels (Section 1.4) | Built 4 Nov: 15m and 1h traps labelled short-horizon, shown and traded on the Live desk only, never in a summary or the Pulse; 4h and longer unchanged (section 3) |

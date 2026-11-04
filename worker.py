@@ -1,8 +1,10 @@
 """The 24/7 worker: what a page load does, every minute, whether or not anybody has the dashboard open.
 
 Each pass fetches the market, builds the four desks, and runs core.pipeline - anchoring, scoring, trap
-settlement, plan / cascade / TRAP alerts, the Market Pulse and every pinned trade's alerts. It makes no
-model calls: reports are still run by a person from the dashboard, so the Gemini quota is untouched.
+settlement, plan / cascade / TRAP alerts, the Market Pulse and every pinned trade's alerts. Its only model
+calls are the scheduled agent runs (core.scheduled_runs, election-day fix 6): the Director and the Live
+war room after a High-impact USD print settles and after a day-plan invalidation, a handful a day at most,
+with the key the environment gives it (GEMINI_API_KEY). Every other report is run by a person.
 
 It shares the store with the dashboard (Turso, via TURSO_DATABASE_URL and TURSO_AUTH_TOKEN), and both may
 send: each alert is claimed by one statement on the database, so whichever claims it first sends it.
@@ -60,6 +62,10 @@ def one_pass(store: Store, now_ms: int | None = None, market=None) -> pipeline.P
     pipeline.market_alerts(store, m, analyses, now, _secrets(), may_send, r)
     pipeline.all_trade_alerts(store, m.spot.last, now, _secrets(), may_send, r)
     book_report(store, now, r)
+    # election-day fix 6: the agents run on their own after a print settles or a day plan fails
+    from core import scheduled_runs
+    from core.agents.settings import load_settings
+    scheduled_runs.run(store, m, analyses, now, load_settings() if may_send else None, r, may_run=may_send)
     return r
 
 
