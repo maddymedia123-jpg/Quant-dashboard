@@ -89,6 +89,9 @@ CREATE TABLE IF NOT EXISTS signals (
 CREATE TABLE IF NOT EXISTS futures_samples (
     id INTEGER PRIMARY KEY AUTOINCREMENT, ts_ms INTEGER NOT NULL, funding_rate REAL, open_interest_usd REAL);
 CREATE INDEX IF NOT EXISTS idx_futures_samples_ts ON futures_samples (ts_ms);
+CREATE TABLE IF NOT EXISTS dominance_samples (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, ts_ms INTEGER NOT NULL, btc_pct REAL, total_mcap_usd REAL);
+CREATE INDEX IF NOT EXISTS idx_dominance_samples_ts ON dominance_samples (ts_ms);
 CREATE TABLE IF NOT EXISTS market_alerts (
     id INTEGER PRIMARY KEY AUTOINCREMENT, ts_ms INTEGER NOT NULL, kind TEXT NOT NULL,
     dedup_key TEXT NOT NULL UNIQUE, headline TEXT NOT NULL, price REAL, notified INTEGER NOT NULL DEFAULT 0,
@@ -473,6 +476,28 @@ class Store:
     def futures_samples_since(self, ts_ms: int) -> list[dict]:
         with self._lock:
             return _rows(self._conn.execute("SELECT * FROM futures_samples WHERE ts_ms >= ? ORDER BY ts_ms ASC", (int(ts_ms),)))
+
+    # ---- BTC dominance samples (roadmap item 10): one every ten minutes at most, a month kept ----
+    def add_dominance_sample(self, ts_ms: int, btc_pct: float | None, total_mcap_usd: float | None) -> None:
+        with self._lock:
+            last = self._conn.execute("SELECT ts_ms FROM dominance_samples ORDER BY ts_ms DESC LIMIT 1").fetchone()
+            if last and int(ts_ms) - int(last["ts_ms"]) < 600_000:
+                return
+            self._conn.execute("INSERT INTO dominance_samples (ts_ms, btc_pct, total_mcap_usd) VALUES (?,?,?)",
+                               (int(ts_ms), btc_pct, total_mcap_usd))
+            self._conn.execute("DELETE FROM dominance_samples WHERE ts_ms < ?", (int(ts_ms) - 31 * 86_400_000,))
+            self._conn.commit()
+
+    def dominance_sample_at_or_before(self, ts_ms: int) -> dict | None:
+        with self._lock:
+            r = self._conn.execute("SELECT * FROM dominance_samples WHERE ts_ms <= ? ORDER BY ts_ms DESC LIMIT 1",
+                                   (int(ts_ms),)).fetchone()
+        return dict(r) if r else None
+
+    def oldest_dominance_sample(self) -> dict | None:
+        with self._lock:
+            r = self._conn.execute("SELECT * FROM dominance_samples ORDER BY ts_ms ASC LIMIT 1").fetchone()
+        return dict(r) if r else None
 
     # ---- war rooms: one anchored summary per category per window, insert-once, never updated ----
     def put_live_anchor(self, window_open_ms: int, window_close_ms: int, published_ms: int, bias: str,

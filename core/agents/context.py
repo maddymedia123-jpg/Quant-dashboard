@@ -138,9 +138,15 @@ def macro_read(m: MarketSnapshot, now_ms: int | None = None) -> dict:
                                       "band": x["band"]} for x in m.predictions.tradeable("MACRO")[:8]]
     out["rates_and_dollar"] = _rates(m)
     out["gold"] = _gold(m)
+    out["btc_dominance"] = _dominance(m)
+    out["yen_carry"] = _yen(m)
     out["method"] = ("prints: BTC 1h moves against its own hourly volatility; narratives: headline attention by "
                      "topic (feed reaches back ~1.5 days); odds: Polymarket via VoxOdds, clean and watch bands only; "
-                     "rates: US 2y and 10y yields and the broad dollar index with their one-week change")
+                     "rates: US 2y and 10y yields, the funds rate and the broad dollar index with their one-week "
+                     "change; delta_2y_read: 2y minus funds rate beyond +25 bp = liquidity contraction, below -25 bp "
+                     "= expansion; btc_dominance: share change from own samples, +/-0.5 pp a day is rotation; "
+                     "yen_carry: USD/JPY down 1.5% in a week is carry-unwind risk, the carry gap only when the BoJ "
+                     "rate is hand-set")
     return out
 
 
@@ -159,7 +165,40 @@ def _rates(m: MarketSnapshot) -> dict:
                     "change_1w": s.get("change"), "age_days": s.get("age_days"), "stale": s.get("stale")}
     if mac.spread_2s10s is not None:
         out["spread_2s10s_pct"] = round(mac.spread_2s10s, 3)
+    delta = getattr(mac, "delta_2y", None)
+    if delta is not None:
+        from core.data.macro import delta_2y_read
+        read = delta_2y_read(delta)
+        out["delta_2y_bp"] = round(delta * 100)
+        out["delta_2y_read"] = {"state": read["state"], "note": read["note"]}
     return out
+
+
+def _dominance(m: MarketSnapshot) -> dict:
+    d = getattr(m, "dominance", None)
+    if d is None or not d.available or d.btc_pct is None:
+        return {"available": False, "note": getattr(d, "error", None) or "dominance feed down"}
+    from core.data.dominance import rotation
+    read = rotation(d)
+    return {"available": True, "btc_pct": d.btc_pct, "eth_pct": d.eth_pct, "stable_pct": d.stable_pct,
+            "change_24h_pp": d.change_24h_pp, "change_7d_pp": d.change_7d_pp,
+            "market_cap_change_24h_pct": d.mcap_change_24h_pct, "rotation": read["state"], "note": read["note"]}
+
+
+def _yen(m: MarketSnapshot) -> dict:
+    fx = getattr(m, "fx", None)
+    if fx is None or not fx.available or fx.rate is None:
+        return {"available": False, "note": getattr(fx, "error", None) or "USD/JPY feed down"}
+    from core.data.fx import yen_read
+    mac = getattr(m, "macro", None)
+    effr = None
+    if mac is not None and mac.available:
+        s = mac.series.get("EFFR") or {}
+        effr = s.get("value") if s.get("available") else None
+    read = yen_read(fx, effr)
+    return {"available": True, "usdjpy": fx.rate, "change_1w_pct": fx.change_1w_pct, "change_1m_pct": fx.change_1m_pct,
+            "age_days": fx.age_days, "stale": fx.stale, "boj_rate_pct": fx.boj_rate_pct, "us_funds_rate_pct": effr,
+            "carry_pct": read["carry_pct"], "state": read["state"], "note": read["note"]}
 
 
 def _gold(m: MarketSnapshot) -> dict:

@@ -22,7 +22,14 @@ one file per calendar year, newest row first, US dates (`10/16/2026`), columns `
 and it is often a day fresher than FRED. The dollar index has no Treasury twin and stays a named gap.
 
 Daily series publish with a business-day lag or two, so a value a couple of days old is normal. A week
-old is not, and is flagged rather than shown as current."""
+old is not, and is flagged rather than shown as current.
+
+Roadmap item 10 (owner's GO, 5 November) adds the effective federal funds rate (EFFR) and the read the
+owner asked for: delta_2y = DGS2 - EFFR, on a date both series share. Above +25 bp the 2-year prices
+tighter money ahead (liquidity contraction); below -25 bp it prices cuts (liquidity expansion); between
+them there is no signal. FRED's EFFR is the New York Fed's own series republished, so when FRED refuses
+the host the rate comes from the NY Fed's keyless JSON (`/api/rates/unsecured/effr/last/30.json`,
+newest first, `effectiveDate` and `percentRate`), rewritten into the same two-column CSV."""
 from __future__ import annotations
 
 import asyncio
@@ -41,6 +48,8 @@ URL = "https://fred.stlouisfed.org/graph/fredgraph.csv"
 TREASURY_URL = ("https://home.treasury.gov/resource-center/data-chart-center/interest-rates/"
                 "daily-treasury-rates.csv/{year}/all")
 TREASURY_COLUMNS = {"DGS10": "10 Yr", "DGS2": "2 Yr"}
+NYFED_URL = "https://markets.newyorkfed.org/api/rates/unsecured/effr/last/{n}.json"
+NYFED_LAST = 30
 HEADERS = {"User-Agent": "trap-intel-dashboard/1.0"}
 WINDOW_DAYS = 45               # enough for a week-ago comparison across holidays, nothing more
 # Staleness is per series, because the publication cadences differ. The Treasury yields are daily and
@@ -57,8 +66,11 @@ SERIES: tuple[tuple[str, str, str, float, float, int], ...] = (
     ("DTWEXBGS", "US dollar (broad index)", "index", 50.0, 250.0, 12),   # weekly H.10 release
     ("DGS10", "US 10-year yield", "%", -2.0, 25.0, 5),                    # daily, lags 1-2 days
     ("DGS2", "US 2-year yield", "%", -2.0, 25.0, 5),
+    ("EFFR", "Effective federal funds rate", "%", -1.0, 25.0, 5),     # daily, the NY Fed's own print
 )
+IDS: tuple[str, ...] = tuple(s[0] for s in SERIES)
 MISSING = {"", ".", "NA", "N/A", "null"}
+DELTA_2Y_BP = 25               # the owner's rule: beyond +/-25 bp the 2-year is a liquidity signal
 
 
 def _now_ms() -> int:
@@ -127,11 +139,33 @@ def summarise(series_id: str, label: str, unit: str, low: float, high: float,
 def curve_spread(ten: list[tuple[int, float]], two: list[tuple[int, float]]) -> tuple[float | None, int | None]:
     """10-year minus 2-year, on the latest date BOTH published. Subtracting different days' values
     would describe no day at all."""
-    twos = dict(two)
-    for when, ten_value in reversed(ten):
-        if when in twos:
-            return round(ten_value - twos[when], 4), when
+    return shared_difference(ten, two)
+
+
+def shared_difference(a: list[tuple[int, float]], b: list[tuple[int, float]]) -> tuple[float | None, int | None]:
+    """a minus b on the latest date both series published, and that date."""
+    bs = dict(b)
+    for when, value in reversed(a):
+        if when in bs:
+            return round(value - bs[when], 4), when
     return None, None
+
+
+def delta_2y_read(delta_pct: float | None) -> dict:
+    """The owner's rule on the 2-year minus the funds rate: {"state", "label", "note"}."""
+    if delta_pct is None:
+        return {"state": "unknown", "label": "no read", "note": "the 2-year and the funds rate share no date yet"}
+    bp = round(delta_pct * 100)
+    if delta_pct > DELTA_2Y_BP / 100:
+        return {"state": "contraction", "label": "liquidity contraction",
+                "note": (f"the 2-year is {bp:+d} bp above the funds rate: the market prices tighter money ahead "
+                         f"(liquidity contraction, beyond the +{DELTA_2Y_BP} bp line), a headwind for bitcoin")}
+    if delta_pct < -DELTA_2Y_BP / 100:
+        return {"state": "expansion", "label": "liquidity expansion",
+                "note": (f"the 2-year is {abs(bp)} bp below the funds rate: the market prices cuts ahead "
+                         f"(liquidity expansion, beyond the -{DELTA_2Y_BP} bp line), a tailwind for bitcoin")}
+    return {"state": "neutral", "label": "neutral",
+            "note": f"the 2-year is within {DELTA_2Y_BP} bp of the funds rate ({bp:+d} bp): no liquidity signal"}
 
 
 async def _fetch_csv(client: httpx.AsyncClient, series_id: str, since: str) -> str:
@@ -163,6 +197,32 @@ def treasury_as_fred(csv_text: str, series_id: str) -> str:
     if not rows:
         raise ValueError(f"treasury: no {column} rows")
     return "\n".join([f"observation_date,{series_id}"] + sorted(rows)) + "\n"
+
+
+def nyfed_as_fred(payload: dict) -> str:
+    """The NY Fed's EFFR JSON (newest first) rewritten as FRED's two-column CSV, oldest first."""
+    rates = payload.get("refRates") if isinstance(payload, dict) else None
+    if not isinstance(rates, list) or not rates:
+        raise ValueError("newyorkfed: no refRates in the response")
+    rows = []
+    for r in rates:
+        if not isinstance(r, dict) or str(r.get("type", "")).upper() != "EFFR":
+            continue
+        day, value = r.get("effectiveDate"), r.get("percentRate")
+        if day is None or value is None or _date_ms(str(day)) is None:
+            continue
+        rows.append(f"{str(day)[:10]},{value}")
+    if not rows:
+        raise ValueError("newyorkfed: no EFFR rows")
+    return "\n".join(["observation_date,EFFR"] + sorted(rows)) + "\n"
+
+
+async def _fetch_nyfed(client: httpx.AsyncClient) -> str:
+    r = await client.get(NYFED_URL.format(n=NYFED_LAST), headers=HEADERS, follow_redirects=True)
+    r.raise_for_status()
+    if len(r.content) > MAX_BYTES:
+        raise ValueError(f"newyorkfed: {len(r.content) / 1024:.0f} KB for {NYFED_LAST} days")
+    return nyfed_as_fred(r.json())
 
 
 async def _fetch_treasury(client: httpx.AsyncClient, now_ms: int) -> str:
@@ -211,8 +271,11 @@ def build(texts: dict[str, str | BaseException], now_ms: int, source: str = "fre
     spread, spread_ms = None, None
     if series.get("DGS10", {}).get("available") and series.get("DGS2", {}).get("available"):
         spread, spread_ms = curve_spread(parsed["DGS10"], parsed["DGS2"])
+    delta, delta_ms = None, None
+    if series.get("DGS2", {}).get("available") and series.get("EFFR", {}).get("available"):
+        delta, delta_ms = shared_difference(parsed["DGS2"], parsed["EFFR"])
     return MacroSnapshot(source=source, series=series, spread_2s10s=spread, spread_as_of_ms=spread_ms,
-                         error="; ".join(problems) or None)
+                         delta_2y=delta, delta_2y_as_of_ms=delta_ms, error="; ".join(problems) or None)
 
 
 async def fetch_macro(client: httpx.AsyncClient, now_ms: int | None = None) -> MacroSnapshot:
@@ -224,18 +287,24 @@ async def fetch_macro(client: httpx.AsyncClient, now_ms: int | None = None) -> M
         if isinstance(result, BaseException):
             log.warning("FRED %s unavailable: %s", series_id, result)
     texts = dict(zip(ids, results))
-    source = "fred"
+    parts = ["fred"] if any(not isinstance(r, BaseException) for r in results) else []
     if any(isinstance(texts[sid], BaseException) for sid in TREASURY_COLUMNS):
         try:
             curve = await _fetch_treasury(client, now)
             for sid in TREASURY_COLUMNS:
                 if isinstance(texts[sid], BaseException):
                     texts[sid] = treasury_as_fred(curve, sid)
-            fred_answered = any(not isinstance(r, BaseException) for r in results)
-            source = "fred+treasury.gov" if fred_answered else "treasury.gov"
+            parts.append("treasury.gov")
         except Exception as e:  # noqa: BLE001 - the fallback failing leaves FRED's own errors standing
             log.warning("treasury yields unavailable: %s", e)
             for sid in TREASURY_COLUMNS:
                 if isinstance(texts[sid], BaseException):
                     texts[sid] = RuntimeError(f"{texts[sid]!r}; treasury fallback: {e}")
-    return build(texts, now, source)
+    if isinstance(texts.get("EFFR"), BaseException):
+        try:
+            texts["EFFR"] = await _fetch_nyfed(client)
+            parts.append("newyorkfed.org")
+        except Exception as e:  # noqa: BLE001
+            log.warning("NY Fed EFFR unavailable: %s", e)
+            texts["EFFR"] = RuntimeError(f"{texts['EFFR']!r}; newyorkfed fallback: {e}")
+    return build(texts, now, "+".join(parts) or "fred")

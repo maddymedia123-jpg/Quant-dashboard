@@ -41,7 +41,9 @@ dash, never a number. Whichever provider answered is named in the sidebar.
 | Headlines | CoinDesk and Cointelegraph RSS plus the cryptocurrency.cv aggregator (14 publishers) | Macro & News screen, narratives in the agents' context, Pulse |
 | Gold | goldprice.dev | Macro & News |
 | Prediction markets | Polymarket via VoxOdds, with execution-quality bands | Macro & News, Fed odds in the Pulse |
-| US yields | FRED, falling back to the US Treasury daily curve (FRED refuses Streamlit Cloud) | Macro & News, agents' macro read. The dollar index is a named gap |
+| US yields and the funds rate | FRED, falling back to the US Treasury daily curve for the yields and the New York Fed's own JSON for the funds rate (FRED refuses Streamlit Cloud) | Macro & News, agents' macro read. The dollar index is a named gap |
+| BTC dominance (roadmap item 10, 5 Nov) | CoinGecko `/global`; the share's 24-hour and 7-day change from the dashboard's own samples, one per worker pass | Macro & News, agents' macro read |
+| USD/JPY and the yen carry (roadmap item 10, 5 Nov) | ECB reference rates via frankfurter.dev; the Bank of Japan policy rate is hand-set (`BOJ_POLICY_RATE_PCT`), never guessed | Macro & News, agents' macro read |
 | CFTC Commitments of Traders | CFTC, weekly | Weekly and Monthly desks only |
 | Exchange net flows | CoinMetrics community (all flows, not whales) | Weekly and Monthly desks |
 | Order book | Our own recorder on the VM | Scoop and sweep report, order_book tool |
@@ -165,6 +167,35 @@ setup up" arrived after the first big candle. The fixes, each merged live in thi
   trap, plan SHORT). Live war room: BEARISH (anchored the window's summary)." The report's own Market
   Pulse and plan alerts follow as they do for a report run by hand. Nothing runs on fixture data or
   without a model key.
+
+**Roadmap item 10, four macro feeds (your Section 10; three of the four live 5 November).** Each is a
+card on the Macro & News screen and a field in every agent's macro read:
+
+- *2-year minus the funds rate.* The effective federal funds rate (EFFR) joins the US macro card as a
+  fourth series, from FRED with the New York Fed's own JSON as the fallback. The card and the agents carry
+  Δ2Y = DGS2 − EFFR on a date both series share, read by your rule: above +25 bp the 2-year prices
+  tighter money ahead (liquidity contraction, a headwind for bitcoin); below −25 bp it prices cuts
+  (liquidity expansion, a tailwind); between them, no signal. The recorded 7 October window reads
+  +89 bp, contraction.
+- *BTC dominance.* Bitcoin's share of the whole crypto market from CoinGecko, with the ETH and stablecoin
+  shares and the market's 24-hour change. The feed has no history, so the worker stores a sample every
+  pass (one per ten minutes at most, a month kept) and the card reads the share's 24-hour change (the
+  7-day change when the day has no sample yet) from the dashboard's own samples: a rise of 0.5 pp in a
+  day is capital rotating into bitcoin, a fall of 0.5 pp is rotation out to the alternatives ("risk
+  appetite stretching" when the whole market is up). The change starts empty and fills in over the
+  first day and week after the merge; until then the card says "no history yet".
+- *Yen carry.* USD/JPY from the ECB's daily fix, with the week and month change. A fall of 1.5% or more
+  in a week of sessions is the carry-unwind warning (August 2024: USD/JPY fell about 12% in four weeks
+  and bitcoin lost a quarter in days). The Bank of Japan's policy rate has no free feed worth trusting
+  and changes only at scheduled meetings, so it is hand-set: `BOJ_POLICY_RATE_PCT=0.75` (for example) in
+  the worker's `.env` on the VM and as a top-level Streamlit secret. Until it is set the card says "not
+  set" and the carry gap (US funds rate minus BoJ) is left out rather than guessed; the read then rests
+  on the pace of USD/JPY alone.
+- *US election odds.* Parked: VoxOdds answers 404 for its Politics markets and Polymarket's own API is
+  not reachable from the hosts, so there is no feed to build on. The Prediction markets row above is
+  unchanged.
+
+DXY from free FX (item 11) and the Director's 4-hour-versus-24-hour framing (item 12) are next.
 
 **Per-desk chart switch (your Section 3 "Main Chart View", live 4 November; Live default changed 5 November).**
 Each desk's chart has a two-way switch above it: Live opens on the 4-hour chart (your Main Chart View) with
@@ -390,6 +421,7 @@ report runs and are not stored, so there is nothing to read back. See section 9.
 | Election-day fix 4: the Pulse names the scheduled prints | Live 5 Nov: regime first, last day's High prints with their read, next day's High and Medium prints (section 3) |
 | Election-day fix 5: cascade reversal confirmation | Live 5 Nov: the warning names the level and the confirming close; REVERSAL CONFIRMED on the anchor candle's close beyond the day's average price; 8h / 12h repeat windows (section 3) |
 | Election-day fix 6: scheduled agent runs | Live 5 Nov: the worker runs the Director + Live war room 15 min after a High-impact USD print and after a day-plan invalidation; once per trigger, 30 min apart, six a day at most (section 3) |
+| Roadmap item 10: four macro feeds | Live 5 Nov: 2-year minus funds rate (FRED, New York Fed fallback) with the ±25 bp read; BTC dominance (CoinGecko, change from own samples); USD/JPY yen carry (ECB via frankfurter.dev, BoJ rate hand-set); election odds parked, VoxOdds 404 (section 3) |
 | Per-desk chart switch (Section 3, Main Chart View) | Built 4 Nov: the desk's own candle by default, one coarser view a click away (4h / 1D / 3D / 2W); the call, forecast, summary and alerts stay on the desk's candle (section 3) |
 | Derived candles 12H / 3D / 0.5W / 2W and the cascade read order (Section 3) | Built 4 Nov: built from the fetched candles each refresh; each war room reads your cascade order as briefs beside its three timeframes; 24H is the daily candle (section 3) |
 | Short-horizon trap labels (Section 1.4) | Built 4 Nov: 15m and 1h traps labelled short-horizon, shown and traded on the Live desk only, never in a summary or the Pulse; 4h and longer unchanged (section 3) |

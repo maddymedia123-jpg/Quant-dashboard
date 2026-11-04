@@ -183,6 +183,40 @@ class MacroSnapshot(Availability):
     series: dict[str, dict[str, Any]] = Field(default_factory=dict)
     spread_2s10s: Optional[float] = None
     spread_as_of_ms: Optional[int] = None
+    # roadmap item 10: the 2-year minus the effective funds rate (DGS2 - EFFR), on a date both share
+    delta_2y: Optional[float] = None
+    delta_2y_as_of_ms: Optional[int] = None
+
+
+class DominanceSnapshot(Availability):
+    """Bitcoin's share of the crypto market (CoinGecko /global), in percent. change_24h_pp / change_7d_pp
+    are percentage-point changes from the dashboard's own stored samples (core.derived), None until the
+    history is long enough; derived_note says what span they cover."""
+    btc_pct: Optional[float] = None
+    eth_pct: Optional[float] = None
+    stable_pct: Optional[float] = None
+    total_mcap_usd: Optional[float] = None
+    mcap_change_24h_pct: Optional[float] = None
+    as_of_ms: Optional[int] = None
+    change_24h_pp: Optional[float] = None
+    change_7d_pp: Optional[float] = None
+    derived_note: Optional[str] = None
+
+
+class FxSnapshot(Availability):
+    """USD/JPY from the ECB reference rates (frankfurter.dev): the latest fix, its date, the fix a week and
+    a month of sessions earlier with the percentage changes, and the hand-set Bank of Japan policy rate
+    (None when the owner has not set BOJ_POLICY_RATE_PCT)."""
+    pair: str = "USDJPY"
+    rate: Optional[float] = None
+    as_of_ms: Optional[int] = None
+    week_ago: Optional[float] = None
+    change_1w_pct: Optional[float] = None
+    month_ago: Optional[float] = None
+    change_1m_pct: Optional[float] = None
+    stale: bool = False
+    age_days: Optional[float] = None
+    boj_rate_pct: Optional[float] = None
 
 
 class ExchangeFlowSnapshot(Availability):
@@ -228,7 +262,7 @@ class TakerFlowSnapshot(Availability):
 class MarketSnapshot(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    SOURCES: ClassVar[tuple[str, ...]] = ("spot", "futures", "options", "sentiment", "hyperliquid", "liquidations", "whales", "stablecoins", "calendar", "news", "metals", "predictions", "macro", "cot", "taker_flow", "exchange_flows")
+    SOURCES: ClassVar[tuple[str, ...]] = ("spot", "futures", "options", "sentiment", "hyperliquid", "liquidations", "whales", "stablecoins", "calendar", "news", "metals", "predictions", "macro", "cot", "taker_flow", "exchange_flows", "dominance", "fx")
 
     spot: SpotSnapshot
     futures: FuturesSnapshot
@@ -247,6 +281,8 @@ class MarketSnapshot(BaseModel):
     taker_flow: TakerFlowSnapshot = Field(default_factory=lambda: TakerFlowSnapshot.unavailable("gate.io", "not fetched"))
     exchange_flows: ExchangeFlowSnapshot = Field(
         default_factory=lambda: ExchangeFlowSnapshot.unavailable("coinmetrics", "not fetched"))
+    dominance: DominanceSnapshot = Field(default_factory=lambda: DominanceSnapshot.unavailable("coingecko", "not fetched"))
+    fx: FxSnapshot = Field(default_factory=lambda: FxSnapshot.unavailable("frankfurter", "not fetched"))
     generated_at: datetime = Field(default_factory=_now)
 
     def unavailable(self) -> list[str]:

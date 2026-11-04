@@ -18,7 +18,9 @@ from core.data.taker_flow import build as build_taker_flow
 from core.data.deribit_options import parse_book_summary
 from core.data.hyperliquid import parse_meta
 from core.data.kraken_spot import parse_ohlc, parse_ticker
-from core.data.macro import build as build_macro
+from core.data.dominance import parse_global
+from core.data.fx import build as build_fx, parse_range
+from core.data.macro import IDS as MACRO_IDS, build as build_macro
 from core.data.metals import parse_gold
 from core.data.news import merge, parse_aggregator, parse_feed
 from core.data.prediction import merge as merge_predictions, parse_markets
@@ -81,7 +83,13 @@ def fixture_context() -> dict:
                                int(datetime(2026, 10, 10, tzinfo=timezone.utc).timestamp() * 1000))),
         "taker_flow": _mark(_fixture_taker_flow()),
         "exchange_flows": _mark(parse_flows(_load("coinmetrics_exchange_flows.json"))),
+        "dominance": _mark(parse_global(_load("coingecko_global.json"))),
+        "fx": _mark(build_fx(parse_range(_load("frankfurter_usdjpy.json")), RECORDED_FX_MS)),
     }
+
+
+# the USD/JPY window was recorded on 4 November 2026; judged against that day, as the macro window is
+RECORDED_FX_MS = int(datetime(2026, 11, 4, tzinfo=timezone.utc).timestamp() * 1000)
 
 
 def _fixture_news() -> NewsSnapshot:
@@ -96,7 +104,7 @@ def _fixture_news() -> NewsSnapshot:
 def _fixture_macro():
     """The recorded FRED windows, judged against the day they were recorded rather than today, so the
     offline view does not flag every series stale just because time has passed since the recording."""
-    texts = {sid: _load_text(f"fred_{sid}.csv") for sid in ("DTWEXBGS", "DGS10", "DGS2")}
+    texts = {sid: _load_text(f"fred_{sid}.csv") for sid in MACRO_IDS}
     # written as a date, not an epoch integer: the integer first typed here decoded to 2025-10-09,
     # a year early, and every series came out 363 days in the future
     recorded_ms = int(datetime(2026, 10, 9, tzinfo=timezone.utc).timestamp() * 1000)
