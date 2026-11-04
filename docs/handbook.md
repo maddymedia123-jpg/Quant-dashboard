@@ -211,7 +211,20 @@ and the agents' macro read says so), a fall of 1% is a slide (a tailwind). The r
 reads 101.26, down 1.1% on the week, a slide. The tech correlation named in the same line of your plan is
 not built: the Nasdaq has no keyless intraday feed worth trusting.
 
-The Director's 4-hour-versus-24-hour framing (item 12) is next.
+**Roadmap item 12, the Director frames the 4-hour zone against the 24-hour horizon (your Section 10, live 5
+November).** "Evaluates 4-hour tactical execution zones against 24-hour intraday liquidity horizons." Two desks
+own the two horizons: Live executes inside the 4-hour candle (its expected range for the next four hours is
+the tactical zone); Intraday owns the day (the day's high and low so far, the prior day's high and low, the
+day's average price and the desk's 24-hour expected range are the edges where resting orders and stops sit).
+The framing is computed in code from numbers already on the screen and handed to the Director as a block it
+must not contradict: where price sits in the day's range, which edges the 4-hour range reaches (a probe
+above, a probe below, an expansion window reaching both, or inside), and the width of the 4-hour range
+against the day's. The Director then writes two or three sentences of judgment (horizon_framing), and the
+plan it chose is checked against the same horizon in code: zone and every target inside the day's edges is a
+tactical trade; a first target beyond them needs the 24-hour horizon taken first and the card says so; a zone
+outside them is a trade at the day's edge, not inside it. The block sits under the trade plan on the Director
+card and in the MCP's trap_report; reports made before 5 November have neither. Nothing is guessed: a
+missing frame or forecast leaves its part absent and named.
 
 **Per-desk chart switch (your Section 3 "Main Chart View", live 4 November; Live default changed 5 November).**
 Each desk's chart has a two-way switch above it: Live opens on the 4-hour chart (your Main Chart View) with
@@ -439,6 +452,7 @@ report runs and are not stored, so there is nothing to read back. See section 9.
 | Election-day fix 6: scheduled agent runs | Live 5 Nov: the worker runs the Director + Live war room 15 min after a High-impact USD print and after a day-plan invalidation; once per trigger, 30 min apart, six a day at most (section 3) |
 | Roadmap item 10: four macro feeds | Live 5 Nov: 2-year minus funds rate (FRED, New York Fed fallback) with the ±25 bp read; BTC dominance (CoinGecko, change from own samples); USD/JPY yen carry (ECB via frankfurter.dev, BoJ rate hand-set); election odds parked, VoxOdds 404 (section 3) |
 | Roadmap item 11: dollar index reconstructed | Live 5 Nov: ICE's DXY formula on the ECB's six daily rates, a day behind and within a few tenths; 1% week = spike or slide; spike + bitcoin up 3% between the same dates = false-breakout signal (section 3) |
+| Roadmap item 12: Director 4-hour zone vs 24-hour horizon | Live 5 Nov: framing computed in code (price in the day's range, which day edges the 4-hour range reaches), the Director's sentences on it, the plan checked against the day's edges (tactical / needs the edge taken / at the edge) (section 3) |
 | Per-desk chart switch (Section 3, Main Chart View) | Built 4 Nov: the desk's own candle by default, one coarser view a click away (4h / 1D / 3D / 2W); the call, forecast, summary and alerts stay on the desk's candle (section 3) |
 | Derived candles 12H / 3D / 0.5W / 2W and the cascade read order (Section 3) | Built 4 Nov: built from the fetched candles each refresh; each war room reads your cascade order as briefs beside its three timeframes; 24H is the daily candle (section 3) |
 | Short-horizon trap labels (Section 1.4) | Built 4 Nov: 15m and 1h traps labelled short-horizon, shown and traded on the Live desk only, never in a summary or the Pulse; 4h and longer unchanged (section 3) |
