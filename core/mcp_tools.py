@@ -254,7 +254,9 @@ def trap_reports(store, limit: int = 20, now_ms: int | None = None) -> dict:
     rows = store.reports(limit=_limit(limit, 100))
     return _clean({"as_of_utc": _iso(now), "reports": [_report_row(r) for r in rows],
                    "how_to_read": "hit_24h / hit_7d: did price move the way the report's majority said over that "
-                                  "horizon; plan_outcome: what became of the report's trade plan"})
+                                  "horizon; plan_outcome: what became of the report's trade plan (target, stop, "
+                                  "cancelled = the setup broke before any confirming close, not_triggered, no_trade, "
+                                  "open); the Pulse speaks from a plan only while it is open"})
 
 
 def trap_report(store, report_id: str | None = None, mode: str | None = None, now_ms: int | None = None) -> dict:

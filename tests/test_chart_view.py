@@ -22,12 +22,15 @@ def frames():
             "4h": resample(h1, 240), "1d": resample(h1, 1440)}
 
 
-def test_every_desk_defaults_to_its_own_candle_with_one_coarser_view():
+def test_every_desk_has_two_views_and_live_opens_on_the_four_hour_chart():
+    """His Section 3 table: Live Recon's Main Chart View is the 4-Hour Chart (owner, 5 Nov); the other
+    desks open on their own candle with one coarser view."""
     for key, cat in CATEGORIES.items():
-        default, coarser = CHART_VIEWS[key]
-        assert default == cat.chart_tf, f"{key}: the default is the desk's own candle, unchanged"
-        assert TF_MINUTES[coarser] > TF_MINUTES[default] and coarser in TF_LADDER
-    assert CHART_VIEWS == {"live": ("1h", "4h"), "intraday": ("4h", "1d"), "weekly": ("1d", "3d"), "monthly": ("1w", "2w")}
+        default, other = CHART_VIEWS[key]
+        assert cat.chart_tf in (default, other), f"{key}: the desk's own candle is always one of the views"
+        assert default in TF_LADDER and other in TF_LADDER and default != other
+    assert CHART_VIEWS["live"][0] == "4h", "Live Recon opens on the 4-hour chart"
+    assert CHART_VIEWS == {"live": ("4h", "1h"), "intraday": ("4h", "1d"), "weekly": ("1d", "3d"), "monthly": ("1w", "2w")}
 
 
 def test_the_coarser_view_redraws_the_candles_but_keeps_the_desks_levels():

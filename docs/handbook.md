@@ -1,7 +1,7 @@
 # Quant Dashboard — System Handbook
 
 *What exists, how it fits together, what is still open. Written for Hammad. Kept in the repo at
-`docs/handbook.md` and updated with every merge; last revised 4 November 2026.*
+`docs/handbook.md` and updated with every merge; last revised 5 November 2026.*
 
 Everything below is in the code on `main` and live unless a line says otherwise. Nothing here is planned
 work dressed up as done.
@@ -53,7 +53,7 @@ the log every minute.
 
 | Desk | Reads | Charts | Anchored to | Scored over |
 | --- | --- | --- | --- | --- |
-| Live Recon | 15m / 1h / 4h | 1h (or a 4h view), next 4 hours | the UTC 4h candle | 4 hours |
+| Live Recon | 15m / 1h / 4h | 4h view by default (call made on the 1h; 1h view optional), next 4 hours | the UTC 4h candle | 4 hours |
 | Intraday | 1h / 4h / 1D, plus a 12H brief | 4h (or a 1D view), next 24 hours | the UTC day | 24 hours |
 | Weekly | 4h / 1D / 1W, plus 3D and 0.5W briefs | 1D (or a 3D view), next 7 days | Monday 00:00 UTC | 7 days |
 | Monthly | 1D / 1W / 1M, plus a 2W brief | 1W (or a 2W view), next month | the calendar month | 30 days |
@@ -111,9 +111,32 @@ as its own line under the Big Picture in the summary, speaks for the positioning
 gate, and goes to the desk's judges and Head in their state by name. Greed without leverage building is
 greed, not a flush, and is not named.
 
-**Per-desk chart switch (your Section 3 "Main Chart View", live 4 November).** Each desk's chart has a
-two-way switch above it: the desk's own candle by default (Live 1h, Intraday 4h, Weekly 1D, Monthly 1W), and
-one coarser view (Live 4h, Intraday 1D, Weekly 3D, Monthly 2W). The coarser view redraws the candles, and the
+**4 November, election day: what went wrong and the fixes (owner's GO, 5 November).** BTC ran from 78,336
+to 81,194 between 14:00 and 15:00 UTC on 4 November, the day after the US congressional elections, and the
+bot was useless through it. Four causes, in order of damage. (1) The 00:05 UTC report's short plan was
+cancelled by the plan tracker at 08:00 (price traded through the stop before any confirmation), but the
+report ledger had no "cancelled" outcome, left the row open, and the Pulse sold from the dead plan in nine
+messages from 09:00 to 17:00. (2) The head agents run only when a person clicks Run Analysis; the worker
+makes no model calls, so nothing with judgment looked at the result for 14 hours. (3) The calendar carried
+"Congressional Elections" as a High-impact print inside the five-day window, but no rule elevated it: the
+Quant Forecast still said NEUTRAL, RANGE-BOUND, 80% confidence, and was invalidated at 16:00. (4) The
+cascade said "downtrend losing control, watch for a reversal" three times, softly, and the Intraday "strong
+setup up" arrived after the first big candle. The fixes, each merged live in this order:
+
+- *Fix 1, live 5 November.* The report scorer now applies the plan tracker's two cancellation rules (through
+  the stop before a confirming close; the confirming candle closes beyond the far edge of the zone) and
+  records "cancelled". The Pulse speaks from a plan only while it is open, so a cancelled plan hands the
+  Pulse back to the Live desk the same minute. The accuracy card and the MCP tools show the new outcome.
+- *Fix 2, live 5 November.* Live Recon's chart opens on the 4-hour candle, as your table reads ("Main Chart
+  View: 4-Hour Chart"); the 1h, which its call is made on, is the other view.
+- *Fix 3, event regime.* Next.
+- *Fix 4, the Pulse's event section names the scheduled prints.* Next.
+- *Fix 5, cascade reversal alerts with a confirmation rule and firmer words.* Next.
+- *Fix 6, scheduled agent runs after a High-impact print and after a day-plan invalidation.* Next.
+
+**Per-desk chart switch (your Section 3 "Main Chart View", live 4 November; Live default changed 5 November).**
+Each desk's chart has a two-way switch above it: Live opens on the 4-hour chart (your Main Chart View) with
+the 1h as the other view; Intraday 4h or 1D, Weekly 1D or 3D, Monthly 1W or 2W, each opening on its own candle. The coarser view redraws the candles, and the
 EMAs, RSI, divergences, trendlines, patterns and Fibonacci zones are re-read on those candles; the levels the
 desk's call stands on are kept, so the call is drawn where it was made, and the title reads, for example,
 "4h view · call on 1h". The call on the right, the forecast pane, the summary, the confluence gate and every
@@ -267,7 +290,7 @@ Every message is scanned against a banned-jargon list before it goes out.
 | Plan alerts (1-agent report) | WATCH when price reaches the zone, CONFIRMED on the confirm close, NO SETUP, TARGET 1–3, STOPPED, EXPIRED | Plain words, from the plan's numbers |
 | Cascade | Only moves into A (strong setup) or C (trend losing control), after the state holds (Live 5 min, Intraday 15 min, Weekly 1 h, Monthly 4 h); a return to the same state within the repeat window (3 h / 6 h / 24 h / 72 h) stays silent | Desk and price, old state → new state, what changed |
 | TRAP | Declared, and settled | "A dip below X should fail and bounce" |
-| Market Pulse | Every hour boundary, one message naming the closes it covers: "1h + 2h + 4h candle closes" at 00:00, 04:00, 08:00, 12:00, 16:00 and 20:00 UTC, "1h + 2h" on the other even hours, "1h" otherwise (from the Live desk, or a live plan if one is open); and when a report with a sided plan is run. Live 4 Nov; it was the 4-hour close only | Your Pulse template: direction, Target 1, stop, turning window, US releases, BTC headlines, Fed odds within 7 days |
+| Market Pulse | Every hour boundary, one message naming the closes it covers: "1h + 2h + 4h candle closes" at 00:00, 04:00, 08:00, 12:00, 16:00 and 20:00 UTC, "1h + 2h" on the other even hours, "1h" otherwise (from the Live desk, or a live plan if one is open); and when a report with a sided plan is run. Live 4 Nov; it was the 4-hour close only. Speaks from the open plan while there is one; a plan the tracker cancels hands the Pulse back to the Live desk the same minute (fix 1, 5 Nov) | Your Pulse template: direction, Target 1, stop, turning window, US releases, BTC headlines, Fed odds within 7 days |
 | Trade alerts | A pinned trade's target, stop, trap on its levels, monitoring checkpoint | From the card |
 
 Telegram is implemented and switches on the moment a bot token and chat id are added to the VM's
@@ -326,6 +349,8 @@ report runs and are not stored, so there is nothing to read back. See section 9.
 
 | Ask | Status |
 | --- | --- |
+| Election-day fix 1: cancelled plans reach the report ledger | Fixed 5 Nov: the scorer applies the tracker's two cancel rules; the Pulse stops speaking from a cancelled plan the same minute (section 3) |
+| Election-day fix 2: Live Recon opens on the 4-hour chart | Done 5 Nov: your Main Chart View; 1h is the other view (section 3) |
 | Per-desk chart switch (Section 3, Main Chart View) | Built 4 Nov: the desk's own candle by default, one coarser view a click away (4h / 1D / 3D / 2W); the call, forecast, summary and alerts stay on the desk's candle (section 3) |
 | Derived candles 12H / 3D / 0.5W / 2W and the cascade read order (Section 3) | Built 4 Nov: built from the fetched candles each refresh; each war room reads your cascade order as briefs beside its three timeframes; 24H is the daily candle (section 3) |
 | Short-horizon trap labels (Section 1.4) | Built 4 Nov: 15m and 1h traps labelled short-horizon, shown and traded on the Live desk only, never in a summary or the Pulse; 4h and longer unchanged (section 3) |

@@ -2282,8 +2282,8 @@ def scorecard_html(cards: dict) -> str:
             rows += f"<tr><td>{mode}</td><td colspan='4' class='muted'>no reports yet</td></tr>"
             continue
         p = c["plans"]
-        plans = (f"{p.get('target', 0)} target · {p.get('stop', 0)} stop · {p.get('not_triggered', 0)} never "
-                 f"triggered · {p.get('open', 0)} open" if sum(p.values()) else "—")
+        plans = (f"{p.get('target', 0)} target · {p.get('stop', 0)} stop · {p.get('cancelled', 0)} cancelled · "
+                 f"{p.get('not_triggered', 0)} never triggered · {p.get('open', 0)} open" if sum(p.values()) else "—")
         rows += (f"<tr><td><strong>{mode}</strong></td><td>{c['reports']}</td><td>{rate(c['h24'])}</td>"
                  f"<td>{rate(c['d7'])}</td><td>{plans}</td></tr>")
     body = ("<table><thead><tr><th>Pipeline</th><th>Reports</th><th>Call right, 24h</th><th>Call right, 7d</th>"

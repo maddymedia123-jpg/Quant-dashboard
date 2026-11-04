@@ -110,7 +110,12 @@ def stored_reports(store) -> dict:
 # plan's confirmation timeframe closes beyond confirm_close (the taker-ratio rule is not replayed - there is
 # no per-candle history of it here), and from that close the first of stop or first target to be touched
 # decides it. A candle that spans both counts as the stop: the cautious reading.
-PLAN_OUTCOMES = ("target", "stop", "not_triggered", "no_trade", "open")
+# Before any confirming close, the setup can break instead: price trades through the stop, or the
+# confirming candle closes beyond the far edge of the zone. Those are "cancelled", the same two rules in
+# the same order as the plan tracker (core.plan_alerts.replay), so the Discord message that says
+# "NO SETUP · cancelled" and this ledger can never disagree again. On 4 Nov they did: the tracker cancelled
+# a short at 08:00 UTC, this scorer left it "open", and the Pulse sold from a dead plan for nine hours.
+PLAN_OUTCOMES = ("target", "stop", "cancelled", "not_triggered", "no_trade", "open")
 
 
 def plan_outcome(plan: dict, ts_ms: int, frames: dict, now_ms: int) -> str:
@@ -135,6 +140,10 @@ def plan_outcome(plan: dict, ts_ms: int, frames: dict, now_ms: int) -> str:
         t = int(r.timestamp)
         if t + bar_ms <= touched or t + bar_ms > min(now_ms, expires + bar_ms):
             continue                               # before the touch, still forming, or past expiry
+        if (side == "SHORT" and r.high >= stop) or (side == "LONG" and r.low <= stop):
+            return "cancelled"                     # through the stop before any confirmation
+        if (side == "SHORT" and r.close > high) or (side == "LONG" and r.close < low):
+            return "cancelled"                     # closed beyond the far edge of the zone: no rejection
         level = confirm if confirm is not None else (low if side == "SHORT" else high)
         if (side == "SHORT" and r.close < level) or (side == "LONG" and r.close > level):
             entry_ms = t + bar_ms

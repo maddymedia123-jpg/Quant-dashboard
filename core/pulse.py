@@ -103,8 +103,9 @@ def _plan(report_row: dict | None) -> dict | None:
 
 def plan_live(report_row: dict | None, now_ms: int) -> bool:
     """Whether a report's plan is still the one being traded: it has a side, its hours have not run out,
-    and the ledger has not closed it (target, stop, not triggered). While it is, every pulse speaks from it,
-    so the 4h-close message and the report message name the same target and the same safety line."""
+    and the ledger has not closed it (target, stop, cancelled, not triggered). While it is, every pulse
+    speaks from it, so the close message and the report message name the same target and the same safety
+    line; the minute the ledger closes it, the pulse speaks from the Live desk again."""
     plan = _plan(report_row)
     if plan is None:
         return False
