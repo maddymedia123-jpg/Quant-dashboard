@@ -286,6 +286,42 @@ def test_an_answer_without_the_framing_still_validates(ctx):
     assert d.horizon_framing == "" and d.horizon_check is None
 
 
+def test_a_plan_made_inside_an_event_regime_is_tagged_and_its_size_halved(ctx):
+    """4 Nov 21:26: the Director pushed a short while the Pulse's regime line said 'no range plan, smaller
+    size' - the regime governed only the Quant Forecast. Now the regime reaches the Director's plan: the
+    rule asks for a wider stop at the Director's normal size, and code halves risk_pct and max_leverage
+    and tags the plan with the event; the alerts and the Pulse read the tag."""
+    m, analyses = ctx[0], ctx[1]
+    now_ms = int(m.generated_at.timestamp() * 1000)
+    election = {"title": "Congressional Elections", "country": "USD", "impact": "High", "time_ms": now_ms - 2 * H,
+                "date": "2026-11-03T18:00:00-05:00", "forecast": "", "previous": ""}
+    cal = m.calendar.model_copy(update={"events": list(m.calendar.events) + [election]})
+    m2 = m.model_copy(update={"calendar": cal})
+    assert one_agent.director_state(m2, analyses)["macro_read"]["event_regime"]["active"] is True
+    fake = Fake([OUT])
+    rep = one_agent.run_one_agent_sync(fake, m2, analyses, "fake-model")
+    assert rep.plan.event_regime == "Congressional Elections"
+    assert rep.plan.risk_pct == 0.5 and rep.plan.max_leverage == 2.5, "the Director's 1% / 5x, halved in code"
+    assert rep.plan.stop == 84200 and rep.plan.targets == [82820, 82237, 81432], "the geometry is the Director's"
+    assert "EVENT REGIME" in one_agent.ONE_AGENT_TEXT and "code halves them" in one_agent.ONE_AGENT_TEXT
+    assert "event_regime" in one_agent.system_prompt(), "the schema hint carries the tag"
+    # the tag survives the store and reaches the alerts
+    assert json.loads(rep.model_dump_json())["plan"]["event_regime"] == "Congressional Elections"
+    # no regime: untouched
+    plain = one_agent.run_one_agent_sync(Fake([OUT]), m, analyses, "fake-model")
+    assert plain.plan.event_regime == "" and plain.plan.risk_pct == 1 and plain.plan.max_leverage == 5
+    # a stand-aside and a plan without sizing: tagged, nothing halved
+    none = one_agent.run_one_agent_sync(Fake([dict(OUT, plan={"side": "NONE", "why_none": "no edge"})]), m2, analyses, "x")
+    assert none.plan.side == "NONE" and none.plan.event_regime == ""
+    unsized = one_agent.run_one_agent_sync(Fake([dict(OUT, plan={k: v for k, v in PLAN.items() if k not in ("risk_pct", "max_leverage")})]),
+                                           m2, analyses, "x")
+    assert unsized.plan.event_regime == "Congressional Elections" and unsized.plan.risk_pct is None
+    assert PlanLevels(side="NONE").event_regime == "", "reports made before the tag still load"
+    # the schema hint shows the field, so a model may write it: outside a regime it is cleared
+    claimed = one_agent.run_one_agent_sync(Fake([dict(OUT, plan=dict(PLAN, event_regime="FOMC Statement"))]), m, analyses, "x")
+    assert claimed.plan.event_regime == "" and claimed.plan.risk_pct == 1
+
+
 # ---------- cancelled: the setup breaks before any confirming close (4 Nov election-day fix 1) ----------
 def test_a_short_that_trades_through_the_stop_before_confirming_is_cancelled():
     up = [(83600, 83400, 83550)] * 4                                   # hour 0: into the zone

@@ -52,6 +52,7 @@ ONE_AGENT_TEXT = """You are the DIVISION HEAD, codename DIRECTOR, working alone:
    - expires_hours: how long the idea is valid if price never reaches the zone. risk_pct and max_leverage for this volatility regime.
 8. category_summaries: one paragraph each for live, intraday, weekly and monthly, in plain English, quoted levels only. executive_summary is three sentences at most. data_quality_flags: missing, stale or estimated inputs.
 9. horizon_framing (two or three sentences, quoted levels only): frame the 4-hour tactical execution zone against the 24-hour intraday liquidity horizon from the `horizons` block - where the 4-hour expected range sits inside the day's range and the 24-hour expected range, which of the day's edges (the day's high and low, the prior day's high and low, the day's average price, the 24-hour expected range) the 4-hour move reaches and so where resting orders and stops sit, and whether your plan's zone, stop and targets live inside that horizon or need it taken first. `horizons.framing.note` is computed from the data: do not contradict its numbers; add the judgment.
+10. EVENT REGIME: when macro_read.event_regime.active is true (an election, an FOMC, a Fed-chair print: its note says which and until when), any plan you give is a trade inside that regime. Place the stop beyond the NEXT structural level past the one you would otherwise use, so a sweep of the day's edge on the event's move does not stop it out; prefer the event's expansion over a range plan; name the regime in trade_plan.time_rules. Give risk_pct and max_leverage at your NORMAL size for this volatility: code halves them and tags the plan with the event (plan.event_regime), do not halve them yourself.
 READING THE DATA: cvd_5bars is REAL taker flow on the BTC perpetual (market buys minus market sells, BTC); if it says ESTIMATE it is not CVD. Each desk's forecast carries a track_record: when lean_right is not above price_rose_anyway, its lean has no edge - use its range and level odds, not its lean. COT is weekly context, not intraday timing. WINDOWS: derivatives.futures/liquidations are a 24-hour snapshot; desk_derivatives[desk] holds open interest, taker delta, liquidations, funding, max pain and dealer gamma (regime, flip, call and put walls, from only the options settling in that window) over THAT desk's own window (live 1h/4h, intraday 24h, weekly 7 days, monthly 30 days) - each category_summary and any plan on that horizon uses its own desk's figures, never the 24-hour ones for weekly or monthly. TIMING: use turning_window (measured US-session turning hours); its kill_zones carry the spec's three sessions with measured odds - only New York beat chance, so never time a turn on the Asian or London session; the Fibonacci reversal_window in each category was tested and timed turns no better than chance - never use it for timing."""
 
 ONE_AGENT_RULES = SHARED_RULES.replace(
@@ -123,11 +124,28 @@ def user_prompt(state: dict) -> str:
             f"UNAVAILABLE: {json.dumps(state.get('unavailable', []))}\n\nReturn JSON only.")
 
 
-def _validate(data: dict | None, horizons: dict | None = None) -> tuple[OneAgentOutput | None, DirectorReport | None, str | None]:
+def tag_plan(plan: PlanLevels | None, regime: dict | None) -> PlanLevels | None:
+    """A sided plan made while an event regime is active carries the event's title and half the
+    Director's risk_pct and max_leverage (the Director gives its normal size: rule 10). The geometry is
+    the Director's: the rule asks it for the wider stop. The alerts and the Pulse read the tag
+    (core.plan_alerts.regime_line). A stand-aside is left alone. The tag is code's: outside a regime a
+    model-written event_regime is cleared, so no plan claims a regime the calendar does not hold."""
+    if plan is None or plan.side == "NONE":
+        return plan
+    if not (regime or {}).get("active"):
+        return plan if not plan.event_regime else plan.model_copy(update={"event_regime": ""})
+    half = lambda x: None if x is None else round(x / 2, 2)  # noqa: E731
+    return plan.model_copy(update={"event_regime": str(regime.get("title") or "major event"),
+                                   "risk_pct": half(plan.risk_pct), "max_leverage": half(plan.max_leverage)})
+
+
+def _validate(data: dict | None, horizons: dict | None = None,
+              regime: dict | None = None) -> tuple[OneAgentOutput | None, DirectorReport | None, str | None]:
     if data is None:
         return None, None, "no JSON returned"
     try:
         out = OneAgentOutput.model_validate(data)
+        out = out.model_copy(update={"plan": tag_plan(out.plan, regime)})
         from core.indicators.horizons import plan_check
         check = None
         if horizons and horizons.get("framing"):
@@ -154,13 +172,14 @@ async def run_one_agent(client: LLMClient, m, analyses: dict, model: str,
     system, user = system_prompt(), user_prompt(state)
     res = await client.complete_json(system, user, model, max_tokens=MAX_TOKENS)
     pt, ct, used, err = res.prompt_tokens, res.completion_tokens, res.model or model, res.error
-    out, director, verr = _validate(res.data, state.get("horizons")) if res.data is not None else (None, None, err)
+    regime = (state.get("macro_read") or {}).get("event_regime")
+    out, director, verr = _validate(res.data, state.get("horizons"), regime) if res.data is not None else (None, None, err)
     if out is None and res.data is not None:
         # one correction round: the validation error goes back with the same data
         fix = user + f"\n\nYour previous JSON failed validation:\n{verr}\nFix those fields and return ONLY valid JSON."
         res2 = await client.complete_json(system, fix, used, max_tokens=MAX_TOKENS)
         pt, ct = pt + res2.prompt_tokens, ct + res2.completion_tokens
-        out, director, verr = _validate(res2.data, state.get("horizons")) if res2.data is not None else (None, None, res2.error)
+        out, director, verr = _validate(res2.data, state.get("horizons"), regime) if res2.data is not None else (None, None, res2.error)
     run = AgentRun(agent_id=AGENT_ID, ok=out is not None, model=used, latency_s=round(time.perf_counter() - t0, 2),
                    prompt_tokens=pt, completion_tokens=ct, cost_usd=None,
                    error=None if out is not None else (verr or err or "no JSON returned"))

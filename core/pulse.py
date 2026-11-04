@@ -117,12 +117,14 @@ def plan_live(report_row: dict | None, now_ms: int) -> bool:
     return now_ms < expires
 
 
-def plan_read(report_row: dict, price: float | None, now_ms: int | None = None) -> dict | None:
-    """The same fields from a report's plan, when it has one with a side."""
+def plan_read(report_row: dict, price: float | None, now_ms: int | None = None, frames: dict | None = None) -> dict | None:
+    """The same fields from a report's plan, when it has one with a side. With the candles (`frames`) and
+    the time, it says whether the zone has been touched since the report: the candle high (a short) or
+    low (a long), then where price is now - the WATCH alert's own words (core.plan_alerts.zone_touch)."""
     plan = _plan(report_row)
     if plan is None:
         return None
-    from core.plan_alerts import TF_WORDS
+    from core.plan_alerts import TF_WORDS, regime_line, zone_touch
 
     short = plan["side"] == "SHORT"
     targets = sorted((float(t) for t in plan.get("targets") or []), reverse=short)
@@ -136,20 +138,34 @@ def plan_read(report_row: dict, price: float | None, now_ms: int | None = None) 
     if plan.get("taker_ratio_limit") is not None:
         confirm += f", with {'sellers' if short else 'buyers'} doing more of the trading"
     act = "sell" if short else "buy"
+    touch = zone_touch(plan, int(report_row.get("ts_ms") or 0), frames) if frames else None
     # where price stands against the zone decides the first words: a short entered above price must say
     # "wait for the rise", or a reader shorts at the market, the one place the plan says not to
     if price is not None and low <= price <= high:
         where = f"BTC is {_money(price)}, inside the {act} zone ({zone})."
         step = f"{act.capitalize()} only after {confirm}."
+        now_where = "inside it"
     elif price is not None and (price < low if short else price > high):
         where = f"BTC is {_money(price)}, {'below' if short else 'above'} the {act} zone ({zone})."
         step = (f"Do not {act} here: wait for a {'rise' if short else 'dip'} into the zone, then {act} only after "
                 f"{confirm}.")
+        now_where = f"back {'below' if short else 'above'} it"
     else:
         where = f"BTC is {_money(price)}; the plan {act}s from the {zone} zone."
         step = f"{act.capitalize()} only after {confirm}."
+        now_where = f"{'above' if short else 'below'} it" if price is not None else ""
+    if touch is not None and price is not None:
+        # 4 Nov 21:26: "BTC is $80,088, below the sell zone" an hour after the candle high had touched it.
+        # Touched, the candle's extreme, then the current price: the WATCH alert's words.
+        where = (f"The {act} zone ({zone}) was touched at {_when(touch.at_ms)}: the candle "
+                 f"{'high' if short else 'low'} reached {_money(touch.extreme)}. BTC is now {_money(price)}, {now_where}.")
     happening = (f"{where} The new report expects a move {'down' if short else 'up'}. {step} "
                  f"The idea is good for {hours:g} hours.")
+    if regime_line(plan):
+        r, lev = plan.get("risk_pct"), plan.get("max_leverage")
+        size = f" (risk {float(r):g}%, max {float(lev):g}x)" if r is not None and lev is not None else ""
+        happening += (f" This plan was made inside the {plan['event_regime']} event regime: size halved{size}. "
+                      "The no-range-plan rule below is the day plan's, not this trade's.")
     return {"direction": "BEARISH" if short else "BULLISH", "happening": happening,
             "target": _money(targets[0]) if targets else "—", "safety": _money(float(plan["stop"]))}
 
@@ -210,8 +226,11 @@ def _news(m, now_ms: int) -> str:
     if getattr(cal, "available", False):
         regime = regime_read(getattr(cal, "events", None) or [], now_ms)
         if regime.active:
-            lines.append(f"🚨 EVENT REGIME: {regime.note}. Expect sharp moves either way: no range plan, wider "
-                         "safety lines, smaller size.")
+            # the rule is the Quant Forecast's (core.quant_forecast.build_plan, event=); a report's plan made
+            # inside the regime carries its own note above (core.agents.one_agent.tag_plan)
+            lines.append(f"🚨 EVENT REGIME: {regime.note}. Expect sharp moves either way: the day plan's rule is "
+                         "no range plan, wider safety lines, smaller size. That rule is the Quant Forecast's; a "
+                         "report's trade plan is sized by its own regime note.")
         for e in [p for p in _printed(cal, now_ms) if p.get("title") != regime.title][:2]:
             lines.append(f"US {e.get('title', 'release')} printed at {_when(e['time_ms'])}: {_reaction(m, e, now_ms)}")
         ahead = [e for e in cal.upcoming(now_ms, EVENTS_WITHIN_MS, min_impact=PRINT_IMPACT) if e["time_ms"] > now_ms]
@@ -282,7 +301,8 @@ def close_event(live, m, now_ms: int, plan_row: dict | None = None) -> Event | N
     price = getattr(m.spot, "last", None)
     label, key = close_label(close), close_key(close)
     if plan_live(plan_row, now_ms):
-        read = plan_read(plan_row, price if price is not None else getattr(live, "price", None))
+        read = plan_read(plan_row, price if price is not None else getattr(live, "price", None), now_ms,
+                         getattr(m.spot, "frames", None))
         if read is not None:
             basis = f"{label} · plan from report {plan_row.get('report_id', '')}".strip()
             return Event("pulse", key, text(read, m, now_ms, basis), price)
@@ -298,7 +318,7 @@ def report_event(report_row: dict | None, live, m, now_ms: int) -> Event | None:
     if not report_row or now_ms - int(report_row.get("ts_ms") or 0) > SEND_WITHIN_MS:
         return None
     price = getattr(m.spot, "last", None)
-    read = plan_read(report_row, price)
+    read = plan_read(report_row, price, now_ms, getattr(m.spot, "frames", None))
     if read is None:
         return None
     basis = f"new report {report_row.get('report_id', '')}".strip()
