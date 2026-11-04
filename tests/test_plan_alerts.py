@@ -51,6 +51,11 @@ def test_the_whole_short_reads_in_plain_words():
     watch = s[0].headline
     assert watch.startswith("🟡 WATCH · BTC $83,000") and "short zone ($83,075–$83,535)" in watch
     assert "from the fake breakout up report" in watch and "Next check: 1-hour close at" in watch
+    # 4 Nov, 21:00 UTC: "Price reached the short zone" under a headline price below the zone read as a
+    # contradiction; the candle high touched it. Now: touched, the candle high, then the current price.
+    assert "Price touched the short zone ($83,075–$83,535) from the fake breakout up report: the candle high reached $83,600 at " in watch
+    assert "BTC is now $83,000, back below the zone." in watch
+    assert "Price reached" not in watch
     assert ("Short only if: a 1-hour candle closes below $83,077, with sellers doing more of the trading on "
             "that candle.") in watch, "written from the plan's numbers, not the model's wording"
     assert "1h close below 83,077" not in watch, "the model's own confirmation text is not sent"
@@ -95,6 +100,38 @@ def test_a_long_plan_mirrors_it():
     path = [(80300, 80100, 80200)] * 4 + [(80600, 80200, 80550)] * 4 + [(81100, 80500, 81050)] * 4
     s = steps(path, plan=plan)
     assert [x.name for x in s] == ["watch", "confirmed", "target1"] and "TARGET 1 HIT · $81,000" in s[2].headline
+    assert "the candle low reached $80,100 at " in s[0].headline, "a long is touched from above: the candle low"
+    assert "BTC is now $83,000, back above the zone." in s[0].headline
+
+
+def test_the_watch_says_where_price_stands_against_the_zone_now():
+    """The current price is named after the touch, with its side of the zone: inside, back below (a short
+    that retreated), or above (through the zone toward the stop)."""
+    f = fine(UP)
+    frames = {"15m": f, "1h": hourly(f)}
+    inside = pa.replay(PLAN, T0, frames, None, T0 + H, 83_300.0, "BULL_TRAP")[0].headline
+    assert inside.startswith("🟡 WATCH · BTC $83,300") and "BTC is now $83,300, inside the zone." in inside
+    above = pa.replay(PLAN, T0, frames, None, T0 + H, 83_900.0, "BULL_TRAP")[0].headline
+    assert "BTC is now $83,900, above the zone." in above
+    unknown = pa.replay(PLAN, T0, frames, None, T0 + H, None, "BULL_TRAP")[0].headline
+    assert "the candle high reached $83,600 at " in unknown and "BTC is now" not in unknown
+    t = pa.zone_touch(PLAN, T0, frames)
+    assert t is not None and t.at_ms == T0 and t.extreme == 83_600.0 and t.side == "SHORT"
+    assert pa.zone_touch(PLAN, T0, {"15m": fine([(83000, 82900, 82950)] * 4)}) is None
+    assert pa.zone_touch(PLAN, T0, {}) is None and pa.zone_touch({"side": "NONE"}, T0, frames) is None
+
+
+def test_a_plan_made_inside_an_event_regime_says_so_on_the_watch():
+    """The Pulse's regime line says 'no range plan, smaller size'; a report's plan sent the same hour
+    contradicted it. A plan tagged with the regime now says it was made inside it, with its halved size,
+    and that the no-range rule is the day plan's."""
+    plan = dict(PLAN, event_regime="Congressional Elections", risk_pct=0.5, max_leverage=2.5)
+    watch = steps(UP, plan=plan)[0].headline
+    assert ("Event regime (Congressional Elections): the report made this plan inside it, with size halved "
+            "(risk 0.5%, max 2.5x). The no-range-plan rule belongs to the day plan, not to this trade.") in watch
+    bare = steps(UP, plan=dict(plan, risk_pct=None, max_leverage=None))[0].headline
+    assert "inside it, with size halved. The no-range-plan rule" in bare
+    assert "Event regime" not in steps(UP)[0].headline
 
 
 def test_no_trade_plans_are_silent():

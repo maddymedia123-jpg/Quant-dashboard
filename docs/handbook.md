@@ -143,6 +143,15 @@ setup up" arrived after the first big candle. The fixes, each merged live in thi
   desk summary's Watch line leads with it and its directive ends "Event regime (…): wider stop, smaller
   size, no range trade until …"; and the war rooms and the Director see `event_regime` in the state they
   judge. CPI, NFP and the other prints are unchanged: a chop window around the release, not a regime.
+  *Carried into the Director's plan, live 5 November.* On 4 November at 21:26 UTC a report's short went
+  out while the Pulse's regime line said "no range plan, smaller size": the regime governed only the Quant
+  Forecast. Now a sided plan the Director makes while a regime is active is tagged with the event
+  (`plan.event_regime`), its `risk_pct` and `max_leverage` are halved in code (the Director is told to give
+  its normal size, and to place the stop beyond the next structural level so an event sweep of the day's
+  edge does not stop it out), the plan card, the WATCH alert and the Pulse say the plan was made inside the
+  regime with its halved size, and the Pulse's regime line says whose rule "no range plan" is: the Quant
+  Forecast's. A plan made before the regime began carries no tag; the Pulse line still says the rule is
+  the day plan's.
 - *Fix 4, the Pulse's event section names the scheduled prints, live 5 November.* In order: the event
   regime when one is open; the High-impact US prints of the last 24 hours with the macro engine's read of
   the reaction (sell-the-news, spike faded, confirmed, absorbed, or "the reaction is still being traded");
@@ -381,7 +390,7 @@ Every message is scanned against a banned-jargon list before it goes out.
 | --- | --- | --- |
 | Quant Forecast plan | 00:00 UTC, and Scenario B after an invalidation | Regime, directive, timeline line |
 | CAUTION / MODEL HELD / INVALIDATED / LOCKOUT | As the tiers fire | Your tier wording, with the timeline line |
-| Plan alerts (1-agent report) | WATCH when price reaches the zone, CONFIRMED on the confirm close, NO SETUP, TARGET 1–3, STOPPED, EXPIRED | Plain words, from the plan's numbers |
+| Plan alerts (1-agent report) | WATCH when a candle touches the zone, CONFIRMED on the confirm close, NO SETUP, TARGET 1–3, STOPPED, EXPIRED | Plain words, from the plan's numbers. The WATCH says touched, the candle high (a short) or low (a long) with its time, then where price is now (inside, back below, above); a plan made inside an event regime carries its regime line (5 Nov) |
 | Cascade | Only moves into A (strong setup) or C (trend losing control), after the state holds (Live 5 min, Intraday 15 min, Weekly 1 h, Monthly 4 h); a return to the same state within the repeat window (8 h / 12 h / 24 h / 72 h, fix 5) stays silent. The C warning names the engine closes beyond the day's average price and the confirming close | Desk and price, old state → new state, what changed |
 | Reversal confirmed (fix 5, 5 Nov) | A desk in C whose completed anchor candle (Live 4h, Intraday 1D, Weekly 1W, Monthly 1M) closed beyond the day's average price against the bigger trend, once per repeat window; urgent | Desk and price; the close, the level and the trend it broke; who is off, the expected expansion, what makes it wrong again |
 | TRAP | Declared, and settled | "A dip below X should fail and bounce" |
@@ -453,6 +462,7 @@ report runs and are not stored, so there is nothing to read back. See section 9.
 | Roadmap item 10: four macro feeds | Live 5 Nov: 2-year minus funds rate (FRED, New York Fed fallback) with the ±25 bp read; BTC dominance (CoinGecko, change from own samples); USD/JPY yen carry (ECB via frankfurter.dev, BoJ rate hand-set); election odds parked, VoxOdds 404 (section 3) |
 | Roadmap item 11: dollar index reconstructed | Live 5 Nov: ICE's DXY formula on the ECB's six daily rates, a day behind and within a few tenths; 1% week = spike or slide; spike + bitcoin up 3% between the same dates = false-breakout signal (section 3) |
 | Roadmap item 12: Director 4-hour zone vs 24-hour horizon | Live 5 Nov: framing computed in code (price in the day's range, which day edges the 4-hour range reaches), the Director's sentences on it, the plan checked against the day's edges (tactical / needs the edge taken / at the edge) (section 3) |
+| WATCH / Pulse "touched" wording and the event regime in the Director's plan | Live 5 Nov: the WATCH and the Pulse name the touch (the candle high or low, with its time) and then the current price, instead of "Price reached the zone" under a headline price below it; a plan made inside an event regime is tagged, its size halved in code, the Director asked for the wider stop, and the Pulse says the no-range rule is the day plan's (section 3, fix 3) |
 | Per-desk chart switch (Section 3, Main Chart View) | Built 4 Nov: the desk's own candle by default, one coarser view a click away (4h / 1D / 3D / 2W); the call, forecast, summary and alerts stay on the desk's candle (section 3) |
 | Derived candles 12H / 3D / 0.5W / 2W and the cascade read order (Section 3) | Built 4 Nov: built from the fetched candles each refresh; each war room reads your cascade order as briefs beside its three timeframes; 24H is the daily candle (section 3) |
 | Short-horizon trap labels (Section 1.4) | Built 4 Nov: 15m and 1h traps labelled short-horizon, shown and traded on the Live desk only, never in a summary or the Pulse; 4h and longer unchanged (section 3) |

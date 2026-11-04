@@ -2367,6 +2367,9 @@ def plan_html(plan) -> str:
             + _kv("Valid for", f"{plan.expires_hours:.0f}h") + "</div>")
     if plan.confirmations:
         body += "<span class='ti-label'>Confirmation rules</span>" + _li(plan.confirmations)
+    if getattr(plan, "event_regime", ""):
+        body += (f"<p>Made inside the {html.escape(plan.event_regime)} event regime: size halved by the regime rule, "
+                 "stop asked for beyond the next structural level. The day plan's no-range rule is the day plan's.</p>")
     return card_html(f"Plan · {plan.side.lower()} · watched by the alerts", body, tone)
 
 

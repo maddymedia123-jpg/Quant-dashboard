@@ -164,6 +164,14 @@ class PlanLevels(BaseModel):
     risk_pct: Optional[float] = None
     max_leverage: Optional[float] = None
     why_none: str = ""
+    # the major print's title when the plan was made inside its event regime (core.agents.one_agent.tag_plan
+    # halved risk_pct and max_leverage; the Director was asked for the wider stop); "" otherwise and on
+    # every report made before 5 November
+    event_regime: str = ""
+    # the major print's title when the plan was made inside its event regime (core.agents.one_agent.tag_plan
+    # halved risk_pct and max_leverage; the Director was asked for the wider stop); "" otherwise and on
+    # every report made before 5 November
+    event_regime: str = ""
 
     @field_validator("zone_low", "zone_high", "confirm_close", "taker_ratio_limit", "stop", "risk_pct",
                      "max_leverage", "expires_hours", mode="before")

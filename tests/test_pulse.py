@@ -123,6 +123,41 @@ def test_the_confirmation_names_the_candle_and_the_level_and_where_price_stands(
     assert "Do not buy here: wait for a dip into the zone, then buy only after a 1-hour candle closes above $80,300." in above
 
 
+def test_the_pulse_names_the_touch_with_the_candle_high_then_the_current_price():
+    """4 Nov 21:26: the Pulse said 'BTC is $80,088, below the sell zone' an hour after the candle high had
+    touched the zone. With the candles to hand it says touched, the candle high, then where price is now."""
+    import pandas as pd
+    f = pd.DataFrame([{"timestamp": CLOSE + i * 900_000, "open": 81_700.0, "high": h, "low": 81_500.0, "close": 81_700.0}
+                      for i, h in enumerate((81_750.0, 81_900.0, 81_820.0, 81_760.0))])
+    m = NS(**{**vars(market()), "spot": NS(last=81_100.0, frames={"15m": f})})
+    row = {"report_id": "TIR1-T", "ts_ms": CLOSE, "plan": json.dumps(PLAN)}
+    h = pulse.close_event(live(), m, CLOSE + 4 * H, plan_row=row).headline
+    assert "The sell zone ($81,800–$82,200) was touched at " in h and ": the candle high reached $81,900." in h
+    assert "BTC is now $81,100, back below it." in h
+    assert "Do not sell here: wait for a rise into the zone, then sell only after a 1-hour candle closes below $81,800." in h
+    assert "BTC is $81,100, below the sell zone" not in h
+    # inside the zone after the touch: the step is the confirming close
+    inside = NS(**{**vars(market()), "spot": NS(last=82_000.0, frames={"15m": f})})
+    hi = pulse.close_event(live(), inside, CLOSE + 4 * H, plan_row=row).headline
+    assert "BTC is now $82,000, inside it." in hi and "Sell only after a 1-hour candle closes below $81,800." in hi
+    # no candles, or no touch yet: the old sentence
+    none = pulse.close_event(live(), market(), CLOSE + 4 * H, plan_row=row).headline
+    assert "BTC is $81,100, below the sell zone ($81,800–$82,200)." in none and "touched" not in none
+    assert pulse.plan_read(row, 81_100.0)["happening"].startswith("BTC is $81,100, below the sell zone")
+
+
+def test_a_plan_tagged_with_the_regime_says_so_in_the_pulse():
+    now = CLOSE + 60_000
+    tagged = dict(PLAN, event_regime="Congressional Elections", risk_pct=0.5, max_leverage=2.5)
+    row = {"report_id": "TIR1-R", "ts_ms": CLOSE, "plan": json.dumps(tagged)}
+    ev = [{"title": "Congressional Elections", "time_ms": now - 23 * H}]
+    h = pulse.report_event(row, live(), market(ev), now).headline
+    assert ("This plan was made inside the Congressional Elections event regime: size halved (risk 0.5%, max 2.5x). "
+            "The no-range-plan rule below is the day plan's, not this trade's.") in h
+    plain = pulse.report_event({"report_id": "P", "ts_ms": CLOSE, "plan": json.dumps(PLAN)}, live(), market(ev), now).headline
+    assert "made inside the" not in plain
+
+
 def test_a_report_without_a_plan_sends_nothing_and_a_stale_one_is_skipped():
     """A 15-agent report, or a 1-agent 'stand aside', used to send the Live desk's view again: a compare
     run was two dispatches, and every Run was a message whether or not it said anything new."""
@@ -244,7 +279,8 @@ def test_the_event_section_leads_with_the_regime_then_printed_and_scheduled_prin
           {"title": "CPI m/m", "time_ms": now + 30 * H}]
     sec = _event_section(pulse.close_event(live(), market(ev), now).headline)
     assert sec[0].startswith("🚨 EVENT REGIME: Congressional Elections printed 23 hours ago (")
-    assert "no range plan, wider safety lines, smaller size" in sec[0]
+    assert "the day plan's rule is no range plan, wider safety lines, smaller size" in sec[0]
+    assert "That rule is the Quant Forecast's; a report's trade plan is sized by its own regime note." in sec[0]
     assert sec[1].startswith("US Unemployment Claims printed at ") and sec[1].endswith("the reaction is still being traded.")
     assert sec[2].startswith("US ISM Services PMI (medium impact) at ") and "expect a reaction around it" in sec[2]
     assert not any("Building Permits" in ln or "CPI" in ln for ln in sec), "Low impact and beyond the day stay out"

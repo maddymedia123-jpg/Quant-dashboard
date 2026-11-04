@@ -50,6 +50,61 @@ class Step:
     price: float | None
 
 
+@dataclass(frozen=True)
+class Touch:
+    """The first 15-minute candle that reached the zone, and how far it went: the candle high for a short
+    (price rose into the zone), the candle low for a long."""
+    at_ms: int
+    extreme: float
+    side: str
+
+
+def zone_touch(plan: dict, ts_ms: int, frames: dict) -> Touch | None:
+    """The first 15m candle since the report that reached the zone before the plan expires (a forming
+    candle counts), or None. Shared by the WATCH alert and the Pulse, so both name the same touch and the
+    same candle extreme."""
+    side = plan.get("side")
+    if side not in ("LONG", "SHORT"):
+        return None
+    fine = (frames or {}).get("15m")
+    if fine is None or not len(fine):
+        return None
+    low, high = float(plan["zone_low"]), float(plan["zone_high"])
+    expires = ts_ms + int(float(plan.get("expires_hours") or 24) * 3_600_000)
+    for r in fine.itertuples():
+        t = int(r.timestamp)
+        if t + 900_000 > ts_ms and t < expires and r.high >= low and r.low <= high:
+            return Touch(t, float(r.high if side == "SHORT" else r.low), side)
+    return None
+
+
+def _stands(price_now: float | None, low: float, high: float, short: bool) -> str:
+    """Where price is now against the zone, after the touch: inside, back on the side it came from, or
+    through the zone toward the stop."""
+    if price_now is None:
+        return ""
+    if low <= price_now <= high:
+        where = "inside the zone"
+    elif price_now < low:
+        where = "back below the zone" if short else "below the zone"
+    else:
+        where = "above the zone" if short else "back above the zone"
+    return f" BTC is now {_money(price_now)}, {where}."
+
+
+def regime_line(plan: dict) -> str:
+    """The line a plan tagged with an event regime carries (core.agents.one_agent.tag_plan): the Pulse's
+    regime line says 'no range plan, smaller size', and on 4 November a report's short sent the same hour
+    read as its contradiction. The rule is the day plan's; this plan was sized by the regime in code."""
+    title = plan.get("event_regime")
+    if not title:
+        return ""
+    r, lev = plan.get("risk_pct"), plan.get("max_leverage")
+    size = f" (risk {float(r):g}%, max {float(lev):g}x)" if r is not None and lev is not None else ""
+    return (f"\nEvent regime ({title}): the report made this plan inside it, with size halved{size}. "
+            "The no-range-plan rule belongs to the day plan, not to this trade.")
+
+
 def _taker_ratio(flow_frame, open_ms: int) -> float | None:
     if flow_frame is None or not len(flow_frame):
         return None
@@ -83,10 +138,9 @@ def replay(plan: dict, ts_ms: int, frames: dict, flows: dict | None, now_ms: int
     zone = f"{_money(low)}–{_money(high)}"
     steps: list[Step] = []
 
-    # 1. the zone is reached (a forming candle counts: this is the real-time part)
-    touch = next((int(r.timestamp) for r in fine.itertuples()
-                  if int(r.timestamp) + 900_000 > ts_ms and int(r.timestamp) < expires
-                  and r.high >= low and r.low <= high), None)
+    # 1. the zone is touched (a forming candle counts: this is the real-time part)
+    reached = zone_touch(plan, ts_ms, frames)
+    touch = reached.at_ms if reached else None
     if touch is None:
         if now_ms >= expires:
             steps.append(Step("expired", expires, f"⌛ PLAN EXPIRED · {word}\nPrice never reached the zone ({zone}) "
@@ -102,15 +156,21 @@ def replay(plan: dict, ts_ms: int, frames: dict, flows: dict | None, now_ms: int
                  "NO_TRAP": "trend"}.get(classification, "latest")
     from core.indicators.turn_window import next_window
     tw = next_window(touch)
+    # "Price reached the zone" under a headline price below it read as a contradiction (4 Nov, 21:00 UTC:
+    # the candle high had touched the zone and price was back under it). So: touched, the candle's
+    # extreme, then where price is now.
     steps.append(Step("watch", touch, (
         f"🟡 WATCH · BTC {_money(price_now)}\n"
-        f"Price reached the {word} zone ({zone}) from the {kind_word} report.\n"
+        f"Price touched the {word} zone ({zone}) from the {kind_word} report: the candle "
+        f"{'high' if short else 'low'} reached {_money(reached.extreme)} at {_when(touch)}."
+        f"{_stands(price_now, low, high, short)}\n"
         f"Next check: {TF_WORDS.get(tf, tf)} close at {_when(next_close)}.\n"
         f"{word.capitalize()} only if: {rules}.\n"
         f"Cancelled if a {TF_WORDS.get(tf, tf)} candle closes {far} {_money(high if short else low)}. "
         f"Plan wrong past {_money(stop)}.\n"
         + ("We are inside the busiest turning hours of the day right now." if tw.active
            else f"Busiest turning hours: {tw.label}.")
+        + regime_line(plan)
         + (f"\nContext: {context}" if context else "")), price_now))
 
     # 2. the confirming close, or the setup breaking first
@@ -147,7 +207,7 @@ def replay(plan: dict, ts_ms: int, frames: dict, flows: dict | None, now_ms: int
             break
     if entry_ms is None:
         if now_ms >= expires + bar:
-            steps.append(Step("expired", expires, f"⌛ PLAN EXPIRED · {word}\nPrice reached the zone but no {TF_WORDS.get(tf, tf)} "
+            steps.append(Step("expired", expires, f"⌛ PLAN EXPIRED · {word}\nPrice touched the zone but no {TF_WORDS.get(tf, tf)} "
                                                   f"candle confirmed before {_when(expires)}. No trade.", price_now))
         return steps
 
