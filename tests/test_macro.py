@@ -24,6 +24,11 @@ def load(name: str) -> str:
     return (FX / name).read_text(encoding="utf-8")
 
 
+def load_json(name: str):
+    import json
+    return json.loads(load(name))
+
+
 def day(y, m, d) -> int:
     return int(dt.datetime(y, m, d, tzinfo=dt.timezone.utc).timestamp() * 1000)
 
@@ -37,7 +42,7 @@ RECORDED = day(2026, 10, 9)
 
 # ---------- parsing ----------
 def test_the_recorded_windows_parse():
-    for sid in ("DTWEXBGS", "DGS10", "DGS2"):
+    for sid in macro.IDS:
         rows = macro.parse_series(load(f"fred_{sid}.csv"), sid)
         assert len(rows) > 20, sid
         assert rows == sorted(rows), "oldest first"
@@ -142,10 +147,10 @@ def test_an_inverted_curve_is_negative():
 
 # ---------- assembly ----------
 def test_the_recorded_fixtures_assemble_into_a_snapshot():
-    texts = {sid: load(f"fred_{sid}.csv") for sid in ("DTWEXBGS", "DGS10", "DGS2")}
+    texts = {sid: load(f"fred_{sid}.csv") for sid in macro.IDS}
     snap = macro.build(texts, RECORDED)
     assert snap.available and snap.error is None
-    assert set(snap.series) == {"DTWEXBGS", "DGS10", "DGS2"}
+    assert set(snap.series) == set(macro.IDS)
     assert all(s["available"] and not s["stale"] for s in snap.series.values())
     assert snap.spread_2s10s is not None and snap.spread_as_of_ms is not None
 
@@ -172,7 +177,7 @@ def test_the_2_year_failing_alone_gives_no_spread_and_does_not_crash():
 
 
 def test_every_series_failing_is_unavailable():
-    snap = macro.build({sid: httpx.ConnectError("") for sid in ("DTWEXBGS", "DGS10", "DGS2")}, RECORDED)
+    snap = macro.build({sid: httpx.ConnectError("") for sid in macro.IDS}, RECORDED)
     assert not snap.available and "ConnectError" in (snap.error or "")
 
 
@@ -192,8 +197,8 @@ def test_the_request_asks_for_a_recent_window_and_follows_redirects():
 
     snap = _run(macro.fetch_macro(httpx.AsyncClient(transport=httpx.MockTransport(handler)), RECORDED))
     assert snap.available
-    assert len(seen) == 3 and all("cosd=" in u for u in seen)
-    assert {httpx.URL(u).params["id"] for u in seen} == {"DTWEXBGS", "DGS10", "DGS2"}
+    assert len(seen) == 4 and all("cosd=" in u for u in seen)
+    assert {httpx.URL(u).params["id"] for u in seen} == set(macro.IDS)
 
 
 def test_an_oversized_response_is_refused():
@@ -206,7 +211,7 @@ def test_an_oversized_response_is_refused():
 
 # ---------- the panel ----------
 def snapshot() -> MacroSnapshot:
-    texts = {sid: load(f"fred_{sid}.csv") for sid in ("DTWEXBGS", "DGS10", "DGS2")}
+    texts = {sid: load(f"fred_{sid}.csv") for sid in macro.IDS}
     return macro.build(texts, RECORDED)
 
 
@@ -298,6 +303,8 @@ def _fred_down(treasury=TREASURY_CSV, dollar_ok=False):
         seen.append(request.url.host)
         if "treasury" in request.url.host:
             return httpx.Response(200, text=treasury) if treasury else httpx.Response(503)
+        if "newyorkfed" in request.url.host:
+            return httpx.Response(403)
         if dollar_ok and request.url.params["id"] == "DTWEXBGS":
             return httpx.Response(200, text=load("fred_DTWEXBGS.csv"))
         return httpx.Response(403)
@@ -339,3 +346,131 @@ def test_both_down_names_both():
 def test_a_treasury_file_without_the_column_is_refused():
     with pytest.raises(ValueError, match="10 Yr"):
         macro.treasury_as_fred('Date,"1 Mo"\n10/09/2026,4.1\n', "DGS10")
+
+
+# ---------- roadmap item 10: the funds rate and the 2-year minus the funds rate ----------
+NYFED_JSON = {"refRates": [
+    {"effectiveDate": "2026-10-09", "type": "EFFR", "percentRate": 3.88, "targetRateFrom": 3.75, "targetRateTo": 4.00},
+    {"effectiveDate": "2026-10-08", "type": "EFFR", "percentRate": 3.88},
+    {"effectiveDate": "2026-10-07", "type": "OBFR", "percentRate": 3.86},
+    {"effectiveDate": "2026-10-07", "type": "EFFR", "percentRate": 3.87},
+    {"effectiveDate": "2026-10-06", "type": "EFFR", "percentRate": None},
+]}
+
+
+def test_the_funds_rate_is_a_fourth_series_with_a_recorded_window():
+    assert macro.IDS == ("DTWEXBGS", "DGS10", "DGS2", "EFFR")
+    rows = macro.parse_series(load("fred_EFFR.csv"), "EFFR")
+    assert rows and rows[-1] == (day(2026, 10, 9), 3.88)
+
+
+def test_the_delta_is_the_2_year_minus_the_funds_rate_on_a_shared_date():
+    snap = snapshot()
+    assert snap.delta_2y == pytest.approx(4.77 - 3.88)
+    assert snap.delta_2y_as_of_ms == day(2026, 10, 7), "the 2-year's last print; the funds rate is fresher"
+    two = macro.parse_series(csv("DGS2", [("2026-10-06", "4.80"), ("2026-10-07", "4.77")]), "DGS2")
+    effr = macro.parse_series(csv("EFFR", [("2026-10-06", "3.88"), ("2026-10-09", "3.90")]), "EFFR")
+    assert macro.shared_difference(two, effr) == (pytest.approx(0.92), day(2026, 10, 6))
+    assert macro.shared_difference(two, macro.parse_series(csv("EFFR", [("2026-10-09", "3.90")]), "EFFR")) == (None, None)
+
+
+def test_the_funds_rate_failing_alone_leaves_no_delta_and_names_it():
+    texts = {sid: load(f"fred_{sid}.csv") for sid in macro.IDS}
+    texts["EFFR"] = httpx.ConnectError("boom")
+    snap = macro.build(texts, RECORDED)
+    assert snap.available and snap.delta_2y is None and snap.delta_2y_as_of_ms is None
+    assert snap.spread_2s10s is not None and "EFFR" in snap.error
+
+
+@pytest.mark.parametrize("delta,state,word", [
+    (0.26, "contraction", "+26 bp above"), (0.89, "contraction", "tighter money"), (0.25, "neutral", "within 25 bp"),
+    (0.0, "neutral", "+0 bp"), (-0.25, "neutral", "no liquidity signal"), (-0.26, "expansion", "26 bp below"),
+    (-1.0, "expansion", "prices cuts"), (None, "unknown", "share no date"),
+])
+def test_the_owners_25_bp_rule_reads_the_delta(delta, state, word):
+    read = macro.delta_2y_read(delta)
+    assert read["state"] == state and word in read["note"]
+    assert read["label"] == {"contraction": "liquidity contraction", "expansion": "liquidity expansion",
+                             "neutral": "neutral", "unknown": "no read"}[state]
+
+
+def test_the_ny_fed_json_becomes_a_fred_series_oldest_first_effr_only():
+    text = macro.nyfed_as_fred(NYFED_JSON)
+    assert text.startswith("observation_date,EFFR\n")
+    assert macro.parse_series(text, "EFFR") == [(day(2026, 10, 7), 3.87), (day(2026, 10, 8), 3.88), (day(2026, 10, 9), 3.88)]
+    rows = macro.parse_series(macro.nyfed_as_fred(load_json("nyfed_effr.json")), "EFFR")
+    assert rows and rows[-1][1] == 3.88 and rows[0][0] < rows[-1][0]
+
+
+@pytest.mark.parametrize("payload", [{}, {"refRates": []}, {"refRates": [{"type": "OBFR", "effectiveDate": "2026-10-09", "percentRate": 3.8}]}])
+def test_a_ny_fed_payload_without_effr_is_refused(payload):
+    with pytest.raises(ValueError, match="newyorkfed"):
+        macro.nyfed_as_fred(payload)
+
+
+def _effr_down(nyfed_ok=True, fred_ok=True, treasury_ok=True):
+    seen = []
+
+    def handler(request: httpx.Request):
+        seen.append(request.url.host)
+        if "newyorkfed" in request.url.host:
+            return httpx.Response(200, json=NYFED_JSON) if nyfed_ok else httpx.Response(503)
+        if "treasury" in request.url.host:
+            return httpx.Response(200, text=TREASURY_CSV) if treasury_ok else httpx.Response(503)
+        sid = request.url.params["id"]
+        if sid == "EFFR" or not fred_ok:
+            return httpx.Response(403)
+        return httpx.Response(200, text=load(f"fred_{sid}.csv"))
+    return _run(macro.fetch_macro(httpx.AsyncClient(transport=httpx.MockTransport(handler)), RECORDED)), seen
+
+
+def test_fred_refusing_the_funds_rate_falls_back_to_the_ny_fed():
+    snap, seen = _effr_down()
+    assert snap.available and snap.source == "fred+newyorkfed.org"
+    assert snap.series["EFFR"]["available"] and snap.series["EFFR"]["value"] == 3.88
+    assert snap.delta_2y == pytest.approx(4.77 - 3.87), "the 2-year's 7 October against the NY Fed's 7 October"
+    assert "markets.newyorkfed.org" in seen and "home.treasury.gov" not in seen
+
+
+def test_fred_refusing_everything_names_both_fallbacks():
+    snap, _ = _effr_down(fred_ok=False)
+    assert snap.available and snap.source == "treasury.gov+newyorkfed.org"
+    assert snap.series["DGS2"]["available"] and snap.series["EFFR"]["available"]
+    assert not snap.series["DTWEXBGS"]["available"]
+
+
+def test_the_ny_fed_down_too_leaves_the_funds_rate_a_named_gap():
+    snap, _ = _effr_down(nyfed_ok=False)
+    assert snap.available and snap.source == "fred" and not snap.series["EFFR"]["available"]
+    assert "newyorkfed fallback" in snap.series["EFFR"]["note"] and snap.delta_2y is None
+
+
+def test_the_rates_panel_shows_the_delta_with_its_read():
+    h = panels.rates_html(snapshot(), RECORDED)
+    assert "Effective federal funds rate" in h and "3.88%" in h
+    assert "2-year minus funds rate <strong>+89 bp</strong>" in h and "liquidity contraction" in h
+    assert "both from the same day" in h
+    snap = snapshot()
+    snap.delta_2y = -0.4
+    assert "liquidity expansion" in panels.rates_html(snap, RECORDED)
+    snap.delta_2y = None
+    assert "2-year minus funds rate" not in panels.rates_html(snap, RECORDED)
+
+
+def test_the_panel_names_every_origin_combination():
+    for source, text in (("fred", "FRED"), ("treasury.gov", "US Treasury yield curve (FRED unreachable)"),
+                         ("fred+treasury.gov", "FRED, with the US Treasury yield curve where FRED refused"),
+                         ("fred+newyorkfed.org", "FRED, with the New York Fed where FRED refused"),
+                         ("treasury.gov+newyorkfed.org", "the US Treasury yield curve, the New York Fed (FRED unreachable)"),
+                         ("fixture", "fixture")):
+        snap = snapshot()
+        snap.source = source
+        assert text in panels.rates_html(snap, RECORDED), source
+
+
+def test_the_delta_reaches_the_agents_macro_read():
+    from core.agents import context
+    from core.data.offline import fixture_market
+    rates = context.macro_read(fixture_market())["rates_and_dollar"]
+    assert rates["EFFR"]["value"] == 3.88 and rates["delta_2y_bp"] == 89
+    assert rates["delta_2y_read"]["state"] == "contraction" and "tighter money" in rates["delta_2y_read"]["note"]

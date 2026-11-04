@@ -55,6 +55,15 @@ def one_pass(store: Store, now_ms: int | None = None, market=None) -> pipeline.P
         if a is not None:
             analyses[key] = a
     store.sync()
+    if market is None and not _offline():
+        # roadmap item 10: the worker is what gives BTC dominance a history (one sample per pass, at most
+        # one per ten minutes), so the agents' read can say where capital is rotating
+        try:
+            from core.derived import enrich_dominance, record_dominance
+            record_dominance(store, m.dominance, now)
+            m = m.model_copy(update={"dominance": enrich_dominance(store, m.dominance, now)})
+        except Exception as e:  # noqa: BLE001 - a sample is never worth the pass
+            log.warning("dominance sample skipped: %s", e)
     latest = store.reports(limit=1)
     classification = latest[0].get("classification") if latest else None
     may_send = not _offline()        # fixture data is not the market: never sent anywhere

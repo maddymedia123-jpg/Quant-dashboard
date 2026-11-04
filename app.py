@@ -61,7 +61,7 @@ from core.agents.recon_profiles import LIVE, PROFILES
 from core import live_accuracy, live_anchor, pipeline
 from core.config import CATEGORIES, CHART_VIEWS, MACRO_EVENTS, TTL
 from core.data.market import assemble, load_context, load_spot
-from core.derived import enrich_futures, record_sample
+from core.derived import enrich_dominance, enrich_futures, record_dominance, record_sample
 from core.indicators import desk_derivs
 from core.indicators.category import analyze_category
 from core.indicators.early_warning import early_warnings
@@ -208,7 +208,9 @@ try:
     _store_early = _live_store()
     _now_early = int(time.time() * 1000)
     record_sample(_store_early, m.futures, _now_early)
-    m = m.model_copy(update={"futures": enrich_futures(_store_early, m.futures, _now_early)})
+    record_dominance(_store_early, m.dominance, _now_early)
+    m = m.model_copy(update={"futures": enrich_futures(_store_early, m.futures, _now_early),
+                             "dominance": enrich_dominance(_store_early, m.dominance, _now_early)})
 except Exception as e:  # noqa: BLE001 - derived fields are optional
     st.sidebar.caption(f"Derived futures fields unavailable: {e}")
 
@@ -1313,6 +1315,19 @@ if screen == "macro":
         panels.render(panels.rates_html(m.macro, now_ms))
     except Exception as e:  # noqa: BLE001
         st.warning(f"Rates unavailable: {e}")
+
+    # roadmap item 10: where crypto capital is rotating, and the yen carry trade
+    dom_col, yen_col = st.columns(2, gap="large")
+    with dom_col:
+        try:
+            panels.render(panels.dominance_html(m.dominance, now_ms))
+        except Exception as e:  # noqa: BLE001
+            st.warning(f"Dominance unavailable: {e}")
+    with yen_col:
+        try:
+            panels.render(panels.yen_html(m.fx, m.macro, now_ms))
+        except Exception as e:  # noqa: BLE001
+            st.warning(f"USD/JPY unavailable: {e}")
 
     # the forecasting layer: positioning into each print, what the print did, and how fresh each story is
     ev_col, nar_col = st.columns(2, gap="large")

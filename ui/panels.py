@@ -1731,14 +1731,110 @@ def rates_html(macro, now_ms: int) -> str:
         state = "inverted - the market prices cuts ahead" if spread < 0 else "positively sloped"
         body += (f"<p>2s10s spread <strong>{spread * 100:+.0f} bp</strong> "
                  f"<span class='muted'>({html.escape(state)}; both yields from the same day)</span></p>")
+    delta = getattr(macro, "delta_2y", None)
+    if delta is not None:
+        from core.data.macro import delta_2y_read
+        read = delta_2y_read(delta)
+        tone = {"contraction": "down", "expansion": "up"}.get(read["state"], "neutral")
+        body += (f"<p>2-year minus funds rate <strong>{delta * 100:+.0f} bp</strong> "
+                 f"{chip(read['label'], tone)} <span class='muted'>({html.escape(read['note'])}; "
+                 "both from the same day)</span></p>")
     if getattr(macro, "error", None):
         body += (f"<p class='muted'>Partial: {html.escape(str(macro.error))[:200]}</p>")
-    origin = {"fred": "FRED", "treasury.gov": "the US Treasury yield curve (FRED unreachable)",
-              "fred+treasury.gov": "FRED, yields from the US Treasury yield curve"}.get(macro.source, macro.source)
+    origin = _macro_origin(macro.source)
     body += (f"<p class='muted'>Daily series from {html.escape(origin)}, published with a business-day lag or two - a "
              "reading a couple of days old is normal. A move of 15 bp in a yield or 1.5 points in the "
              "dollar over a week is highlighted.</p>")
     return card_html("US macro", body, "neutral")
+
+
+def _macro_origin(source: str) -> str:
+    names = {"fred": "FRED", "treasury.gov": "the US Treasury yield curve", "newyorkfed.org": "the New York Fed"}
+    parts = [p for p in str(source or "").split("+") if p]
+    if not parts or any(p not in names for p in parts):
+        return str(source)
+    if parts == ["fred"]:
+        return "FRED"
+    if "fred" not in parts:
+        return ", ".join(names[p] for p in parts) + " (FRED unreachable)"
+    return "FRED, with " + " and ".join(names[p] for p in parts if p != "fred") + " where FRED refused"
+
+
+def dominance_html(dom, now_ms: int) -> str:
+    """Bitcoin's share of the crypto market and where capital is rotating (roadmap item 10)."""
+    if not getattr(dom, "available", False):
+        return card_html("BTC dominance",
+                         f"<p class='muted'>No dominance feed: "
+                         f"{html.escape(str(getattr(dom, 'error', '') or 'unavailable'))}.</p>", "neutral")
+    from core.data.dominance import is_stale, rotation
+    read = rotation(dom)
+    tone = {"into_btc": "up", "into_alts": "down"}.get(read["state"], "neutral")
+    label = {"into_btc": "rotating into BTC", "into_alts": "rotating to alts", "flat": "no rotation",
+             "unknown": "no history yet"}[read["state"]]
+    body = f"<div class='ti-big'>{fmt_num(dom.btc_pct, 1)}%</div><p class='muted'>of the crypto market is bitcoin"
+    if dom.eth_pct is not None:
+        body += f" · ETH {fmt_num(dom.eth_pct, 1)}%"
+    if dom.stable_pct is not None:
+        body += f" · stablecoins {fmt_num(dom.stable_pct, 1)}%"
+    body += "</p>"
+    rows = ""
+    for what, value in (("24h", dom.change_24h_pp), ("7d", dom.change_7d_pp)):
+        text = f"{value:+.2f} pp" if value is not None else "no sample yet"
+        rows += f"<div class='ti-split'><span>Share change {what}</span><span>{html.escape(text)}</span></div>"
+    if dom.total_mcap_usd:
+        cap = f"{fmt_num(dom.total_mcap_usd / 1e12, 2, '$')}T"
+        if dom.mcap_change_24h_pct is not None:
+            cap += f" ({dom.mcap_change_24h_pct:+.1f}% 24h)"
+        rows += f"<div class='ti-split'><span>Whole market</span><span>{html.escape(cap)}</span></div>"
+    body += f"<div class='ti-rows'>{rows}</div>"
+    body += f"<div class='ti-tags'>{chip(label, tone)}"
+    if is_stale(dom, now_ms):
+        body += chip("stale", "down")
+    body += f"</div><p>{html.escape(read['note'])}.</p>"
+    body += ("<p class='muted ti-note'>CoinGecko, read " + html.escape(_age(dom.as_of_ms, now_ms)) + ". The share's "
+             "change comes from the dashboard's own samples (one every pass), so it starts empty and fills in "
+             "over the first day and week.</p>")
+    return card_html("BTC dominance", body, "warn" if read["state"] == "into_alts" else "neutral")
+
+
+def yen_html(fx, macro, now_ms: int) -> str:
+    """USD/JPY and the carry-trade read (roadmap item 10): the pace of the yen, and the US-Japan rate gap
+    when the owner has set the BoJ rate."""
+    if not getattr(fx, "available", False):
+        return card_html("Yen carry · USD/JPY",
+                         f"<p class='muted'>No USD/JPY feed: "
+                         f"{html.escape(str(getattr(fx, 'error', '') or 'unavailable'))}.</p>", "neutral")
+    from core.data.fx import yen_read
+    from core.trades import fmt_date
+    effr = None
+    if getattr(macro, "available", False):
+        s = (getattr(macro, "series", {}) or {}).get("EFFR") or {}
+        effr = s.get("value") if s.get("available") else None
+    read = yen_read(fx, effr)
+    tone = {"unwind_risk": "down", "carry_on": "up"}.get(read["state"], "neutral")
+    label = {"unwind_risk": "unwind risk", "carry_on": "carry on", "quiet": "quiet",
+             "unknown": "no week-ago quote"}[read["state"]]
+    body = f"<div class='ti-big'>{fmt_num(fx.rate, 2)}</div><p class='muted'>yen per dollar, ECB fix of {html.escape(fmt_date(fx.as_of_ms))}"
+    if fx.stale:
+        body += " " + chip("stale", "down")
+    body += "</p>"
+    rows = ""
+    for what, value in (("1 week", fx.change_1w_pct), ("1 month", fx.change_1m_pct)):
+        text = f"{value:+.2f}%" if value is not None else "no earlier quote"
+        rows += f"<div class='ti-split'><span>USD/JPY {what}</span><span>{html.escape(text)}</span></div>"
+    boj = fx.boj_rate_pct
+    rows += ("<div class='ti-split'><span>BoJ policy rate</span><span>"
+             + (f"{boj:.2f}% (hand-set)" if boj is not None else "<span class='muted'>not set</span>") + "</span></div>")
+    if effr is not None:
+        rows += f"<div class='ti-split'><span>US funds rate</span><span>{effr:.2f}%</span></div>"
+    if read["carry_pct"] is not None:
+        rows += f"<div class='ti-split'><span>Carry (US minus Japan)</span><span>{read['carry_pct']:+.2f} pp</span></div>"
+    body += f"<div class='ti-rows'>{rows}</div>"
+    body += f"<div class='ti-tags'>{chip(label, tone)}</div><p>{html.escape(read['note'])}.</p>"
+    body += ("<p class='muted ti-note'>A fall of 1.5% or more in a week is the unwind warning (August 2024: "
+             "USD/JPY fell about 12% in four weeks and bitcoin lost a quarter in days). The BoJ rate is set by hand "
+             "(BOJ_POLICY_RATE_PCT) because it changes only at scheduled meetings.</p>")
+    return card_html("Yen carry · USD/JPY", body, "warn" if read["state"] == "unwind_risk" else "neutral")
 
 
 def exchange_flows_html(f: dict) -> str:

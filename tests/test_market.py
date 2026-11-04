@@ -29,11 +29,11 @@ def test_fetch_all_isolates_provider_failures(monkeypatch):
     # depended on which live feeds happened to answer (it failed whenever FRED or COT was down)
     for name in ("fetch_hyperliquid", "fetch_coinlobster", "fetch_stablecoins", "fetch_calendar",
                  "fetch_kraken_futures", "fetch_news", "fetch_gold", "fetch_predictions", "fetch_macro",
-                 "fetch_cot", "fetch_taker_flow", "fetch_exchange_flows"):
+                 "fetch_cot", "fetch_taker_flow", "fetch_exchange_flows", "fetch_dominance", "fetch_fx"):
         monkeypatch.setattr(market, name, boom)  # never touch the network in tests
 
     snap = asyncio.run(market.fetch_all())
     assert snap.spot.available
     assert snap.futures.available is False and "network down" in snap.futures.error
     assert snap.unavailable() == ["futures", "hyperliquid", "liquidations", "whales", "stablecoins", "calendar",
-                                  "news", "metals", "predictions", "macro", "cot", "taker_flow", "exchange_flows"]
+                                  "news", "metals", "predictions", "macro", "cot", "taker_flow", "exchange_flows", "dominance", "fx"]
