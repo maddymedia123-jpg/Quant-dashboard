@@ -30,7 +30,9 @@ CATEGORIES: dict[str, Category] = {
 # His v22 Section 3 "Main Chart View" (owner 4 Nov): each desk draws its own candle by default, with one
 # coarser view a switch away. The call, the forecast, the summary and every read stay on the default;
 # only the candles drawn, and the overlays read on them, change (core.indicators.category.view_analysis).
-CHART_VIEWS: dict[str, tuple[str, str]] = {"live": ("1h", "4h"), "intraday": ("4h", "1d"),
+# Live Recon draws the 4-hour chart by default, as his table reads ("Main Chart View: 4-Hour Chart"); the
+# 1h, which its call is made on, is the other view. The other desks default to their own candle.
+CHART_VIEWS: dict[str, tuple[str, str]] = {"live": ("4h", "1h"), "intraday": ("4h", "1d"),
                                           "weekly": ("1d", "3d"), "monthly": ("1w", "2w")}
 # Every candle size the snapshot can carry, shortest first: the next one up is a view's context.
 TF_LADDER: tuple[str, ...] = ("15m", "1h", "4h", "12h", "1d", "3d", "0.5w", "1w", "2w", "1M", "3M")

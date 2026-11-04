@@ -149,6 +149,9 @@ def test_a_4h_close_while_a_plan_is_live_speaks_from_the_plan():
     assert "Safety Line): $82,650" in e.headline
     # closed by the ledger, or out of hours: back to the desk
     done = dict(row, plan_outcome="stop")
+    cancelled = dict(row, plan_outcome="cancelled")
+    assert pulse.plan_live(cancelled, CLOSE) is False
+    assert "Live desk" in pulse.close_event(live(), market(), CLOSE + 60_000, plan_row=cancelled).headline, "a cancelled plan hands the pulse back to the Live desk"
     assert "Live desk" in pulse.close_event(live(), market(), CLOSE + 60_000, plan_row=done).headline
     old = dict(row, ts_ms=CLOSE - 13 * H)                      # PLAN expires after 12 hours
     assert "Live desk" in pulse.close_event(live(), market(), CLOSE + 60_000, plan_row=old).headline

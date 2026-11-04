@@ -249,3 +249,37 @@ def test_the_director_reads_each_desk_over_its_own_window(ctx):
                        "weekly": "the next 7 days", "monthly": "the next 30 days"}
     assert state["desk_derivatives"]["weekly"]["liquidations"]["over"] == "7d"
     assert "desk_derivatives[desk]" in one_agent.ONE_AGENT_TEXT
+
+
+# ---------- cancelled: the setup breaks before any confirming close (4 Nov election-day fix 1) ----------
+def test_a_short_that_trades_through_the_stop_before_confirming_is_cancelled():
+    up = [(83600, 83400, 83550)] * 4                                   # hour 0: into the zone
+    rip = [(PLAN["stop"] + 50, 83400, 83600)] * 4                     # hour 1: through the stop, no close below confirm
+    assert score(up + rip) == "cancelled"
+    assert score(up + rip, now_offset=3 * H) == "cancelled", "the hour has closed: it is final, not open"
+
+
+def test_a_confirming_candle_that_closes_beyond_the_zone_is_cancelled():
+    up = [(83600, 83400, 83550)] * 4
+    far = PLAN["zone_high"] + 20                                       # above the zone, short of the stop
+    through = [(far + 5, 83500, far)] * 4                              # hour 1 closes above the zone: no rejection
+    assert far + 5 < PLAN["stop"], "this candle must not reach the stop, or the other rule fires first"
+    assert score(up + through) == "cancelled"
+
+
+def test_the_fourth_of_november_short_is_cancelled_not_open():
+    """The real plan from report TIR1-20261104-000548: zone 77,640.8-78,000, stop 78,300. Price touched the
+    zone at 05:36 UTC and the 07:00 candle ran to 78,326 with no close below 77,640.8. The tracker said
+    NO SETUP at 08:00; this scorer said open, and the Pulse sold from the plan until 17:00."""
+    plan = {"side": "SHORT", "zone_low": 77640.8, "zone_high": 78000.0, "confirm_timeframe": "1h",
+            "confirm_close": 77640.8, "stop": 78300.0, "targets": [77310.45, 76360.3, 75016.4], "expires_hours": 24.0}
+    quiet = [(77500, 77300, 77400)] * 20                               # hours 0-4: under the zone
+    touch = [(77700, 77450, 77696)] * 4                                # hour 5: into the zone, closes above 77,640.8 (no confirmation)
+    run = [(78326, 77830, 78098)] * 4                                  # hour 6: through the stop, closes 78,098
+    fine = candles(quiet + touch + run)
+    frames = {"15m": fine, "1h": hourly(fine)}
+    assert accuracy.plan_outcome(plan, T0, frames, T0 + 8 * H) == "cancelled"
+    from core import pulse
+    row = {"report_id": "TIR1-20261104-000548", "ts_ms": T0, "plan": json.dumps(plan), "plan_outcome": "cancelled"}
+    assert pulse.plan_live(row, T0 + 9 * H) is False, "the Pulse must stop speaking from it the same minute"
+    assert "cancelled" in accuracy.PLAN_OUTCOMES
