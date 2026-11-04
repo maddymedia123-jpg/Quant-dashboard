@@ -149,7 +149,7 @@ def macro_read(m: MarketSnapshot, now_ms: int | None = None) -> dict:
                      "yen_carry: USD/JPY down 1.5% in a week is carry-unwind risk, the carry gap only when the BoJ "
                      "rate is hand-set; dollar_index: ICE's DXY formula rebuilt on the ECB's six daily rates (a day "
                      "behind, within a few tenths), a 1% week is a spike or slide, a spike with bitcoin up 3% over the "
-                     "same sessions is the false-breakout signal")
+                     "same dates is the false-breakout signal")
     return out
 
 
@@ -194,12 +194,12 @@ def _dollar(m: MarketSnapshot) -> dict:
         return {"available": False, "note": getattr(fx, "error", None) or "USD/JPY feed down"}
     if fx.dxy is None:
         return {"available": False, "note": fx.dxy_note or "no day in the window has all six rates"}
-    from core.data.fx import btc_sessions_change_pct, dollar_read
-    btc = btc_sessions_change_pct(getattr(getattr(m, "spot", None), "frames", None) or {})
+    from core.data.fx import btc_change_between, dollar_read
+    btc = btc_change_between(getattr(getattr(m, "spot", None), "frames", None) or {}, fx.dxy_week_ago_ms, fx.dxy_as_of_ms)
     read = dollar_read(fx, btc)
     return {"available": True, "dxy_reconstructed": fx.dxy, "change_1w_pct": fx.dxy_change_1w_pct,
-            "change_1m_pct": fx.dxy_change_1m_pct, "btc_same_sessions_pct": btc, "stale": fx.stale,
-            "state": read["state"], "note": read["note"]}
+            "change_1m_pct": fx.dxy_change_1m_pct, "btc_same_dates_pct": btc, "age_days": fx.dxy_age_days,
+            "stale": fx.dxy_stale, "state": read["state"], "note": read["note"]}
 
 
 def _yen(m: MarketSnapshot) -> dict:

@@ -239,7 +239,18 @@ def test_the_snapshot_carries_the_index_with_its_week_and_month():
     assert s.dxy == pytest.approx(101.255, abs=0.001) and s.dxy_as_of_ms == RECORDED
     assert s.dxy_week_ago == pytest.approx(102.348, abs=0.001) and s.dxy_change_1w_pct == pytest.approx(-1.07, abs=0.01)
     assert s.dxy_month_ago is not None and s.dxy_change_1m_pct is not None and s.dxy_note is None
+    assert s.dxy_week_ago_ms == RECORDED - 7 * 86_400_000, "the week-ago fix was Wednesday 28 October"
+    assert s.dxy_age_days == 0.0 and not s.dxy_stale
     assert s.rate == 158.25, "the yen read is untouched"
+
+
+def test_the_index_carries_its_own_age_not_the_yens():
+    jpy = rows([158.0, 158.1, 158.2, 158.3, 158.4, 158.5, 158.6], start=(2026, 10, 1))
+    dxy = [(day(2026, 10, 1) + i * 86_400_000, 100.0 + i) for i in range(2)]   # the index stops on 2 October
+    s = fx.build(jpy, day(2026, 10, 7), dxy_rows=dxy)
+    assert not s.stale and s.age_days == 0.0, "USD/JPY is current"
+    assert s.dxy == 101.0 and s.dxy_age_days == 5.0 and s.dxy_stale, "the index is not"
+    assert s.dxy_week_ago_ms is None and s.dxy_change_1w_pct is None
 
 
 def test_no_index_rows_or_an_implausible_index_leave_the_index_none_with_a_note():
@@ -251,9 +262,13 @@ def test_no_index_rows_or_an_implausible_index_leave_the_index_none_with_a_note(
     assert fx.build(jpy, day(2026, 10, 3)).dxy is None and fx.build(jpy, day(2026, 10, 3)).dxy_note is None
 
 
+DAY_MS = 86_400_000
+
+
 def dxy_snap(**kw) -> FxSnapshot:
     base = dict(source="frankfurter", rate=158.25, as_of_ms=RECORDED, change_1w_pct=0.2, dxy=101.26,
-                dxy_as_of_ms=RECORDED, dxy_change_1w_pct=-1.07, dxy_change_1m_pct=-0.5, age_days=0.0)
+                dxy_as_of_ms=RECORDED, dxy_week_ago_ms=RECORDED - 7 * DAY_MS, dxy_change_1w_pct=-1.07,
+                dxy_change_1m_pct=-0.5, age_days=0.0, dxy_age_days=0.0)
     base.update(kw)
     return FxSnapshot(**base)
 
@@ -264,7 +279,7 @@ def test_a_dollar_spike_with_a_bitcoin_rally_is_the_false_breakout_signal():
     assert fx.dollar_read(dxy_snap(dxy_change_1w_pct=1.2), btc_week_pct=2.9)["state"] == "spike"
     assert fx.dollar_read(dxy_snap(dxy_change_1w_pct=0.99), btc_week_pct=4.5)["state"] == "quiet"
     r = fx.dollar_read(dxy_snap(dxy_change_1w_pct=1.2), btc_week_pct=None)
-    assert r["state"] == "spike" and "same sessions" not in r["note"]
+    assert r["state"] == "spike" and "same dates" not in r["note"]
 
 
 def test_a_sliding_dollar_is_a_tailwind_and_the_rest_is_quiet():
@@ -281,24 +296,39 @@ def test_no_index_or_no_week_ago_value_is_unknown_with_the_reason():
     assert r["state"] == "unknown" and r["note"] == "503"
 
 
-def test_bitcoins_week_is_five_completed_daily_candles():
+def daily(closes: list[float], end_ms: int = RECORDED):
+    """A daily frame whose last candle opened on end_ms (the forming one), oldest first."""
     import pandas as pd
-    closes = [100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 110.0, 999.0]   # the last row is the forming candle
-    frames = {"1d": pd.DataFrame({"close": closes})}
-    assert fx.btc_sessions_change_pct(frames) == pytest.approx((110.0 / 101.0 - 1) * 100, abs=0.01)
-    assert fx.btc_sessions_change_pct({"1d": pd.DataFrame({"close": closes[:6]})}) is None, "too short"
-    assert fx.btc_sessions_change_pct({}) is None and fx.btc_sessions_change_pct(None) is None
-    assert fx.btc_sessions_change_pct({"1d": pd.DataFrame({"open": closes})}) is None, "no close column"
+    n = len(closes)
+    return pd.DataFrame({"timestamp": [end_ms - (n - 1 - i) * DAY_MS for i in range(n)], "close": closes})
+
+
+def test_bitcoins_move_is_read_between_the_index_dates_on_completed_candles():
+    closes = [100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 106.0, 107.0, 110.0, 999.0]   # last row: forming
+    frames = {"1d": daily(closes)}                       # candles open RECORDED-9d ... RECORDED
+    # the index's dates: week-ago fix RECORDED-7d (close 102), latest fix RECORDED-1d (close 110)
+    assert fx.btc_change_between(frames, RECORDED - 7 * DAY_MS, RECORDED - DAY_MS) == pytest.approx((110 / 102 - 1) * 100, abs=0.01)
+    # a fix dated today: today's candle is forming, so yesterday's completed close stands in (within tolerance)
+    assert fx.btc_change_between(frames, RECORDED - 7 * DAY_MS, RECORDED) == pytest.approx((110 / 102 - 1) * 100, abs=0.01)
+    # a fix on a date the frame does not cover gives no read rather than the nearest stale one
+    assert fx.btc_change_between(frames, RECORDED - 30 * DAY_MS, RECORDED - DAY_MS) is None
+    assert fx.btc_change_between(frames, RECORDED - 7 * DAY_MS, RECORDED + 5 * DAY_MS) is None
+    assert fx.btc_change_between(frames, None, RECORDED) is None and fx.btc_change_between(frames, RECORDED, RECORDED - DAY_MS) is None
+    assert fx.btc_change_between({}, RECORDED - 7 * DAY_MS, RECORDED) is None and fx.btc_change_between(None, 1, 2) is None
+    import pandas as pd
+    assert fx.btc_change_between({"1d": pd.DataFrame({"close": closes})}, RECORDED - 7 * DAY_MS, RECORDED) is None, "no timestamps"
 
 
 def test_the_dollar_card_shows_the_index_the_changes_bitcoin_and_the_read():
-    import pandas as pd
-    spot = type("S", (), {"frames": {"1d": pd.DataFrame({"close": [100.0] * 3 + [100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 106.0]})}})()
+    spot = type("S", (), {"frames": {"1d": daily([100.0, 100.0, 100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 105.0, 999.0])}})()
     h = panels.dollar_html(dxy_snap(dxy_change_1w_pct=1.5), spot, RECORDED)
     assert "101.26" in h and "Wed 04 Nov" in h and "+1.50%" in h and "-0.50%" in h and "+5.0%" in h
-    assert "false-breakout signal" in h and "ti-card warn" in h and "reconstructed" in h.lower()
+    assert "false-breakout signal" in h and "ti-card warn" in h and "reconstructed" in h.lower() and ">stale<" not in h
     h = panels.dollar_html(dxy_snap(), type("S", (), {"frames": {}})(), RECORDED)
-    assert "dollar sliding" in h and "no daily candles" in h and "ti-card neutral" in h
+    assert "dollar sliding" in h and "no daily candles for those dates" in h and "ti-card neutral" in h
+    h = panels.dollar_html(dxy_snap(dxy_stale=True, dxy_age_days=5.0), spot, RECORDED)
+    assert ">stale<" in h, "the index's own staleness, not the yen's"
+    assert ">stale<" not in panels.dollar_html(dxy_snap(stale=True), spot, RECORDED), "a stale yen does not mark the index"
 
 
 def test_the_dollar_card_names_a_missing_index_and_escapes():
@@ -315,7 +345,8 @@ def test_the_fixture_market_carries_the_dollar_index_to_the_macro_read():
     read = context.macro_read(m)["dollar_index"]
     assert read["available"] and read["dxy_reconstructed"] == pytest.approx(101.255, abs=0.001)
     assert read["change_1w_pct"] == pytest.approx(-1.07, abs=0.01) and read["state"] == "slide"
-    assert read["btc_same_sessions_pct"] is not None
+    assert read["btc_same_dates_pct"] is None, "the fixture's daily candles predate the window: no read, not a stale one"
+    assert read["age_days"] == 0.0 and read["stale"] is False
     m2 = m.model_copy(update={"fx": m.fx.model_copy(update={"dxy": None, "dxy_note": "no day in the window has all six rates"})})
     assert context.macro_read(m2)["dollar_index"] == {"available": False, "note": "no day in the window has all six rates"}
     m3 = m.model_copy(update={"fx": FxSnapshot.unavailable("frankfurter", "503")})

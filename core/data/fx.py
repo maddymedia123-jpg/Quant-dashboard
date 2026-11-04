@@ -22,7 +22,10 @@ publishes all six every business day. So the index is REBUILT here from the same
 formula on the ECB's 14:15 CET fixes rather than ICE's live spot, which puts it within a few tenths of
 the real print and a day behind it by design. It is labelled reconstructed wherever it is shown. The
 read the owner asked for is the divergence: the dollar spiking over a week of sessions while bitcoin
-rallies over the same sessions is the false-breakout signal.
+rallies between the same two dates is the false-breakout signal. Bitcoin's leg is read on the daily
+candles of the index's own dates (the week-ago fix and the latest fix), not on a count of candles, so the
+two legs cover the same days; and the index carries its own age and stale flag rather than borrowing the
+yen's, because a day on which one of the six rates is missing leaves the index a day older than USD/JPY.
 
 Found by calling the feed: frankfurter.app answers 301 (the host moved to api.frankfurter.dev/v1); the
 range form `/v1/2026-08-25..?base=USD&symbols=EUR,JPY,...` returns {"rates": {"2026-10-20": {"EUR":
@@ -61,7 +64,8 @@ DXY_WEIGHTS = {"EUR": 0.576, "JPY": 0.136, "GBP": 0.119, "CAD": 0.091, "SEK": 0.
 MAJORS: tuple[str, ...] = tuple(DXY_WEIGHTS)
 DXY_PLAUSIBLE = (60.0, 160.0)     # DXY has lived between 70 and 165 since 1973
 DXY_SPIKE_WEEK_PCT = 1.0          # a week's move in the index that counts as a spike (or a slide)
-BTC_RALLY_WEEK_PCT = 3.0          # a bitcoin move over the same sessions that counts as a rally
+BTC_RALLY_WEEK_PCT = 3.0          # a bitcoin move between the same dates that counts as a rally
+BTC_MATCH_TOLERANCE_MS = 2 * 86_400_000   # a daily candle more than this before the fix date is not that date
 
 
 def _now_ms() -> int:
@@ -154,6 +158,10 @@ def _back(rows: list[tuple[int, float]], sessions: int) -> float | None:
     return rows[-1 - sessions][1] if len(rows) > sessions else None
 
 
+def _back_ms(rows: list[tuple[int, float]], sessions: int) -> int | None:
+    return rows[-1 - sessions][0] if len(rows) > sessions else None
+
+
 def _pct(now: float, then: float | None) -> float | None:
     return round((now / then - 1.0) * 100.0, 2) if then else None
 
@@ -183,10 +191,12 @@ def build(rows: list[tuple[int, float]], now_ms: int, boj_rate_pct: float | None
         return snap.model_copy(update={"dxy_note": f"reconstructed index {dxy} is outside the plausible "
                                                    f"{DXY_PLAUSIBLE[0]:.0f}-{DXY_PLAUSIBLE[1]:.0f} range"})
     dw, dm = _back(dxy_rows, WEEK_BACK_OBSERVATIONS), _back(dxy_rows, MONTH_BACK_OBSERVATIONS)
+    dxy_age = (now_ms - dxy_as_of) / 86_400_000
     return snap.model_copy(update={
         "dxy": dxy, "dxy_as_of_ms": dxy_as_of,
-        "dxy_week_ago": dw, "dxy_change_1w_pct": _pct(dxy, dw),
+        "dxy_week_ago": dw, "dxy_change_1w_pct": _pct(dxy, dw), "dxy_week_ago_ms": _back_ms(dxy_rows, WEEK_BACK_OBSERVATIONS),
         "dxy_month_ago": dm, "dxy_change_1m_pct": _pct(dxy, dm),
+        "dxy_age_days": round(dxy_age, 1), "dxy_stale": dxy_age > STALE_DAYS,
     })
 
 
@@ -229,19 +239,37 @@ def yen_read(fx: FxSnapshot, effr_pct: float | None = None) -> dict:
             "note": f"USD/JPY {fx.rate:.2f}, {week:+.1f}% on the week: the yen is quiet, no carry signal{carry_text}"}
 
 
-def btc_sessions_change_pct(frames: dict, sessions: int = WEEK_BACK_OBSERVATIONS) -> float | None:
-    """Bitcoin's move over the last `sessions` completed daily candles, in percent, from the spot frames;
-    None when the daily frame is missing or too short. The forming candle is the last row and is not
-    counted as a session."""
+def _close_on(candles: list[tuple[int, float]], date_ms: int) -> float | None:
+    """The close of the latest completed daily candle that opened on or before `date_ms`, if it opened
+    within BTC_MATCH_TOLERANCE_MS of it; None otherwise (the frame does not cover that date)."""
+    found = None
+    for ts, close in candles:
+        if ts <= date_ms:
+            found = (ts, close)
+        else:
+            break
+    if found is None or date_ms - found[0] > BTC_MATCH_TOLERANCE_MS:
+        return None
+    return found[1]
+
+
+def btc_change_between(frames: dict, start_ms: int | None, end_ms: int | None) -> float | None:
+    """Bitcoin's move, in percent, between the daily candles of two dates (the index's week-ago fix and
+    its latest fix), from the spot frames. The last row of the daily frame is the forming candle and is
+    never used; None when either date is missing, the frame is missing, or it does not cover a date."""
+    if start_ms is None or end_ms is None or end_ms <= start_ms:
+        return None
     try:
         f = frames.get("1d") if frames else None
-        if f is None or len(f) < sessions + 2:
+        if f is None or len(f) < 2:
             return None
-        closes = [float(c) for c in f["close"].tolist()]
+        candles = sorted(zip((int(t) for t in f["timestamp"].tolist()), (float(c) for c in f["close"].tolist())))[:-1]
     except Exception:  # noqa: BLE001 - a malformed frame is no read, not a crash
         return None
-    last, then = closes[-2], closes[-2 - sessions]
-    return _pct(last, then) if then else None
+    then, last = _close_on(candles, int(start_ms)), _close_on(candles, int(end_ms))
+    if then is None or last is None:
+        return None
+    return _pct(last, then)
 
 
 def dollar_read(fx: FxSnapshot, btc_week_pct: float | None = None) -> dict:
@@ -254,12 +282,12 @@ def dollar_read(fx: FxSnapshot, btc_week_pct: float | None = None) -> dict:
     if week is None:
         return {"state": "unknown", "note": f"dollar index {fx.dxy:.2f} (reconstructed), no week-ago value yet"}
     btc = ("" if btc_week_pct is None else
-           f"; bitcoin {'+' if btc_week_pct >= 0 else ''}{btc_week_pct:.1f}% over the same sessions")
+           f"; bitcoin {'+' if btc_week_pct >= 0 else ''}{btc_week_pct:.1f}% between the same dates")
     if week >= DXY_SPIKE_WEEK_PCT:
         if btc_week_pct is not None and btc_week_pct >= BTC_RALLY_WEEK_PCT:
             return {"state": "spike_divergence",
                     "note": (f"dollar index {fx.dxy:.2f}, up {week:.1f}% in a week while bitcoin rallied "
-                             f"{btc_week_pct:+.1f}% over the same sessions: a dollar spike with a bitcoin rally "
+                             f"{btc_week_pct:+.1f}% between the same dates: a dollar spike with a bitcoin rally "
                              "is the false-breakout signal; treat the rally's breaks as suspect until the dollar turns")}
         return {"state": "spike",
                 "note": f"dollar index {fx.dxy:.2f}, up {week:.1f}% in a week: a dollar spike, a headwind for bitcoin{btc}"}

@@ -203,9 +203,10 @@ published formula (a constant times six dollar rates at fixed weights: euro 57.6
 the index is rebuilt from the same request that fetches USD/JPY. It is the same formula on the ECB's 14:15
 CET fixes rather than ICE's live spot, which puts it within a few tenths of the real print and a day behind
 it by design; it is labelled reconstructed wherever it appears and a day with one rate missing is skipped
-rather than filled. The card shows the index, its week and month change, and bitcoin's move over the same
-five completed daily candles; the read is your rule: a rise of 1% in a week is a dollar spike (a headwind),
-a spike while bitcoin is up 3% over the same sessions is the false-breakout signal (the card turns amber
+rather than filled, and the index carries its own age and stale flag. The card shows the index, its week and month change, and bitcoin's move between the same
+two dates (the week-ago fix and the latest fix, read on bitcoin's completed daily candles of those dates, so
+the two legs cover the same days); the read is your rule: a rise of 1% in a week is a dollar spike (a
+headwind), a spike while bitcoin is up 3% between the same dates is the false-breakout signal (the card turns amber
 and the agents' macro read says so), a fall of 1% is a slide (a tailwind). The recorded 4 November window
 reads 101.26, down 1.1% on the week, a slide. The tech correlation named in the same line of your plan is
 not built: the Nasdaq has no keyless intraday feed worth trusting.
@@ -437,7 +438,7 @@ report runs and are not stored, so there is nothing to read back. See section 9.
 | Election-day fix 5: cascade reversal confirmation | Live 5 Nov: the warning names the level and the confirming close; REVERSAL CONFIRMED on the anchor candle's close beyond the day's average price; 8h / 12h repeat windows (section 3) |
 | Election-day fix 6: scheduled agent runs | Live 5 Nov: the worker runs the Director + Live war room 15 min after a High-impact USD print and after a day-plan invalidation; once per trigger, 30 min apart, six a day at most (section 3) |
 | Roadmap item 10: four macro feeds | Live 5 Nov: 2-year minus funds rate (FRED, New York Fed fallback) with the ±25 bp read; BTC dominance (CoinGecko, change from own samples); USD/JPY yen carry (ECB via frankfurter.dev, BoJ rate hand-set); election odds parked, VoxOdds 404 (section 3) |
-| Roadmap item 11: dollar index reconstructed | Live 5 Nov: ICE's DXY formula on the ECB's six daily rates, a day behind and within a few tenths; 1% week = spike or slide; spike + bitcoin up 3% over the same sessions = false-breakout signal (section 3) |
+| Roadmap item 11: dollar index reconstructed | Live 5 Nov: ICE's DXY formula on the ECB's six daily rates, a day behind and within a few tenths; 1% week = spike or slide; spike + bitcoin up 3% between the same dates = false-breakout signal (section 3) |
 | Per-desk chart switch (Section 3, Main Chart View) | Built 4 Nov: the desk's own candle by default, one coarser view a click away (4h / 1D / 3D / 2W); the call, forecast, summary and alerts stay on the desk's candle (section 3) |
 | Derived candles 12H / 3D / 0.5W / 2W and the cascade read order (Section 3) | Built 4 Nov: built from the fetched candles each refresh; each war room reads your cascade order as briefs beside its three timeframes; 24H is the daily candle (section 3) |
 | Short-horizon trap labels (Section 1.4) | Built 4 Nov: 15m and 1h traps labelled short-horizon, shown and traded on the Live desk only, never in a summary or the Pulse; 4h and longer unchanged (section 3) |

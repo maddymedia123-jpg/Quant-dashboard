@@ -1800,34 +1800,34 @@ def dominance_html(dom, now_ms: int) -> str:
 def dollar_html(fx, spot, now_ms: int) -> str:
     """The dollar index reconstructed from the ECB's six rates, against bitcoin over the same week of
     sessions (roadmap item 11)."""
-    from core.data.fx import btc_sessions_change_pct, dollar_read
+    from core.data.fx import btc_change_between, dollar_read
     from core.trades import fmt_date
     title = "Dollar index · reconstructed"
     if not getattr(fx, "available", False) or getattr(fx, "dxy", None) is None:
         why = (getattr(fx, "dxy_note", None) if getattr(fx, "available", False) else getattr(fx, "error", None)) or "unavailable"
         return card_html(title, f"<p class='muted'>No dollar index: {html.escape(str(why))}.</p>", "neutral")
-    btc = btc_sessions_change_pct(getattr(spot, "frames", None) or {})
+    btc = btc_change_between(getattr(spot, "frames", None) or {}, fx.dxy_week_ago_ms, fx.dxy_as_of_ms)
     read = dollar_read(fx, btc)
     tone = {"spike_divergence": "down", "spike": "down", "slide": "up"}.get(read["state"], "neutral")
     label = {"spike_divergence": "spike + BTC rally: false-breakout signal", "spike": "dollar spike", "slide": "dollar sliding",
              "quiet": "quiet", "unknown": "no week-ago value"}[read["state"]]
     body = (f"<div class='ti-big'>{fmt_num(fx.dxy, 2)}</div><p class='muted'>ICE's DXY formula on the ECB's fixes of "
             f"{html.escape(fmt_date(fx.dxy_as_of_ms))}")
-    if fx.stale:
+    if fx.dxy_stale:
         body += " " + chip("stale", "down")
     body += "</p>"
     rows = ""
     for what, value in (("1 week", fx.dxy_change_1w_pct), ("1 month", fx.dxy_change_1m_pct)):
         text = f"{value:+.2f}%" if value is not None else "no earlier value"
         rows += f"<div class='ti-split'><span>Dollar index {what}</span><span>{html.escape(text)}</span></div>"
-    rows += ("<div class='ti-split'><span>Bitcoin, same five sessions</span><span>"
-             + (f"{btc:+.1f}%" if btc is not None else "<span class='muted'>no daily candles</span>") + "</span></div>")
+    rows += ("<div class='ti-split'><span>Bitcoin, same dates</span><span>"
+             + (f"{btc:+.1f}%" if btc is not None else "<span class='muted'>no daily candles for those dates</span>") + "</span></div>")
     body += f"<div class='ti-rows'>{rows}</div>"
     body += f"<div class='ti-tags'>{chip(label, tone)}</div><p>{html.escape(read['note'])}.</p>"
     body += ("<p class='muted ti-note'>Rebuilt from the euro, yen, sterling, Canadian dollar, krona and franc at ICE's "
              "fixed weights, on the ECB's daily reference rates rather than live spot: within a few tenths of the real "
              "index and a day behind it by design. A move of 1% in a week is a spike or a slide; a spike while bitcoin "
-             "is up 3% over the same sessions is the false-breakout signal.</p>")
+             "is up 3% between the same two dates is the false-breakout signal.</p>")
     return card_html(title, body, "warn" if read["state"] == "spike_divergence" else "neutral")
 
 

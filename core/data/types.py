@@ -222,8 +222,11 @@ class FxSnapshot(Availability):
     dxy_as_of_ms: Optional[int] = None
     dxy_week_ago: Optional[float] = None
     dxy_change_1w_pct: Optional[float] = None
+    dxy_week_ago_ms: Optional[int] = None
     dxy_month_ago: Optional[float] = None
     dxy_change_1m_pct: Optional[float] = None
+    dxy_age_days: Optional[float] = None
+    dxy_stale: bool = False
     dxy_note: Optional[str] = None
 
 
