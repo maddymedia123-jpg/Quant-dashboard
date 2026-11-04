@@ -14,7 +14,7 @@ Trap Intelligence is Hammad's BTC dashboard, read from the Gate.io BTC_USDT perp
 
 **desk_anchors** returns each desk's anchored verdict: direction, confidence, since when, and the triggers that set it.
 
-**recent_alerts** returns the last N alerts, newest first: time, kind (qf_plan, qf_caution, qf_held, qf_invalid, cascade, trap, pulse, trade kinds), key, headline, price, and whether it was sent.
+**recent_alerts** returns the last N alerts, newest first: time, kind (qf_plan, qf_caution, qf_held, qf_invalid, cascade, shift = a desk's trend losing control, reversal = that shift confirmed by the anchor candle's close beyond the day's average price, trap, pulse, trade kinds), key, headline, price, and whether it was sent.
 
 **monday_plan** returns this week's Sticky Monday Master Plan.
 

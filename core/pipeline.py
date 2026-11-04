@@ -75,10 +75,14 @@ def market_events(store, m, analyses: dict, now_ms: int) -> list[Event]:
         bias_tf, anchor_tf, engine_tfs = PROFILES[key].cascade
         c = classify(m.spot.frames, bias_tf, anchor_tf, engine_tfs)
         track = store.track_cascade(key, c.state, now_ms)
-        e = ma.important_cascade_event(key, PROFILES[key].label, track, c, now_ms, m.spot.last,
-                                       recent=store.market_alerts_keyed(f"cascade:{key}:", limit=20))
+        recent = store.market_alerts_keyed(f"cascade:{key}:", limit=20)
+        e = ma.important_cascade_event(key, PROFILES[key].label, track, c, now_ms, m.spot.last, recent=recent)
         if e is not None:
             events.append(e)
+        # election-day fix 5: the anchor candle's close beyond the anchored VWAP confirms the control shift
+        r = ma.reversal_event(key, PROFILES[key].label, track, c, m.spot.frames, now_ms, m.spot.last, recent=recent)
+        if r is not None:
+            events.append(r)
         if key in ("live", "intraday") and c.state not in ma.SILENT_STATES:
             trend = c.bias.direction if c.bias is not None else None
             context.append(f"{PROFILES[key].label} {ma.state_name(c.state, trend).lower()}")
