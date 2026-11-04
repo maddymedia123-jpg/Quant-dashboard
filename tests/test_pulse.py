@@ -21,8 +21,15 @@ def live(direction="BEARISH", confidence=0.7, invalidation=81_300.0):
               vol=NS(exp_low=80_500.0, exp_high=81_700.0))
 
 
+RANK = {"Low": 1, "Medium": 2, "High": 3}
+
+
 def market(events=(), heads=()):
-    cal = NS(available=True, upcoming=lambda now, within: list(events))
+    """`events`: calendar rows (impact High unless given). upcoming() filters like the real snapshot."""
+    events = [{"impact": "High", "country": "USD", **e} for e in events]
+    upcoming = lambda now, within, min_impact="High", countries=("USD",): [  # noqa: E731
+        e for e in events if RANK[e["impact"]] >= RANK[min_impact] and now - H <= e["time_ms"] <= now + within]
+    cal = NS(available=True, upcoming=upcoming, events=events)
     news = NS(available=True, recent=lambda now, within, impact: list(heads))
     return NS(calendar=cal, news=news, spot=NS(last=81_100.0))
 
@@ -190,7 +197,7 @@ def test_fed_odds_appear_only_with_a_fed_meeting_this_week():
     odds = NS(available=True, tradeable=lambda a: [{"question": "Will the Fed hold rates in October?",
                                                    "probability": 0.92, "volume_24h": 5}])
     near = NS(**{**vars(market()), "predictions": odds,
-                 "calendar": NS(available=True, upcoming=lambda now, within: fomc)})
+                 "calendar": NS(available=True, upcoming=lambda now, within, **kw: fomc, events=[])})
     assert 'markets give 92% to "Will the Fed hold rates in October?"' in pulse._news(near, CLOSE)
     far = NS(**{**vars(market()), "predictions": odds})
     assert "Fed meeting" not in pulse._news(far, CLOSE)
@@ -217,3 +224,32 @@ def test_only_the_messages_a_channel_accepted_count_as_delivered(monkeypatch):
     delivered, problems = d.send(events)
     assert len(sent) == 3 and [e.dedup_key for e in delivered] == ["k0", "k1", "k4"]
     assert problems == ["Discord did not accept the message"]
+
+
+# ---------- election-day fixes 3 and 4: the event section names the regime and the scheduled prints ----------
+
+def _event_section(t: str) -> list[str]:
+    return [ln for ln in t.split("⚠️ IMPORTANT NEWS / EVENT WARNINGS:")[1].splitlines() if ln and ln != "=" * 40]
+
+
+def test_the_event_section_leads_with_the_regime_then_printed_and_scheduled_prints():
+    """4 Nov, 14:00 UTC: the election had printed 23 hours earlier (gone from the list), ISM Services at 15:00
+    was Medium (never listed), and the section read 'No US data releases'. Now the regime leads, the print of
+    the last day is named with its read, and a Medium print is named and labelled."""
+    now = CLOSE + 60_000
+    ev = [{"title": "Congressional Elections", "time_ms": now - 23 * H},
+          {"title": "ISM Services PMI", "time_ms": now + H, "impact": "Medium"},
+          {"title": "Unemployment Claims", "time_ms": now - 5 * H},
+          {"title": "Building Permits", "time_ms": now + 2 * H, "impact": "Low"},
+          {"title": "CPI m/m", "time_ms": now + 30 * H}]
+    sec = _event_section(pulse.close_event(live(), market(ev), now).headline)
+    assert sec[0].startswith("🚨 EVENT REGIME: Congressional Elections printed 23 hours ago (")
+    assert "no range plan, wider safety lines, smaller size" in sec[0]
+    assert sec[1].startswith("US Unemployment Claims printed at ") and sec[1].endswith("the reaction is still being traded.")
+    assert sec[2].startswith("US ISM Services PMI (medium impact) at ") and "expect a reaction around it" in sec[2]
+    assert not any("Building Permits" in ln or "CPI" in ln for ln in sec), "Low impact and beyond the day stay out"
+    assert sum("Congressional Elections" in ln for ln in sec) == 1, "the regime line is the election's one mention"
+    # no major print: no regime line, and a High print ahead still reads 'sharp moves'
+    quiet = _event_section(pulse.close_event(live(), market([{"title": "CPI m/m", "time_ms": now + 9 * H}]), now).headline)
+    assert quiet == ["US CPI m/m at " + quiet[0].split(" at ")[1]] and "expect sharp moves around it" in quiet[0]
+    assert not any("EVENT REGIME" in ln for ln in quiet)

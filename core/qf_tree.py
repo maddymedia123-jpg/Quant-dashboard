@@ -166,6 +166,8 @@ def trade_directive(plan: dict) -> dict:
     regime = plan.get("regime")
     if regime not in ("bullish", "bearish"):
         word = ("Stand aside: the day is locked." if regime == "locked" else
+                f"Stand aside: event regime ({plan['event_regime'].get('title')}), no range plan."
+                if plan.get("event_regime") else
                 "Stand aside: no direction today, a range is expected.")
         return {"asset": "BTC-PERP", "direction": "NONE", "setup_type": word, "stop_loss_invalidation": None,
                 "entry_zone": None, "tp1": None, "tp2": None, "tp3": None, "active_start_ms": None,

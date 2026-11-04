@@ -159,11 +159,11 @@ def test_the_weekend_switches_the_words_to_sweep_and_rejection_and_flags_the_des
 
 def test_the_warning_names_the_next_print_the_dollar_and_the_weekend():
     bull = desk("BULLISH", 0.6, 80_000.0)
-    ev = evidence_for_a_long(prints=(NS(title="FOMC rate decision", time_ms=NOON + 5 * 3_600_000, state="positioned",
+    ev = evidence_for_a_long(prints=(NS(title="Non-Farm Employment Change", time_ms=NOON + 5 * 3_600_000, state="positioned",
                                         runup_pct=2.3),),
                              rates={"available": True, "DTWEXBGS": {"value": 120.0, "change_1w": 0.9}})
     w = ls.lines(bull, DERIVS, 18, NOON, ev)["warning"]
-    assert w.startswith("Watch: a high-impact US print, FOMC rate decision, lands at 11:00 UTC (16:00 PKT) Tue 22 Sep, "
+    assert w.startswith("Watch: a high-impact US print, Non-Farm Employment Change, lands at 11:00 UTC (16:00 PKT) Tue 22 Sep, "
                         "5 hours away; the event window is open")
     assert "moved +2.3% into it" in w and "the dollar has risen 0.8% this week, a headwind for a long" in w
     saturday = NOON + 4 * 86_400_000
@@ -204,3 +204,21 @@ def test_the_weekly_desk_keeps_its_own_candle_for_the_safety_line():
 def test_the_two_turning_windows_are_said_to_be_one_afternoon():
     s = ls.lines(desk(), DERIVS, 50, NOON)["kill_zones"]
     assert "overlaps it by three, so they are one afternoon, not two" in s
+
+
+def test_an_event_regime_leads_the_warning_and_closes_the_directive():
+    """Election-day fix 3: a major print inside its window is the first thing every desk's summary says."""
+    bull = desk("BULLISH", 0.6, 80_000.0)
+    fomc = evidence_for_a_long(prints=(NS(title="FOMC Statement", time_ms=NOON + 5 * 3_600_000, state="flat"),))
+    s = ls.lines(bull, DERIVS, 18, NOON, fomc)
+    assert s["warning"].startswith("Watch: EVENT REGIME, FOMC Statement prints at 11:00 UTC (16:00 PKT) Tue 22 Sep, 5 hours away; "
+                                   "the event regime runs until 11:00 UTC Thu 24 Sep; expect sharp moves either way, so widen the "
+                                   "stop, cut size and take no range trade")
+    assert "a high-impact US print, FOMC Statement" not in s["warning"], "named once, as the regime"
+    assert s["directive"].endswith("Event regime (FOMC Statement): wider stop, smaller size, no range trade until 11:00 UTC (16:00 PKT).")
+    assert s["event_regime"]["phase"] == "ahead"
+    after = ls.lines(bull, DERIVS, 18, NOON + 30 * 3_600_000, fomc)
+    assert after["warning"].startswith("Watch: EVENT REGIME, FOMC Statement printed 25 hours ago") and after["event_regime"]["phase"] == "reaction"
+    cpi = evidence_for_a_long(prints=(NS(title="CPI m/m", time_ms=NOON + 5 * 3_600_000, state="flat"),))
+    plain = ls.lines(bull, DERIVS, 18, NOON, cpi)
+    assert plain["event_regime"] == {"active": False} and "EVENT REGIME" not in plain["warning"] and "Event regime" not in plain["directive"]

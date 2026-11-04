@@ -156,19 +156,31 @@ def _in_words(ms: int) -> str:
     return f"{h / 24:.0f} days"
 
 
-def _warning(side: str, now_ms: int, ev, horizon_label: str, f=None, atr: float | None = None) -> str:
-    """The next high-impact US print inside the window, a dollar move against the trade, the weekend, and any
-    bigger level standing between the zone and Target 1 that does not bar the trade outright."""
+def _regime(ev, now_ms: int):
+    """The event regime, read from the prints the evidence already holds (election-day fix 3)."""
+    from core.indicators.event_regime import read
+    return read(getattr(ev, "prints", ()) or (), now_ms)
+
+
+def _warning(side: str, now_ms: int, ev, horizon_label: str, f=None, atr: float | None = None, regime=None) -> str:
+    """The event regime first when one is active (an election, an FOMC), then the next high-impact US print
+    inside the window, a dollar move against the trade, the weekend, and any bigger level standing between
+    the zone and Target 1 that does not bar the trade outright."""
     from core.confluence import levels_before_target
     from core.indicators.event_trap import PRE_WINDOW_MS
+    regime = regime if regime is not None else _regime(ev, now_ms)
     bits = []
+    if regime.active:
+        bits.append(f"EVENT REGIME, {regime.note}; expect sharp moves either way, so widen the stop, cut size "
+                    "and take no range trade")
     if f is not None and f.zone and atr:
         for label, p in levels_before_target(side, f.zone, atr, f.targets[0], getattr(ev, "htf_levels", ()))[:2]:
             bits.append(f"a {label} at {_money(p)} stands between the zone and Target 1; expect a pause there")
     ahead = PRE_WINDOW_MS                      # the event window: five days ahead on every desk
     prints = sorted((p for p in getattr(ev, "prints", ()) or ()
                      if getattr(p, "state", "") in ("scheduled", "flat", "positioned")
-                     and now_ms < p.time_ms <= now_ms + ahead), key=lambda p: p.time_ms)
+                     and now_ms < p.time_ms <= now_ms + ahead
+                     and not (regime.active and p.title == regime.title)), key=lambda p: p.time_ms)
     if prints:
         p = prints[0]
         day = datetime.fromtimestamp(p.time_ms / 1000, timezone.utc)
@@ -262,6 +274,11 @@ def lines(a, derivs: dict | None, fear_greed: int | None, now_ms: int, evidence=
     else:
         expect = "no setup until this desk has a level to act from"
         directive = "NO SETUP. No level to trade from on this desk."
+    regime = _regime(ev, now_ms)
+    if regime.active:
+        # election-day fix 3: the event is named in every desk's directive while its window is open
+        directive += (f" Event regime ({regime.title}): wider stop, smaller size, no range trade until "
+                      f"{_utc(regime.until_ms)} UTC ({_pkt(regime.until_ms)} PKT).")
     phase_now = (f"What's happening: BTC is {_money(a.price)}, {lean}"
                  + (f"; the {kind} at {_money(f.level)} is the zone ({score})" if f.zone else "")
                  + f". What to expect: {expect}" + ("" if expect.endswith(".") else "."))
@@ -295,7 +312,8 @@ def lines(a, derivs: dict | None, fear_greed: int | None, now_ms: int, evidence=
                          "agrees": None if x.side == "NONE" else x.side == f.side, "note": x.note}
                         for x in g.families],
         "directive": directive,
-        "warning": _warning(f.side, now_ms, ev, a.vol.horizon_label, f, a.vol.atr),
+        "warning": _warning(f.side, now_ms, ev, a.vol.horizon_label, f, a.vol.atr, regime),
+        "event_regime": regime.to_state(),
         "bar": None if g.bar is None else {"label": g.bar.label, "price": g.bar.price, "note": g.bar.note},
         "anomaly": None if g.trap is None else g.trap.to_state(),
         "weekend": wk.to_state() if wk.phase != "weekday" else None,

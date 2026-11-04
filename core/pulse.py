@@ -26,7 +26,9 @@ CLOSE_MS = HOUR_MS                       # the pulse cadence: every hour boundar
 CLOSE_NAMES = ((1, "1h"), (2, "2h"), (4, "4h"))
 SEND_WITHIN_MS = 30 * 60_000
 NEWS_WITHIN_MS = 6 * HOUR_MS             # headlines from the last six hours
-EVENTS_WITHIN_MS = 24 * HOUR_MS          # high-impact US prints in the next day
+EVENTS_WITHIN_MS = 24 * HOUR_MS          # US prints in the next day: High and Medium impact (fix 4, 5 Nov)
+PRINTED_WITHIN_MS = 24 * HOUR_MS         # high-impact US prints of the last day, with the engine's read
+PRINT_IMPACT = "Medium"                  # the least impact a scheduled print needs to be named
 MARKET_WIDE = ("macro", "geopolitics", "etf")   # headline topics that move every market, BTC named or not
 FED_WITHIN_MS = 7 * 24 * HOUR_MS
 FED_WORDS = ("fomc", "federal funds rate", "fed chair")
@@ -168,22 +170,55 @@ def _positioning(m, event: dict, now_ms: int) -> str:
             f"could reverse that ({'a drop' if up else 'a bounce'}).")
 
 
+def _reaction(m, event: dict, now_ms: int) -> str:
+    """The macro engine's read after a print, in its own words, or a plain line when it has none."""
+    try:
+        from core.indicators.event_trap import read_all
+        reads = read_all(m.spot.frames.get("1h"), [event], now_ms)
+    except Exception:  # noqa: BLE001 - the printed line stands without it
+        reads = []
+    r = reads[0] if reads else None
+    if r is None or r.state in ("positioned", "flat", "scheduled", "no_data"):
+        return "the reaction is still being traded."
+    return r.headline
+
+
+def _printed(cal, now_ms: int) -> list[dict]:
+    """High-impact US prints of the last PRINTED_WITHIN_MS, newest first."""
+    out = [e for e in getattr(cal, "events", None) or []
+           if e.get("time_ms") is not None and now_ms - PRINTED_WITHIN_MS <= e["time_ms"] <= now_ms
+           and e.get("impact") == "High" and e.get("country") == "USD"]
+    return sorted(out, key=lambda e: -e["time_ms"])
+
+
 def _fed_meeting_soon(cal, now_ms: int) -> bool:
     return any(any(w in str(e.get("title", "")).lower() for w in FED_WORDS)
                for e in cal.upcoming(now_ms, FED_WITHIN_MS))
 
 
 def _news(m, now_ms: int) -> str:
-    """From the Macro & News screen's own data, in order: US releases in the next day (with the macro
-    engine's read when BTC has run ahead of one), headlines that name Bitcoin or move every market, and
-    the Fed odds when a Fed meeting is near. A hack on a small chain or a crypto-policy story abroad is not
-    a BTC warning, so headlines are kept only when they name BTC or fall in a market-wide topic."""
+    """From the Macro & News screen's own data, in order: the event regime when one is active (an election,
+    an FOMC: fix 3), the high-impact US prints of the last day with the macro engine's read of the
+    reaction, the US prints of the next day, High and Medium (Medium labelled; fix 4: on 4 Nov ISM Services
+    was Medium and went unnamed), with the engine's read when BTC has run ahead of one, headlines that name
+    Bitcoin or move every market, and the Fed odds when a Fed meeting is near. A hack on a small chain or a
+    crypto-policy story abroad is not a BTC warning, so headlines are kept only when they name BTC or fall
+    in a market-wide topic."""
+    from core.indicators.event_regime import read as regime_read
     lines = []
     cal = getattr(m, "calendar", None)
     if getattr(cal, "available", False):
-        for e in sorted(cal.upcoming(now_ms, EVENTS_WITHIN_MS), key=lambda e: e["time_ms"])[:3]:
-            lines.append(f"US {e.get('title', 'release')} at {_when(e['time_ms'])}: expect sharp moves around it."
-                         + _positioning(m, e, now_ms))
+        regime = regime_read(getattr(cal, "events", None) or [], now_ms)
+        if regime.active:
+            lines.append(f"🚨 EVENT REGIME: {regime.note}. Expect sharp moves either way: no range plan, wider "
+                         "safety lines, smaller size.")
+        for e in [p for p in _printed(cal, now_ms) if p.get("title") != regime.title][:2]:
+            lines.append(f"US {e.get('title', 'release')} printed at {_when(e['time_ms'])}: {_reaction(m, e, now_ms)}")
+        ahead = [e for e in cal.upcoming(now_ms, EVENTS_WITHIN_MS, min_impact=PRINT_IMPACT) if e["time_ms"] > now_ms]
+        for e in sorted(ahead, key=lambda e: e["time_ms"])[:3]:
+            medium = e.get("impact") != "High"
+            lines.append(f"US {e.get('title', 'release')}{' (medium impact)' if medium else ''} at {_when(e['time_ms'])}: "
+                         f"expect {'a reaction' if medium else 'sharp moves'} around it." + _positioning(m, e, now_ms))
     news = getattr(m, "news", None)
     if getattr(news, "available", False):
         heads = [h for h in news.recent(now_ms, NEWS_WITHIN_MS, "high") if h.get("title")

@@ -76,8 +76,8 @@ def _plan(df, now=DAY0, **kw):
 def test_clear_path_when_no_trap_and_no_release():
     pre = pf.preflight(FakeStore(), FakeMarket(cal(event(t_ms=END0 + 5 * H))), DAY0, END0)
     assert pre == {"trap": {"active": False, "label": "Trap Agent: Clear", "traps": []}, "macro": [],
-                   "forced_neutral": False, "errors": []}
-    assert pf.plan_kwargs(pre) == {"force_neutral": False, "forced_windows": []}
+                   "event": {"active": False}, "forced_neutral": False, "errors": []}
+    assert pf.plan_kwargs(pre) == {"force_neutral": False, "forced_windows": [], "event": None}
 
 
 def test_an_active_engineered_4h_trap_forces_neutral():
@@ -124,7 +124,7 @@ def test_a_broken_ledger_or_calendar_leaves_the_check_clear_with_a_note():
     pre = pf.preflight(FakeStore(boom=True), FakeMarket(CalendarSnapshot.unavailable("forexfactory", "451")), DAY0, END0)
     assert pre["forced_neutral"] is False and pre["trap"]["label"] == "Trap Agent: Clear" and pre["macro"] == []
     assert len(pre["errors"]) == 2 and "trap ledger unreadable" in pre["errors"][0] and "451" in pre["errors"][1]
-    assert pf.plan_kwargs(pre) == {"force_neutral": False, "forced_windows": []}
+    assert pf.plan_kwargs(pre) == {"force_neutral": False, "forced_windows": [], "event": None}
 
     class NoCalendar:
         pass
@@ -186,3 +186,55 @@ def test_the_kwargs_round_trip_through_the_real_store(tmp_path):
     assert pre["forced_neutral"] and [t["type"] for t in pre["trap"]["traps"]] == ["bear_trap"]
     store.resolve_trap(pre["trap"]["traps"][0]["id"], "played_out", 79_800.0, DAY0)
     assert pf.preflight(store, FakeMarket(cal()), DAY0, END0)["forced_neutral"] is False
+
+
+# ---------- event regime (election-day fix 3, 5 Nov) ----------
+
+def test_a_major_print_inside_its_window_puts_the_plan_in_event_mode(trending):
+    """4 Nov: 'Congressional Elections' (High, USD) printed at 15:16 UTC the day before; the plan said NEUTRAL /
+    RANGE-BOUND at 80% and was invalidated when BTC ran 78,336 to 81,194. Now the pre-flight reads the regime,
+    the plan builds no range, and every message names the event."""
+    from core import qf_alerts, qf_payload
+    from core.qf_tree import trade_directive
+    vote = DAY0 - 9 * H                                                 # printed yesterday afternoon
+    pre = pf.preflight(FakeStore(), FakeMarket(cal(event("Congressional Elections", t_ms=vote))), DAY0, END0)
+    assert pre["event"]["active"] is True and pre["event"]["phase"] == "reaction"
+    assert pre["event"]["title"] == "Congressional Elections" and pre["event"]["until_ms"] == vote + 48 * H
+    assert pre["forced_neutral"] is False and pre["macro"] == [], "an election is a regime, not a chop window"
+    kw = pf.plan_kwargs(pre)
+    assert kw["event"] == pre["event"] and kw["force_neutral"] is False
+
+    free, p = _plan(trending), _plan(trending, **kw)
+    assert free["regime"] != "neutral", "the fixture leans on its own"
+    assert p["regime"] == "neutral" and p["score"] == 0.0 and p["preflight_override"] == "event"
+    assert p["event_regime"]["title"] == "Congressional Elections"
+    # wider on both sides than a plain neutral plan's invalidation
+    plain = _plan(trending, force_neutral=True)
+    assert p["invalidation"]["below"] < plain["invalidation"]["below"] < plain["invalidation"]["above"] < p["invalidation"]["above"]
+    for h, h0 in zip(p["hours"], plain["hours"]):
+        assert abs(h["sigma_pct"] - h0["sigma_pct"] * qf.EVENT_SIGMA_X) <= 0.0015
+    assert p["scenario_a"].startswith("Event regime (Congressional Elections): no range plan.")
+    assert qf.wire_line(p) == p["scenario_a"], "the directive keeps the event's name"
+    assert "EVENT REGIME (Congressional Elections): no range plan today." in qf.directive(p, lambda ms: "t")
+    # the bot's messages, every tier
+    head = qf_alerts.plan_headline(p)
+    assert "Regime: EVENT REGIME · Congressional Elections |" in head
+    assert "Event: Congressional Elections printed 9 hours ago" in head and "Directive: Event regime (" in head
+    assert "NEUTRAL / RANGE-BOUND" not in head
+    c = {"why": "move", "sigmas": 3.1, "from": 80_000.0, "to": 81_000.0, "t_ms": DAY0 + 2 * H, "delta_btc": 0.0}
+    assert "[EVENT REGIME · Congressional Elections]" in qf_alerts.caution_headline(p, c)
+    assert "MODEL HELD [EVENT REGIME · Congressional Elections]" in qf_alerts.held_headline(p, {"to": 81_000.0, "t_ms": DAY0 + 2 * H})
+    hit = {"basis": "4h close", "side": "above", "level": 82_000.0, "close": 82_100.0, "close_ms": DAY0 + 4 * H}
+    assert "INVALIDATED [EVENT REGIME · Congressional Elections]" in qf_alerts.invalidated_headline(p, hit, None)
+    assert trade_directive(p)["setup_type"] == "Stand aside: event regime (Congressional Elections), no range plan."
+    # the AI writeup stands down: its sentence would replace the one that names the event
+    from core import qf_writeup
+    called = []
+    assert qf_writeup.write(p, ask=lambda s, u: called.append(1) or {"data": {}}) is None and called == []
+    assert qf_writeup.write(plain, ask=lambda s, u: {"data": {}}) is not None, "a plain neutral day still asks"
+    assert qf_payload.payload(p, "on track", [], "", {}, DAY0 + 5 * H)["layman_summary_and_timeline_tree"]["master_regime"] == "EVENT REGIME · Congressional Elections"
+    # an ordinary High print is still a chop window, never a regime; a trap still wins the override label
+    cpi = pf.preflight(FakeStore(), FakeMarket(cal(event(t_ms=DAY0 + 13 * H))), DAY0, END0)
+    assert cpi["event"] == {"active": False} and len(cpi["macro"]) == 1
+    both = pf.preflight(FakeStore([trap()]), FakeMarket(cal(event("FOMC Statement", t_ms=DAY0 + 19 * H))), DAY0, END0)
+    assert both["event"]["phase"] == "ahead" and _plan(trending, **pf.plan_kwargs(both))["preflight_override"] == "trap"
