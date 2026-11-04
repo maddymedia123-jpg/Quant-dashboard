@@ -19,7 +19,7 @@ from core.data.deribit_options import parse_book_summary
 from core.data.hyperliquid import parse_meta
 from core.data.kraken_spot import parse_ohlc, parse_ticker
 from core.data.dominance import parse_global
-from core.data.fx import build as build_fx, parse_range
+from core.data.fx import build as build_fx, dxy_series, parse_rates
 from core.data.macro import IDS as MACRO_IDS, build as build_macro
 from core.data.metals import parse_gold
 from core.data.news import merge, parse_aggregator, parse_feed
@@ -84,12 +84,17 @@ def fixture_context() -> dict:
         "taker_flow": _mark(_fixture_taker_flow()),
         "exchange_flows": _mark(parse_flows(_load("coinmetrics_exchange_flows.json"))),
         "dominance": _mark(parse_global(_load("coingecko_global.json"))),
-        "fx": _mark(build_fx(parse_range(_load("frankfurter_usdjpy.json")), RECORDED_FX_MS)),
+        "fx": _mark(_fixture_fx()),
     }
 
 
-# the USD/JPY window was recorded on 4 November 2026; judged against that day, as the macro window is
+# the ECB window was recorded on 4 November 2026; judged against that day, as the macro window is
 RECORDED_FX_MS = int(datetime(2026, 11, 4, tzinfo=timezone.utc).timestamp() * 1000)
+
+
+def _fixture_fx():
+    rates = parse_rates(_load("frankfurter_usd_majors.json"))
+    return build_fx(rates["JPY"], RECORDED_FX_MS, dxy_rows=dxy_series(rates))
 
 
 def _fixture_news() -> NewsSnapshot:

@@ -140,13 +140,16 @@ def macro_read(m: MarketSnapshot, now_ms: int | None = None) -> dict:
     out["gold"] = _gold(m)
     out["btc_dominance"] = _dominance(m)
     out["yen_carry"] = _yen(m)
+    out["dollar_index"] = _dollar(m)
     out["method"] = ("prints: BTC 1h moves against its own hourly volatility; narratives: headline attention by "
                      "topic (feed reaches back ~1.5 days); odds: Polymarket via VoxOdds, clean and watch bands only; "
                      "rates: US 2y and 10y yields, the funds rate and the broad dollar index with their one-week "
                      "change; delta_2y_read: 2y minus funds rate beyond +25 bp = liquidity contraction, below -25 bp "
                      "= expansion; btc_dominance: share change from own samples, +/-0.5 pp a day is rotation; "
                      "yen_carry: USD/JPY down 1.5% in a week is carry-unwind risk, the carry gap only when the BoJ "
-                     "rate is hand-set")
+                     "rate is hand-set; dollar_index: ICE's DXY formula rebuilt on the ECB's six daily rates (a day "
+                     "behind, within a few tenths), a 1% week is a spike or slide, a spike with bitcoin up 3% over the "
+                     "same sessions is the false-breakout signal")
     return out
 
 
@@ -183,6 +186,20 @@ def _dominance(m: MarketSnapshot) -> dict:
     return {"available": True, "btc_pct": d.btc_pct, "eth_pct": d.eth_pct, "stable_pct": d.stable_pct,
             "change_24h_pp": d.change_24h_pp, "change_7d_pp": d.change_7d_pp,
             "market_cap_change_24h_pct": d.mcap_change_24h_pct, "rotation": read["state"], "note": read["note"]}
+
+
+def _dollar(m: MarketSnapshot) -> dict:
+    fx = getattr(m, "fx", None)
+    if fx is None or not fx.available:
+        return {"available": False, "note": getattr(fx, "error", None) or "USD/JPY feed down"}
+    if fx.dxy is None:
+        return {"available": False, "note": fx.dxy_note or "no day in the window has all six rates"}
+    from core.data.fx import btc_sessions_change_pct, dollar_read
+    btc = btc_sessions_change_pct(getattr(getattr(m, "spot", None), "frames", None) or {})
+    read = dollar_read(fx, btc)
+    return {"available": True, "dxy_reconstructed": fx.dxy, "change_1w_pct": fx.dxy_change_1w_pct,
+            "change_1m_pct": fx.dxy_change_1m_pct, "btc_same_sessions_pct": btc, "stale": fx.stale,
+            "state": read["state"], "note": read["note"]}
 
 
 def _yen(m: MarketSnapshot) -> dict:

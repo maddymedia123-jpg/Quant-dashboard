@@ -1316,8 +1316,8 @@ if screen == "macro":
     except Exception as e:  # noqa: BLE001
         st.warning(f"Rates unavailable: {e}")
 
-    # roadmap item 10: where crypto capital is rotating, and the yen carry trade
-    dom_col, yen_col = st.columns(2, gap="large")
+    # roadmap items 10 and 11: where crypto capital is rotating, the yen carry trade, the dollar index
+    dom_col, yen_col, dxy_col = st.columns(3, gap="large")
     with dom_col:
         try:
             panels.render(panels.dominance_html(m.dominance, now_ms))
@@ -1328,6 +1328,11 @@ if screen == "macro":
             panels.render(panels.yen_html(m.fx, m.macro, now_ms))
         except Exception as e:  # noqa: BLE001
             st.warning(f"USD/JPY unavailable: {e}")
+    with dxy_col:
+        try:
+            panels.render(panels.dollar_html(m.fx, m.spot, now_ms))
+        except Exception as e:  # noqa: BLE001
+            st.warning(f"Dollar index unavailable: {e}")
 
     # the forecasting layer: positioning into each print, what the print did, and how fresh each story is
     ev_col, nar_col = st.columns(2, gap="large")

@@ -41,9 +41,10 @@ dash, never a number. Whichever provider answered is named in the sidebar.
 | Headlines | CoinDesk and Cointelegraph RSS plus the cryptocurrency.cv aggregator (14 publishers) | Macro & News screen, narratives in the agents' context, Pulse |
 | Gold | goldprice.dev | Macro & News |
 | Prediction markets | Polymarket via VoxOdds, with execution-quality bands | Macro & News, Fed odds in the Pulse |
-| US yields and the funds rate | FRED, falling back to the US Treasury daily curve for the yields and the New York Fed's own JSON for the funds rate (FRED refuses Streamlit Cloud) | Macro & News, agents' macro read. The dollar index is a named gap |
+| US yields and the funds rate | FRED, falling back to the US Treasury daily curve for the yields and the New York Fed's own JSON for the funds rate (FRED refuses Streamlit Cloud) | Macro & News, agents' macro read. FRED's weekly broad dollar index shows when FRED answers; the daily index is the reconstructed one below |
 | BTC dominance (roadmap item 10, 5 Nov) | CoinGecko `/global`; the share's 24-hour and 7-day change from the dashboard's own samples, one per worker pass | Macro & News, agents' macro read |
 | USD/JPY and the yen carry (roadmap item 10, 5 Nov) | ECB reference rates via frankfurter.dev; the Bank of Japan policy rate is hand-set (`BOJ_POLICY_RATE_PCT`), never guessed | Macro & News, agents' macro read |
+| Dollar index, reconstructed (roadmap item 11, 5 Nov) | ICE's DXY formula on the ECB's six daily per-dollar rates from the same frankfurter.dev request; a day behind the real index, within a few tenths | Macro & News, agents' macro read |
 | CFTC Commitments of Traders | CFTC, weekly | Weekly and Monthly desks only |
 | Exchange net flows | CoinMetrics community (all flows, not whales) | Weekly and Monthly desks |
 | Order book | Our own recorder on the VM | Scoop and sweep report, order_book tool |
@@ -195,7 +196,21 @@ card on the Macro & News screen and a field in every agent's macro read:
   not reachable from the hosts, so there is no feed to build on. The Prediction markets row above is
   unchanged.
 
-DXY from free FX (item 11) and the Director's 4-hour-versus-24-hour framing (item 12) are next.
+**Roadmap item 11, the dollar index reconstructed (your Section 10 "Real-Time DXY", live 5 November).** ICE's
+DXY has no free feed and FRED's broad dollar index is weekly and refused on the dashboard host. But DXY is a
+published formula (a constant times six dollar rates at fixed weights: euro 57.6%, yen 13.6%, sterling
+11.9%, Canadian dollar 9.1%, krona 4.2%, franc 3.6%) and the ECB publishes all six every business day, so
+the index is rebuilt from the same request that fetches USD/JPY. It is the same formula on the ECB's 14:15
+CET fixes rather than ICE's live spot, which puts it within a few tenths of the real print and a day behind
+it by design; it is labelled reconstructed wherever it appears and a day with one rate missing is skipped
+rather than filled. The card shows the index, its week and month change, and bitcoin's move over the same
+five completed daily candles; the read is your rule: a rise of 1% in a week is a dollar spike (a headwind),
+a spike while bitcoin is up 3% over the same sessions is the false-breakout signal (the card turns amber
+and the agents' macro read says so), a fall of 1% is a slide (a tailwind). The recorded 4 November window
+reads 101.26, down 1.1% on the week, a slide. The tech correlation named in the same line of your plan is
+not built: the Nasdaq has no keyless intraday feed worth trusting.
+
+The Director's 4-hour-versus-24-hour framing (item 12) is next.
 
 **Per-desk chart switch (your Section 3 "Main Chart View", live 4 November; Live default changed 5 November).**
 Each desk's chart has a two-way switch above it: Live opens on the 4-hour chart (your Main Chart View) with
@@ -422,6 +437,7 @@ report runs and are not stored, so there is nothing to read back. See section 9.
 | Election-day fix 5: cascade reversal confirmation | Live 5 Nov: the warning names the level and the confirming close; REVERSAL CONFIRMED on the anchor candle's close beyond the day's average price; 8h / 12h repeat windows (section 3) |
 | Election-day fix 6: scheduled agent runs | Live 5 Nov: the worker runs the Director + Live war room 15 min after a High-impact USD print and after a day-plan invalidation; once per trigger, 30 min apart, six a day at most (section 3) |
 | Roadmap item 10: four macro feeds | Live 5 Nov: 2-year minus funds rate (FRED, New York Fed fallback) with the ±25 bp read; BTC dominance (CoinGecko, change from own samples); USD/JPY yen carry (ECB via frankfurter.dev, BoJ rate hand-set); election odds parked, VoxOdds 404 (section 3) |
+| Roadmap item 11: dollar index reconstructed | Live 5 Nov: ICE's DXY formula on the ECB's six daily rates, a day behind and within a few tenths; 1% week = spike or slide; spike + bitcoin up 3% over the same sessions = false-breakout signal (section 3) |
 | Per-desk chart switch (Section 3, Main Chart View) | Built 4 Nov: the desk's own candle by default, one coarser view a click away (4h / 1D / 3D / 2W); the call, forecast, summary and alerts stay on the desk's candle (section 3) |
 | Derived candles 12H / 3D / 0.5W / 2W and the cascade read order (Section 3) | Built 4 Nov: built from the fetched candles each refresh; each war room reads your cascade order as briefs beside its three timeframes; 24H is the daily candle (section 3) |
 | Short-horizon trap labels (Section 1.4) | Built 4 Nov: 15m and 1h traps labelled short-horizon, shown and traded on the Live desk only, never in a summary or the Pulse; 4h and longer unchanged (section 3) |
