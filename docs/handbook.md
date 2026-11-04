@@ -37,7 +37,7 @@ dash, never a number. Whichever provider answered is named in the sidebar.
 | Options: max pain, put/call, IV skew, gamma by expiry, call and put walls | Deribit | Gamma regime bar, per-desk gamma, Monday plan, Quant Forecast levels |
 | Stablecoin supply | DefiLlama | Derivatives domain |
 | Fear & Greed | alternative.me | Sentiment |
-| Economic calendar (high-impact USD prints) | Forex Factory, the current week's file (Sunday to Saturday; no next-week file is published), cached 30 minutes | Event window on every desk, macro window trigger, Quant Forecast chop windows, Pulse |
+| Economic calendar (high-impact USD prints) | Forex Factory, the current week's file (Sunday to Saturday; no next-week file is published), cached 30 minutes | Event window on every desk, event regime (election / FOMC), macro window trigger, Quant Forecast chop windows, Pulse (High and Medium prints) |
 | Headlines | CoinDesk and Cointelegraph RSS plus the cryptocurrency.cv aggregator (14 publishers) | Macro & News screen, narratives in the agents' context, Pulse |
 | Gold | goldprice.dev | Macro & News |
 | Prediction markets | Polymarket via VoxOdds, with execution-quality bands | Macro & News, Fed odds in the Pulse |
@@ -129,8 +129,22 @@ setup up" arrived after the first big candle. The fixes, each merged live in thi
   Pulse back to the Live desk the same minute. The accuracy card and the MCP tools show the new outcome.
 - *Fix 2, live 5 November.* Live Recon's chart opens on the 4-hour candle, as your table reads ("Main Chart
   View: 4-Hour Chart"); the 1h, which its call is made on, is the other view.
-- *Fix 3, event regime.* Next.
-- *Fix 4, the Pulse's event section names the scheduled prints.* Next.
+- *Fix 3, event regime, live 5 November.* Your Section 6.2 ("The Head Agent queries the calendar for
+  high-impact events (FOMC, Elections). If active within the trade window, volatility parameters widen and
+  trap warnings elevate"). A major print is a High-impact USD calendar entry that names an election, the
+  FOMC, the federal funds rate or the Fed chair; its regime runs from 24 hours before the print to 48 hours
+  after it (an election's result is traded the day after). While it is open: the Quant Forecast builds no
+  range plan (the lean is scored 0, every hour's expected range is 1.5× wider, the whole-day invalidation
+  sits at the 5th percentile on both sides instead of the 10th, and the regime line, the directive and every
+  caution, hold and invalidation message name the event); the Pulse's event section leads with it; every
+  desk summary's Watch line leads with it and its directive ends "Event regime (…): wider stop, smaller
+  size, no range trade until …"; and the war rooms and the Director see `event_regime` in the state they
+  judge. CPI, NFP and the other prints are unchanged: a chop window around the release, not a regime.
+- *Fix 4, the Pulse's event section names the scheduled prints, live 5 November.* In order: the event
+  regime when one is open; the High-impact US prints of the last 24 hours with the macro engine's read of
+  the reaction (sell-the-news, spike faded, confirmed, absorbed, or "the reaction is still being traded");
+  the US prints of the next 24 hours, High and Medium (Medium labelled "(medium impact)": on 4 November
+  ISM Services was Medium and went unnamed); then the headlines and the Fed odds as before.
 - *Fix 5, cascade reversal alerts with a confirmation rule and firmer words.* Next.
 - *Fix 6, scheduled agent runs after a High-impact print and after a day-plan invalidation.* Next.
 
@@ -260,7 +274,9 @@ Built from candles and the derivatives feeds at 00:00 UTC each day, audited ever
 - **Magnitude scaler:** once a day, an open-interest surge through the value edge or taker delta at 1.5×
   usual widens the target to the next level.
 - **Pre-flight:** an active 4h engineered trap forces a neutral plan; a high-impact USD release forces a
-  chop window from 30 minutes before to 90 minutes after.
+  chop window from 30 minutes before to 90 minutes after; a major print (election, FOMC, Fed chair) inside
+  its 24h-before / 48h-after window puts the plan in event mode: no range plan, 1.5× sigma every hour,
+  invalidation at the 5th percentile both sides, the event named in every message (fix 3, 5 Nov).
 - **Sigma calibration (live since 30 Oct):** realised day range against the engine's own expected range
   over the last ten days, bounded 0.8–1.3. Neutral on the 60-day backtest; kept because it is honest.
 - **Liquidation gravity (built, OFF):** pulling paths toward liquidation zones and dealer walls made the
@@ -290,7 +306,7 @@ Every message is scanned against a banned-jargon list before it goes out.
 | Plan alerts (1-agent report) | WATCH when price reaches the zone, CONFIRMED on the confirm close, NO SETUP, TARGET 1–3, STOPPED, EXPIRED | Plain words, from the plan's numbers |
 | Cascade | Only moves into A (strong setup) or C (trend losing control), after the state holds (Live 5 min, Intraday 15 min, Weekly 1 h, Monthly 4 h); a return to the same state within the repeat window (3 h / 6 h / 24 h / 72 h) stays silent | Desk and price, old state → new state, what changed |
 | TRAP | Declared, and settled | "A dip below X should fail and bounce" |
-| Market Pulse | Every hour boundary, one message naming the closes it covers: "1h + 2h + 4h candle closes" at 00:00, 04:00, 08:00, 12:00, 16:00 and 20:00 UTC, "1h + 2h" on the other even hours, "1h" otherwise (from the Live desk, or a live plan if one is open); and when a report with a sided plan is run. Live 4 Nov; it was the 4-hour close only. Speaks from the open plan while there is one; a plan the tracker cancels hands the Pulse back to the Live desk the same minute (fix 1, 5 Nov) | Your Pulse template: direction, Target 1, stop, turning window, US releases, BTC headlines, Fed odds within 7 days |
+| Market Pulse | Every hour boundary, one message naming the closes it covers: "1h + 2h + 4h candle closes" at 00:00, 04:00, 08:00, 12:00, 16:00 and 20:00 UTC, "1h + 2h" on the other even hours, "1h" otherwise (from the Live desk, or a live plan if one is open); and when a report with a sided plan is run. Live 4 Nov; it was the 4-hour close only. Speaks from the open plan while there is one; a plan the tracker cancels hands the Pulse back to the Live desk the same minute (fix 1, 5 Nov). The event section leads with the event regime, then the last day's High prints with their read, then the next day's High and Medium prints (fixes 3 and 4, 5 Nov) | Your Pulse template: direction, Target 1, stop, turning window, US releases, BTC headlines, Fed odds within 7 days |
 | Trade alerts | A pinned trade's target, stop, trap on its levels, monitoring checkpoint | From the card |
 
 Telegram is implemented and switches on the moment a bot token and chat id are added to the VM's
@@ -351,6 +367,8 @@ report runs and are not stored, so there is nothing to read back. See section 9.
 | --- | --- |
 | Election-day fix 1: cancelled plans reach the report ledger | Fixed 5 Nov: the scorer applies the tracker's two cancel rules; the Pulse stops speaking from a cancelled plan the same minute (section 3) |
 | Election-day fix 2: Live Recon opens on the 4-hour chart | Done 5 Nov: your Main Chart View; 1h is the other view (section 3) |
+| Election-day fix 3: event regime (Section 6.2) | Live 5 Nov: an election / FOMC / Fed-chair print puts the Quant Forecast, the Pulse, the desk summaries and the war-room state into event mode from 24h before to 48h after (section 3) |
+| Election-day fix 4: the Pulse names the scheduled prints | Live 5 Nov: regime first, last day's High prints with their read, next day's High and Medium prints (section 3) |
 | Per-desk chart switch (Section 3, Main Chart View) | Built 4 Nov: the desk's own candle by default, one coarser view a click away (4h / 1D / 3D / 2W); the call, forecast, summary and alerts stay on the desk's candle (section 3) |
 | Derived candles 12H / 3D / 0.5W / 2W and the cascade read order (Section 3) | Built 4 Nov: built from the fetched candles each refresh; each war room reads your cascade order as briefs beside its three timeframes; 24H is the daily candle (section 3) |
 | Short-horizon trap labels (Section 1.4) | Built 4 Nov: 15m and 1h traps labelled short-horizon, shown and traded on the Live desk only, never in a summary or the Pulse; 4h and longer unchanged (section 3) |

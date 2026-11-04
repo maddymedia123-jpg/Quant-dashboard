@@ -30,7 +30,7 @@ def _window(start_ms: int, end_ms: int) -> tuple[str, str]:
 def payload(plan: dict, status: str, plans_today: list[dict], bot_message: str, live: dict | None,
             now_ms: int, h1=None, book: dict | None = None, week: dict | None = None,
             self_audit: dict | None = None) -> dict:
-    from core.qf_alerts import REGIME_WORD, _clock, timeline_line, trap_label
+    from core.qf_alerts import _clock, regime_word, timeline_line, trap_label
     from ui.panels import QF_STATUS
     parts = plan.get("parts") or {}
     ph, pl = plan.get("projected_high") or {}, plan.get("projected_low") or {}
@@ -75,7 +75,7 @@ def payload(plan: dict, status: str, plans_today: list[dict], bot_message: str, 
             "weekly_gex_walls": list(walls[:2]),
             "macro_baseline_summary": (week or {}).get("macro_baseline_summary")},
         "layman_summary_and_timeline_tree": {
-            "master_regime": REGIME_WORD[plan["regime"]],
+            "master_regime": regime_word(plan),
             "confidence_odds": (f"{p:.0%}" if p is not None else "") + (f" (Hit rate: {rate})" if rate else ""),
             "timeline_tree_nodes": nodes,
             "trade_directive_box": box},

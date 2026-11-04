@@ -79,6 +79,8 @@ HIGH_LOW_TOL = 0.25              # a projected high or low is right within a qua
 TIME_TOL_MS = 2 * HOUR_MS
 BACKTEST_DAYS = 60
 MACRO_SIGMA_X = 1.5              # an hour inside a high-impact release window: a chop box, but a loud one
+EVENT_SIGMA_X = 1.5              # every hour of an event regime day (election, FOMC): the whole day is loud
+EVENT_INVALIDATION_PCT = 5.0     # event regime: the invalidation sits further out, both sides
 
 WEIGHTS = {"momentum": 0.35, "value": 0.20, "flow": 0.25, "open_interest": 0.10, "funding": 0.10}
 PRICE_ONLY = ("momentum", "value")
@@ -286,7 +288,7 @@ def simulate(sigmas: list[float], drift: np.ndarray, paths: int, grav: dict | No
 def build_plan(h1: pd.DataFrame, now_ms: int, end_ms: int, price: float, *, version: int = 0,
                flow: pd.DataFrame | None = None, gamma: dict | None = None, price_only: bool = False,
                paths: int = PATHS, force_neutral: bool = False, forced_windows: list | None = None,
-               gravity_k: float | None = None) -> dict:
+               gravity_k: float | None = None, event: dict | None = None) -> dict:
     """The plan from now to end_ms, as a JSON-safe dict. {"available": False, "reason": ...} without
     enough history. `gravity_k` overrides GRAVITY_K (the backtest compares settings).
 
@@ -331,9 +333,15 @@ def build_plan(h1: pd.DataFrame, now_ms: int, end_ms: int, price: float, *, vers
                 sigmas[k] *= MACRO_SIGMA_X
                 full_sigmas[k] *= MACRO_SIGMA_X         # the caution test is as wide as the hour it judges
     phases = ["chop" if ph == "macro" else ph for ph in phases]
+    if event:
+        # event regime (election-day fix 3): no range plan - the lean is scored 0 below, every hour is
+        # as loud as a release hour (an hour inside a release window is scaled twice: it is louder still),
+        # and the invalidation sits at EVENT_INVALIDATION_PCT both sides
+        sigmas = [s * EVENT_SIGMA_X for s in sigmas]
+        full_sigmas = [s * EVENT_SIGMA_X for s in full_sigmas]
 
     parts = lean_parts(closed, price, flow, now_ms, price_only)
-    score = 0.0 if force_neutral else lean_score(parts)
+    score = 0.0 if force_neutral or event else lean_score(parts)
     compressed = fit.compression < COMPRESSION_X
     neutral = abs(score) < NEUTRAL_SCORE or (compressed and abs(score) < COMPRESSED_SCORE)
     regime = "neutral" if neutral else "bullish" if score > 0 else "bearish"
@@ -375,8 +383,9 @@ def build_plan(h1: pd.DataFrame, now_ms: int, end_ms: int, price: float, *, vers
     lo_t = int(np.median(sub_times[prices.argmin(axis=1)]))
     end = prices[:, -1]
 
-    inv_low = float(np.percentile(lows, INVALIDATION_PCT))
-    inv_high = float(np.percentile(highs, 100 - INVALIDATION_PCT))
+    inv_pct = EVENT_INVALIDATION_PCT if event else INVALIDATION_PCT
+    inv_low = float(np.percentile(lows, inv_pct))
+    inv_high = float(np.percentile(highs, 100 - inv_pct))
     invalidation = ({"below": round(inv_low, 2)} if regime == "bullish" else
                     {"above": round(inv_high, 2)} if regime == "bearish" else
                     {"below": round(inv_low, 2), "above": round(inv_high, 2)})
@@ -419,6 +428,10 @@ def build_plan(h1: pd.DataFrame, now_ms: int, end_ms: int, price: float, *, vers
     }
     if force_neutral:
         plan["preflight_override"] = "trap"
+    elif event:
+        plan["preflight_override"] = "event"
+    if event:
+        plan["event_regime"] = dict(event)
     if macro_windows:
         plan["macro_windows"] = macro_windows
     plan["scenario_a"], plan["scenario_b"] = scenarios(plan)
@@ -448,8 +461,8 @@ def wire_line(plan: dict) -> str:
     if w.get("summary"):
         return w["summary"]
     a = plan.get("scenario_a") or ""
-    if plan.get("regime") == "locked" or ": " not in a:
-        return a
+    if plan.get("regime") == "locked" or plan.get("event_regime") or ": " not in a:
+        return a                                 # the event sentence keeps its name: it is the directive
     rest = a.split(": ", 1)[1]
     return rest[:1].upper() + rest[1:]
 
@@ -462,6 +475,13 @@ def scenarios(plan: dict) -> tuple[str, str]:
     """Scenario A, the primary path, and B, the contingency, in plain words from the plan's numbers."""
     hi, lo = plan["projected_high"]["price"], plan["projected_low"]["price"]
     inv = plan["invalidation"]
+    ev = plan.get("event_regime")
+    if ev:
+        return (f"Event regime ({ev.get('title')}): no range plan. Expect sharp moves either way; trade only a "
+                f"confirmed break beyond {_money(inv.get('below'))} or {_money(inv.get('above'))}, not the range "
+                f"inside them, with a wider stop and smaller size.",
+                "The event passes quietly: price stays inside the band and a range plan resumes when the "
+                "event window closes.")
     if plan["regime"] == "bullish":
         return (f"Higher: dips hold above {_money(lo)} and price works up towards {_money(hi)}.",
                 f"The rise fails: price holds below {_money(inv['below'])} and the plan is replaced.")
@@ -482,6 +502,10 @@ def directive(plan: dict, at) -> str:
     ph, pl = plan["projected_high"], plan["projected_low"]
     lean = {"bullish": "The plan leans UP.", "bearish": "The plan leans DOWN.",
             "neutral": "No clear direction today: expect a range, not a trend."}[plan["regime"]]
+    ev = plan.get("event_regime")
+    if ev:
+        lean = (f"EVENT REGIME ({ev.get('title')}): no range plan today. {ev.get('note') or ''} Expect sharp "
+                "moves either way; wider stop, smaller size.").replace("  ", " ")
     out = [lean]
     if chop:
         out.append(f"Expect quiet, sideways trade from {at(chop[0]['start_ms'])} to {at(chop[0]['end_ms'])}"

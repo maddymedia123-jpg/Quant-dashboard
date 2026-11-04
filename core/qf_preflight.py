@@ -16,7 +16,11 @@
    MACRO_AFTER_MS after it. Two events at the same minute (CPI and core CPI) make one window with both
    titles. core.quant_forecast.build_plan marks the hours it touches as chop and widens their sigma.
 
-Neither check may block the daily plan: `preflight` never raises. A store or calendar that fails leaves
+3. Event regime (election-day fix 3, 5 Nov). A major print (an election, an FOMC decision, the Fed chair;
+   core.indicators.event_regime) inside its window puts the plan in event mode: no range plan, every hour's
+   sigma widened, the invalidation at the 5th percentile both sides, the event named in the directive.
+
+No check may block the daily plan: `preflight` never raises. A store or calendar that fails leaves
 that check clear and records why in "errors", so the plan still goes out and the drawer says what was
 not checked."""
 from __future__ import annotations
@@ -101,10 +105,24 @@ def macro_check(m, now_ms: int, end_ms: int) -> tuple[list[dict], list[str]]:
         return [], [f"calendar unreadable ({type(e).__name__}: {str(e)[:80]})"]
 
 
+def event_check(m, now_ms: int) -> tuple[dict, list[str]]:
+    """The event regime now, as core.indicators.event_regime reads it from the calendar snapshot."""
+    from core.indicators.event_regime import NONE, read
+    cal = getattr(m, "calendar", None)
+    if cal is None or not getattr(cal, "available", False):
+        return NONE.to_state(), []                  # the macro check already records why
+    try:
+        return read(getattr(cal, "events", None) or [], now_ms).to_state(), []
+    except Exception as e:  # noqa: BLE001 - the plan must not wait on the calendar
+        log.warning("quant forecast pre-flight: event regime unreadable: %s", e)
+        return NONE.to_state(), [f"event regime unreadable ({type(e).__name__}: {str(e)[:80]})"]
+
+
 def preflight(store, m, now_ms: int, end_ms: int) -> dict:
-    """Both checks, never raising:
+    """All three checks, never raising:
     {"trap": {"active", "label", "traps": [...]}, "macro": [{"title", "t_ms", "start_ms", "end_ms",
-    "impact"}], "forced_neutral": bool, "errors": [str]}."""
+    "impact"}], "event": {"active", ...} (core.indicators.event_regime.Regime.to_state), "forced_neutral": bool,
+    "errors": [str]}."""
     try:
         trap, e1 = trap_check(store)
     except Exception as e:  # noqa: BLE001 - belt and braces: the check above already catches
@@ -113,11 +131,18 @@ def preflight(store, m, now_ms: int, end_ms: int) -> dict:
         macro, e2 = macro_check(m, now_ms, end_ms)
     except Exception as e:  # noqa: BLE001
         macro, e2 = [], [f"macro check failed ({type(e).__name__})"]
-    return {"trap": trap, "macro": macro, "forced_neutral": bool(trap["active"]), "errors": e1 + e2}
+    try:
+        event, e3 = event_check(m, now_ms)
+    except Exception as e:  # noqa: BLE001
+        event, e3 = {"active": False}, [f"event check failed ({type(e).__name__})"]
+    return {"trap": trap, "macro": macro, "event": event, "forced_neutral": bool(trap["active"]),
+            "errors": e1 + e2 + e3}
 
 
 def plan_kwargs(pre: dict) -> dict:
     """The extra keyword arguments for core.quant_forecast.build_plan."""
     pre = pre or {}
+    event = pre.get("event") or {}
     return {"force_neutral": bool(pre.get("forced_neutral")),
-            "forced_windows": [(w["start_ms"], w["end_ms"], w["title"]) for w in pre.get("macro") or []]}
+            "forced_windows": [(w["start_ms"], w["end_ms"], w["title"]) for w in pre.get("macro") or []],
+            "event": dict(event) if event.get("active") else None}

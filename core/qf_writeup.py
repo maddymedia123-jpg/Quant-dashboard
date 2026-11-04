@@ -58,10 +58,10 @@ Return JSON only:
 
 def facts(plan: dict, live: dict | None, at) -> dict:
     """What the model is shown: the plan's numbers, already formatted the way they must be written."""
-    from core.qf_alerts import REGIME_WORD, window_label
+    from core.qf_alerts import regime_word, window_label
     money = lambda x: f"${x:,.0f}"  # noqa: E731
     out = {
-        "direction": REGIME_WORD[plan["regime"]],
+        "direction": regime_word(plan),
         "price_now": money(plan["origin"]),
         "plan_ends": at(plan["end_ms"]),
         "odds_main_path": f"{plan['p_scenario_a']:.0%}",
@@ -151,10 +151,11 @@ def _ask(settings, system: str, user: str) -> dict | None:
 def write(plan: dict, live: dict | None = None, settings=None, ask=None) -> dict | None:
     """The checked AI text for this plan: {"summary", "scenario_a", "scenario_b", "model"}, or a dict with
     "rejected" saying why the code's own text stands. None when there is nothing to ask (no key, offline,
-    a locked day). `ask` replaces the model call in tests."""
+    a locked day, an event-regime day: the code's sentence names the event and nothing may replace it).
+    `ask` replaces the model call in tests."""
     from core.data.market import _offline
     from core.qf_alerts import at_label
-    if plan.get("regime") == "locked" or not plan.get("available"):
+    if plan.get("regime") == "locked" or plan.get("event_regime") or not plan.get("available"):
         return None
     if ask is None:
         if _offline():

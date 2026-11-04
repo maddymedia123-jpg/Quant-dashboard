@@ -106,7 +106,7 @@ In the ledger, a directional desk call hits when price moves more than 0.25 sigm
 
 ## 7. Glossary
 
-- **Master regime**: bullish expansion, bearish expansion, or neutral / range-bound.
+- **Master regime**: bullish expansion, bearish expansion, or neutral / range-bound; "EVENT REGIME · <event>" when a major print (election, FOMC, Fed chair) is inside its window (24h before to 48h after): no range plan, wider invalidation, trade only a confirmed break.
 - **Lean**: the -1 to +1 score that sets the regime.
 - **Chop**: a quiet window with no drift drawn.
 - **Expansion**: where the day's bigger moves usually come.

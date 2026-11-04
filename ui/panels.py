@@ -2593,7 +2593,7 @@ def qf_status_html(status: str, messages: list[str] | str | None, plans_today: l
 def qf_gameplan_html(plan: dict, live: dict) -> str:
     """Drawer: the regime with its odds and record, the plan in words and who wrote them, the windows, the
     coordinates, both scenarios. The main view carries only the wire plan (qf_wire_html)."""
-    from core.qf_alerts import REGIME_WORD, at_label, window_label
+    from core.qf_alerts import at_label, regime_word, window_label
     money = lambda x: fmt_num(x, 0, "$")  # noqa: E731
     tone = {"bullish": "up", "bearish": "down"}.get(plan["regime"], "neutral")
     odds = []
@@ -2603,7 +2603,7 @@ def qf_gameplan_html(plan: dict, live: dict) -> str:
     odds += record_words(plan, live)
     if not live.get("days"):
         odds.append("live record: building (no finished day yet)")
-    body = (f"<p><strong>{html.escape(REGIME_WORD[plan['regime']])}</strong> · {html.escape(' · '.join(odds))}</p>"
+    body = (f"<p><strong>{html.escape(regime_word(plan))}</strong> · {html.escape(' · '.join(odds))}</p>"
             + qf_words_html(plan))
     if plan["regime"] != "locked":
         rows = "".join(f"<tr><td>{'Chop / range' if w['phase'] == 'chop' else 'Expansion'}</td>"

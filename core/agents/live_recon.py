@@ -229,6 +229,14 @@ def build_state(m, analyses: dict, now_ms: int | None = None, profile: ReconProf
     # his weekend modifier: the session the judges are reading, with the playbook that goes with it
     from core.indicators.weekend import read as weekend_read
     state["session"] = weekend_read(now).to_state()
+    # election-day fix 3: the judges always know whether a major print's window is open
+    try:
+        from core.indicators.event_regime import read as regime_read
+        cal = getattr(m, "calendar", None)
+        state["event_regime"] = regime_read(getattr(cal, "events", None) or [] if getattr(cal, "available", False)
+                                            else [], now).to_state()
+    except Exception as e:  # noqa: BLE001 - the war room must not wait on the calendar
+        state["event_regime"] = {"active": False, "note": f"{type(e).__name__}: {e}"}
     # his Section 5.3: the named anomaly trap on this desk, so the judges and the Head read it by name
     try:
         from core.indicators import anomaly_trap

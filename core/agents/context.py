@@ -128,6 +128,11 @@ def macro_read(m: MarketSnapshot, now_ms: int | None = None) -> dict:
                              if m.news.available else {"available": False, "note": m.news.error or "news down"})
     except Exception as e:  # noqa: BLE001
         out["narratives"] = {"available": False, "note": f"{type(e).__name__}: {e}"}
+    try:
+        from core.indicators.event_regime import read as regime_read
+        out["event_regime"] = regime_read(m.calendar.events if m.calendar.available else [], now).to_state()
+    except Exception as e:  # noqa: BLE001
+        out["event_regime"] = {"active": False, "note": f"{type(e).__name__}: {e}"}
     if m.predictions.available:
         out["fed_and_macro_odds"] = [{"question": x["question"], "probability": round(x["probability"], 3),
                                       "band": x["band"]} for x in m.predictions.tradeable("MACRO")[:8]]
