@@ -53,10 +53,10 @@ the log every minute.
 
 | Desk | Reads | Charts | Anchored to | Scored over |
 | --- | --- | --- | --- | --- |
-| Live Recon | 15m / 1h / 4h | 1h, next 4 hours | the UTC 4h candle | 4 hours |
-| Intraday | 1h / 4h / 1D, plus a 12H brief | 4h, next 24 hours | the UTC day | 24 hours |
-| Weekly | 4h / 1D / 1W, plus 3D and 0.5W briefs | 1D, next 7 days | Monday 00:00 UTC | 7 days |
-| Monthly | 1D / 1W / 1M, plus a 2W brief | 1W, next month | the calendar month | 30 days |
+| Live Recon | 15m / 1h / 4h | 1h (or a 4h view), next 4 hours | the UTC 4h candle | 4 hours |
+| Intraday | 1h / 4h / 1D, plus a 12H brief | 4h (or a 1D view), next 24 hours | the UTC day | 24 hours |
+| Weekly | 4h / 1D / 1W, plus 3D and 0.5W briefs | 1D (or a 3D view), next 7 days | Monday 00:00 UTC | 7 days |
+| Monthly | 1D / 1W / 1M, plus a 2W brief | 1W (or a 2W view), next month | the calendar month | 30 days |
 
 Each desk screen carries: the hero and candle countdown, the chart with the anchored call, the plain-English
 read (what is happening, levels that matter, what changes the view), the KPI strip for its own window, the
@@ -110,6 +110,15 @@ gets forced out, so a squeeze trap leans long and a flush trap leans short. It s
 as its own line under the Big Picture in the summary, speaks for the positioning family in the confluence
 gate, and goes to the desk's judges and Head in their state by name. Greed without leverage building is
 greed, not a flush, and is not named.
+
+**Per-desk chart switch (your Section 3 "Main Chart View", live 4 November).** Each desk's chart has a
+two-way switch above it: the desk's own candle by default (Live 1h, Intraday 4h, Weekly 1D, Monthly 1W), and
+one coarser view (Live 4h, Intraday 1D, Weekly 3D, Monthly 2W). The coarser view redraws the candles, and the
+EMAs, RSI, divergences, trendlines, patterns and Fibonacci zones are re-read on those candles; the levels the
+desk's call stands on are kept, so the call is drawn where it was made, and the title reads, for example,
+"4h view · call on 1h". The call on the right, the forecast pane, the summary, the confluence gate and every
+alert stay on the desk's own candle; nothing is judged on the coarser one. If the coarser frame is too short
+to read, the desk says so and shows its own candle.
 
 **Derived candles and the cascade read order (your Section 3, live 4 November).** No free venue serves
 12-hour, 3-day, half-week or two-week candles, so they are built from the fetched ones on every refresh:
@@ -317,6 +326,7 @@ report runs and are not stored, so there is nothing to read back. See section 9.
 
 | Ask | Status |
 | --- | --- |
+| Per-desk chart switch (Section 3, Main Chart View) | Built 4 Nov: the desk's own candle by default, one coarser view a click away (4h / 1D / 3D / 2W); the call, forecast, summary and alerts stay on the desk's candle (section 3) |
 | Derived candles 12H / 3D / 0.5W / 2W and the cascade read order (Section 3) | Built 4 Nov: built from the fetched candles each refresh; each war room reads your cascade order as briefs beside its three timeframes; 24H is the daily candle (section 3) |
 | Short-horizon trap labels (Section 1.4) | Built 4 Nov: 15m and 1h traps labelled short-horizon, shown and traded on the Live desk only, never in a summary or the Pulse; 4h and longer unchanged (section 3) |
 | Market Pulse on every 1H, 2H and 4H close (Section 10) | Built 4 Nov: one message per hour boundary naming which closes it covers; a message older than 30 minutes is skipped, not sent late; the 4-hour close keeps its old ledger key so nothing double-sent at the switch (section 6) |

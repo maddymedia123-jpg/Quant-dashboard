@@ -1990,8 +1990,9 @@ def rail_read(verdict, analysis) -> str:
     return f"{DIR_GLYPH.get(d, '◆')} {d} · {c:.0%}"
 
 
-def chart_head_html(a, signal: bool = False, symbol: str | None = None) -> str:
-    """The chart's title and legend, as the design frames the figure."""
+def chart_head_html(a, signal: bool = False, symbol: str | None = None, call_tf: str | None = None) -> str:
+    """The chart's title and legend, as the design frames the figure. `call_tf` is the desk's own candle:
+    when the chart is a coarser view, the title says so and names the candle the call was made on."""
     legend = ("<span><i class='sw ema21'></i>EMA 21</span><span><i class='sw ema50'></i>EMA 50</span>"
               "<span><i class='sw up'></i>up</span><span><i class='sw down'></i>down</span>"
               "<span title='The volatility envelope drawn as bars: body ±0.5σ, wick ±1σ. Not predicted candles.'>"
@@ -1999,7 +2000,8 @@ def chart_head_html(a, signal: bool = False, symbol: str | None = None) -> str:
     # the series legend is drawn inside the chart itself (it also covers EMA 100/200 and the forecast),
     # so the frame carries the title only rather than a second, shorter legend
     del legend
-    return (f"<div class='ti-chart-head'><span class='ti-chart-title'>{html.escape(market_label(symbol))} · {html.escape(a.chart_tf)}</span>"
+    view = f" view · call on {html.escape(call_tf)}" if call_tf and call_tf != a.chart_tf else ""
+    return (f"<div class='ti-chart-head'><span class='ti-chart-title'>{html.escape(market_label(symbol))} · {html.escape(a.chart_tf)}{view}</span>"
             "</div>")
 
 

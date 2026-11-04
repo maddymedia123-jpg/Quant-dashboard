@@ -59,7 +59,7 @@ from core.agents.live_recon import build_state, run_live_recon
 from core.agents import handshake
 from core.agents.recon_profiles import LIVE, PROFILES
 from core import live_accuracy, live_anchor, pipeline
-from core.config import CATEGORIES, MACRO_EVENTS, TTL
+from core.config import CATEGORIES, CHART_VIEWS, MACRO_EVENTS, TTL
 from core.data.market import assemble, load_context, load_spot
 from core.derived import enrich_futures, record_sample
 from core.indicators import desk_derivs
@@ -509,6 +509,13 @@ def _open_screen(screen: str) -> None:
 
 
 @st.cache_data(ttl=TTL["spot"], show_spinner=False)
+def _desk_view(category: str, view_tf: str, data_stamp: str):
+    """The desk's chart on the chosen candle (his Main Chart View), cached per snapshot like the rest."""
+    from core.indicators.category import view_analysis
+    return view_analysis(CATEGORIES[category], view_tf, m.spot.frames, m.futures, analyses[category])
+
+
+@st.cache_data(ttl=TTL["spot"], show_spinner=False)
 def _desk_cascade(category: str, data_stamp: str):
     """The desk's cascade, cached per snapshot like the judges' state, and built by the same function."""
     from core.indicators.cascade import classify
@@ -749,8 +756,22 @@ def category_tab(key):
         c_chart, c_dir = st.columns([2, 1], gap="large")
         with c_chart:
             with st.container(key="ti_chart"):
-                panels.render(panels.chart_head_html(a, signal, m.spot.symbol))
-                render_chart(a, dark, height=480, signal=signal)
+                # his Section 3 Main Chart View: the desk's own candle by default, one coarser view a
+                # click away; the call on the right and everything below stay on the desk's candle
+                views = CHART_VIEWS[key]
+                view_tf = st.segmented_control("Chart candle", list(views), default=views[0],
+                                               key=f"chart_view_{key}", label_visibility="collapsed") or views[0]
+                try:
+                    view = _desk_view(key, view_tf, _data_stamp())
+                except Exception as e:  # noqa: BLE001 - a view failure must not blank the chart
+                    view = None
+                    st.warning(f"{view_tf} view unavailable this refresh: {e}")
+                if view is None:
+                    if view_tf != a.chart_tf:
+                        st.caption(f"Not enough {view_tf} candles for that view yet; showing the {a.chart_tf} chart.")
+                    view = a
+                panels.render(panels.chart_head_html(view, signal, m.spot.symbol, call_tf=a.chart_tf))
+                render_chart(view, dark, height=480, signal=signal)
         with c_dir:
             v = verdicts.get(key)
             panels.render(panels.anchored_direction_html(a, v, now_ms) if v else panels.direction_html(a))
