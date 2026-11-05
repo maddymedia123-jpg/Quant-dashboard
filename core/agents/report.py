@@ -11,6 +11,10 @@ def _dual(dt) -> str:
     return fmt_when(int(dt.timestamp() * 1000), seconds=True)
 
 
+def _num(x) -> str:
+    return "—" if x is None else f"{x:g}"
+
+
 def _ul(items: list[str]) -> str:
     return "\n".join(f"- {x}" for x in items) if items else MISSING
 
@@ -94,7 +98,24 @@ def to_markdown(r: TrapReport) -> str:
                       + (f"{pl.confirm_close:,.0f}" if pl.confirm_close else "the zone")
                       + (f"; taker buy/sell {beyond} {pl.taker_ratio_limit:.2f}" if pl.taker_ratio_limit else ""),
                       f"- **Stop:** {pl.stop:,.0f}", f"- **Targets:** {', '.join(f'{t:,.0f}' for t in pl.targets)}",
-                      f"- **Valid for:** {pl.expires_hours:.0f}h"]
+                      f"- **Valid for:** {pl.expires_hours:.0f}h",
+                      f"- **Risk · leverage:** {_num(pl.risk_pct)}% · {_num(pl.max_leverage)}x"]
+            if pl.event_regime:
+                parts.append(f"- **Event regime:** {pl.event_regime} (size halved by the regime rule)")
+        parts += [f"- **Note:** {n}" for n in (getattr(d, "plan_notes", None) or [])]
+    # the framing and the code's check (roadmap item 12): the download used to leave them on the card
+    check = (getattr(d, "horizon_check", None) or {}) if d is not None else {}
+    words = (getattr(d, "horizon_framing", "") or "") if d is not None else ""
+    if check or words:
+        parts += ["", "### 4-hour zone vs 24-hour horizon"]
+        if check.get("framing_note"):
+            parts.append(f"{check['framing_note']}.")
+        if words:
+            parts += ["", words]
+        if check.get("verdict") and check["verdict"] != "no_trade":
+            label = {"tactical": "tactical, inside the day", "reaches_beyond": "reaches beyond the day's edge",
+                     "outside": "a trade at the day's edge", "unknown": "not framed"}.get(check["verdict"], check["verdict"])
+            parts += ["", f"**Plan check:** {label}. {check.get('note') or ''}".rstrip() + "."]
 
     parts += ["", "---", "", "## APPENDIX"]
     one = r.mode == "1-agent"

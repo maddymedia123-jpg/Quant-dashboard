@@ -152,6 +152,20 @@ setup up" arrived after the first big candle. The fixes, each merged live in thi
   regime with its halved size, and the Pulse's regime line says whose rule "no range plan" is: the Quant
   Forecast's. A plan made before the regime began carries no tag; the Pulse line still says the rule is
   the day plan's.
+**Report review, 5 November (TIR1-20261105-153911, owner's FIX IT).** The report built its bear-trap case
+on "$124.5M of long liquidations", the all-coins figure (BTC's was $43.1M); set its stop at 75,350 under a
+primary scenario that died on a close below 75,700; called targets 79,448 and 80,219 "inside the 24-hour
+range" when the 24-hour expected high was 78,752 (the code check said tactical because it keeps the
+widest edge, the prior day's high); cited a Fibonacci reversal window and the spec's 13:00–17:00 session
+instead of the measured 12:00–16:00 window; and relabelled a +70 bp liquidity contraction an expansion.
+The download left out the framing, the verdict, the risk and leverage and any regime tag. Fixed: the plan
+check names targets beyond the 24-hour expected range even when the verdict stays tactical
+(`targets_beyond_expected_range`); code reads the first price in the primary scenario's invalidation and
+names a stop placed beyond it (`director.plan_notes`, on the card and in the download, both pipelines);
+the download carries the framing, the check, risk and leverage, the regime tag and the notes; the raw
+table labels the all-coins liquidation row; and a discipline block in both Directors' rules (and two
+shared rules for every agent) fixes the liquidation rows, the timing hours, the stop-versus-invalidation
+rule, macro labels as given, and bans the reversal window as evidence.
 - *Fix 4, the Pulse's event section names the scheduled prints, live 5 November.* In order: the event
   regime when one is open; the High-impact US prints of the last 24 hours with the macro engine's read of
   the reaction (sell-the-news, spike faded, confirmed, absorbed, or "the reaction is still being traded");
@@ -467,6 +481,7 @@ report runs and are not stored, so there is nothing to read back. See section 9.
 | Roadmap item 10: four macro feeds | Live 5 Nov: 2-year minus funds rate (FRED, New York Fed fallback) with the ±25 bp read; BTC dominance (CoinGecko, change from own samples); USD/JPY yen carry (ECB via frankfurter.dev, BoJ rate hand-set); election odds parked, VoxOdds 404 (section 3) |
 | Roadmap item 11: dollar index reconstructed | Live 5 Nov: ICE's DXY formula on the ECB's six daily rates, a day behind and within a few tenths; 1% week = spike or slide; spike + bitcoin up 3% between the same dates = false-breakout signal (section 3) |
 | Roadmap item 12: Director 4-hour zone vs 24-hour horizon | Live 5 Nov: framing computed in code (price in the day's range, which day edges the 4-hour range reaches), the Director's sentences on it, the plan checked against the day's edges (tactical / needs the edge taken / at the edge) (section 3) |
+| Report review 5 Nov (TIR1-20261105-153911) | Live 5 Nov: targets beyond the 24-hour expected range named; a stop beyond the primary scenario's invalidation noted (plan_notes); the .md download carries framing, check, risk/leverage, regime tag and notes; all-coins liquidation row labelled; discipline rules in both Directors (section 3) |
 | Classic 15-agent Director parity | Live 5 Nov: the classic Director gets the per-desk derivatives, cascade, forecast and horizons blocks and the same plan, framing and regime rules as the 1-agent Director, and its numbers plan is watched by the alerts and the Pulse (section 5) |
 | WATCH / Pulse "touched" wording and the event regime in the Director's plan | Live 5 Nov: the WATCH and the Pulse name the touch (the candle high or low, with its time) and then the current price, instead of "Price reached the zone" under a headline price below it; a plan made inside an event regime is tagged, its size halved in code, the Director asked for the wider stop, and the Pulse says the no-range rule is the day plan's (section 3, fix 3) |
 | Per-desk chart switch (Section 3, Main Chart View) | Built 4 Nov: the desk's own candle by default, one coarser view a click away (4h / 1D / 3D / 2W); the call, forecast, summary and alerts stay on the desk's candle (section 3) |

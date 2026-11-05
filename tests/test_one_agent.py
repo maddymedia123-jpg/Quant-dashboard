@@ -286,6 +286,68 @@ def test_an_answer_without_the_framing_still_validates(ctx):
     assert d.horizon_framing == "" and d.horizon_check is None
 
 
+# ---------- the review of TIR1-20261105-153911 (owner's FIX IT, 5 November) ----------
+def test_a_stop_beyond_the_primary_scenarios_invalidation_is_noted(ctx):
+    """The 55% scenario died on a 1-hour close below 75,700; the plan's stop was 75,350: the trade outlived
+    its thesis by 350 dollars. Code reads the first price in the primary scenario's invalidation and
+    names a stop placed beyond it, for either side."""
+    from core.agents.schemas import Scenario
+    sc = lambda inv: [Scenario(name="PRIMARY", probability=55, path="p", invalidation=inv),  # noqa: E731
+                      Scenario(name="other", probability=45, path="p", invalidation="x")]
+    long_plan = PlanLevels(side="LONG", zone_low=76000, zone_high=76500, stop=75350, targets=[77566])
+    notes = one_agent.plan_notes(long_plan, sc("A 1-hour candle close below 75,700."))
+    assert notes == ["the stop 75,350 sits 350 below the primary scenario's invalidation (A 1-hour candle close below "
+                     "75,700.): the trade outlives its thesis; the stop belongs at the invalidation, or the invalidation at the stop"]
+    assert one_agent.plan_notes(long_plan, sc("A 1-hour close below 75,350")) == [], "at the invalidation is fine"
+    assert one_agent.plan_notes(long_plan, sc("A 1-hour close below 75,000")) == [], "inside it is fine"
+    short_plan = PlanLevels(side="SHORT", zone_low=83520, zone_high=83945, stop=84200, targets=[82820])
+    assert "sits 200 above the primary scenario's invalidation" in one_agent.plan_notes(short_plan, sc("4h close above 84,000"))[0]
+    assert one_agent.plan_notes(short_plan, sc("4h close above 84,200")) == []
+    assert one_agent.plan_notes(short_plan, sc("a reclaim of the range")) == [], "no price in the words: nothing to check"
+    assert one_agent.plan_notes(short_plan, []) == [] and one_agent.plan_notes(None, sc("84,000")) == []
+    assert one_agent.plan_notes(PlanLevels(side="NONE"), sc("84,000")) == []
+    # on the report, for both pipelines
+    m, analyses = ctx[0], ctx[1]
+    out = dict(OUT, scenarios=[dict(OUT["scenarios"][0], invalidation="A 4-hour close above 84,000")] + OUT["scenarios"][1:])
+    rep = one_agent.run_one_agent_sync(Fake([out]), m, analyses, "x")
+    assert rep.director.plan_notes and "sits 200 above" in rep.director.plan_notes[0]
+    assert one_agent.run_one_agent_sync(Fake([OUT]), m, analyses, "x").director.plan_notes == []
+    from core.agents.schemas import DirectorReport
+    assert DirectorReport.model_validate({k: v for k, v in OUT.items() if k in DirectorReport.model_fields}).plan_notes == []
+
+
+def test_the_markdown_carries_the_framing_the_check_the_size_and_the_notes(ctx):
+    """The downloaded TIR1-20261105-153911.md had none of the framing, the verdict, the risk and leverage
+    or a regime tag: they were on the card and in the MCP report only."""
+    m, analyses = ctx[0], ctx[1]
+    out = dict(OUT, scenarios=[dict(OUT["scenarios"][0], invalidation="A 4-hour close above 84,000")] + OUT["scenarios"][1:])
+    md = to_markdown(one_agent.run_one_agent_sync(Fake([out]), m, analyses, "x"))
+    assert "- **Risk · leverage:** 1% · 5x" in md
+    assert "### 4-hour zone vs 24-hour horizon" in md and OUT["horizon_framing"] in md
+    assert "**Plan check:** a trade at the day's edge. the SHORT zone 83,520-83,945 sits beyond the 24-hour horizon" in md
+    assert "- **Note:** the stop 84,200 sits 200 above" in md
+    now_ms = int(m.generated_at.timestamp() * 1000)
+    election = {"title": "Congressional Elections", "country": "USD", "impact": "High", "time_ms": now_ms - 2 * H,
+                "date": "2026-11-03T18:00:00-05:00", "forecast": "", "previous": ""}
+    m2 = m.model_copy(update={"calendar": m.calendar.model_copy(update={"events": list(m.calendar.events) + [election]})})
+    md2 = to_markdown(one_agent.run_one_agent_sync(Fake([OUT]), m2, analyses, "x"))
+    assert "- **Risk · leverage:** 0.5% · 2.5x" in md2
+    assert "- **Event regime:** Congressional Elections (size halved by the regime rule)" in md2
+
+
+def test_the_directors_carry_the_discipline_rules_from_the_review():
+    from core.agents import prompts
+    for text in (prompts.DIRECTOR_TEXT, one_agent.ONE_AGENT_TEXT):
+        assert prompts.DISCIPLINE_TEXT in text
+    d = prompts.DISCIPLINE_TEXT
+    assert "liquidations.total_usd, long_usd and short_usd are ALL coins" in d and "btc_usd" in d
+    assert "turning_window.next_window" in d and "kill_zones" in d
+    assert "primary scenario's invalidation" in d
+    assert "label exactly as given" in d and "delta_2y_read" in d
+    assert "never cite a reversal_window" in prompts.SHARED_RULES and "ALL coins" in prompts.SHARED_RULES
+    assert "8." in one_agent.ONE_AGENT_RULES and "9." in one_agent.ONE_AGENT_RULES
+
+
 def test_a_plan_made_inside_an_event_regime_is_tagged_and_its_size_halved(ctx):
     """4 Nov 21:26: the Director pushed a short while the Pulse's regime line said 'no range plan, smaller
     size' - the regime governed only the Quant Forecast. Now the regime reaches the Director's plan: the

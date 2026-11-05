@@ -532,7 +532,8 @@ def horizon_block_html(d) -> str:
     Director's sentences and the plan's verdict. Empty for a report made before the framing existed."""
     check = getattr(d, "horizon_check", None) or {}
     words = getattr(d, "horizon_framing", "") or ""
-    if not check and not words:
+    notes = getattr(d, "plan_notes", None) or []
+    if not check and not words and not notes:
         return ""
     body = "<span class='ti-label'>4-hour zone vs 24-hour horizon</span>"
     if check.get("framing_note"):
@@ -543,6 +544,8 @@ def horizon_block_html(d) -> str:
     if verdict and verdict != "no_trade":
         label, tone = HORIZON_WORDS.get(verdict, (verdict, "neutral"))
         body += f"<p>{chip(label, tone)} {html.escape(str(check.get('note') or ''))}.</p>"
+    for note in getattr(d, "plan_notes", None) or []:
+        body += f"<p>{chip('plan check', 'warn')} {html.escape(str(note))}.</p>"
     return body
 
 
@@ -693,7 +696,7 @@ def raw_metrics_rows(m: MarketSnapshot) -> list[tuple[str, str, str]]:
         ("Fear & Greed", (fmt_num(s.fear_greed, 0) + (f" {s.classification}" if s.classification else "")), s.source),
         ("Hyperliquid funding (1h)", fmt_pct(h.funding_rate_1h * 100, 4) if h.funding_rate_1h is not None else "—", h.source),
         ("Hyperliquid OI", fmt_num(h.open_interest, 0, suffix=" BTC"), h.source),
-        ("Liquidations 24h", (f"{fmt_num(l.total_usd / 1e6, 1, '$', 'M')} (long {fmt_num(l.long_usd / 1e6, 1, '$', 'M')} / short {fmt_num(l.short_usd / 1e6, 1, '$', 'M')})" if l.total_usd else "—"), l.source),
+        ("Liquidations 24h (all coins)", (f"{fmt_num(l.total_usd / 1e6, 1, '$', 'M')} (long {fmt_num(l.long_usd / 1e6, 1, '$', 'M')} / short {fmt_num(l.short_usd / 1e6, 1, '$', 'M')})" if l.total_usd else "—"), l.source),
         ("BTC liquidations 24h", (f"{fmt_num(l.btc_usd / 1e6, 1, '$', 'M')} (long {fmt_num(l.btc_long_usd / 1e6, 1, '$', 'M')})" if l.btc_usd else "—"), l.source),
         ("Whale BTC buy / sell", (f"{fmt_num(w.btc_buy_usd / 1e6, 1, '$', 'M')} / {fmt_num(w.btc_sell_usd / 1e6, 1, '$', 'M')} over {fmt_num(w.window_minutes, 0)} min" if w.available and w.btc_trades else "—"), w.source),
         ("Stablecoin supply", (f"{fmt_num(sc.total_usd / 1e9, 1, '$', 'B')} ({fmt_pct(sc.change_24h_pct, 2)} 24h)" if sc.total_usd else "—"), sc.source),
