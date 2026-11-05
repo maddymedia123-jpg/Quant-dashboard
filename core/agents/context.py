@@ -382,9 +382,43 @@ def accuracy_payload(desks: dict, volatility, analyses: dict[str, CategoryAnalys
     }
 
 
+def desk_blocks(m: MarketSnapshot, analyses: dict[str, CategoryAnalysis]) -> dict:
+    """What both Directors judge per desk: the derivatives over each desk's own window (roadmap item 9),
+    the cascade state and the forecast per desk, and the 4-hour zone framed against the 24-hour horizon
+    (roadmap item 12). Built once here so the 1-agent Director and the classic Director read the same
+    blocks; a desk's failure is named in its block, never fatal."""
+    from core.agents.recon_profiles import PROFILES
+    from core.indicators import desk_derivs, horizons
+    from core.indicators.cascade import classify
+    from core.indicators.forecast import desk_forecast, to_state
+
+    now_ms = int(m.generated_at.timestamp() * 1000)
+    out: dict = {"desk_derivatives": {key: desk_derivs.read(key, m, now_ms) for key in PROFILES}, "cascade": {}, "forecast": {}}
+    for key, profile in PROFILES.items():
+        try:
+            bias_tf, anchor_tf, engine_tfs = profile.cascade
+            out["cascade"][key] = classify(m.spot.frames, bias_tf, anchor_tf, engine_tfs).to_state()
+        except Exception as e:  # noqa: BLE001 - one desk's read must not take the payload down
+            out["cascade"][key] = {"available": False, "note": f"{type(e).__name__}: {e}"}
+        a = analyses.get(key)
+        if a is not None:
+            try:
+                f, tr = desk_forecast(a, desk_derivs.gamma_for(key, m), m.spot.frames.get(a.chart_tf))
+                out["forecast"][key] = to_state(f, tr)
+            except Exception as e:  # noqa: BLE001
+                out["forecast"][key] = {"available": False, "note": f"{type(e).__name__}: {e}"}
+    try:
+        out["horizons"] = horizons.read(m, analyses, now_ms, forecasts=out["forecast"], cascade=out["cascade"],
+                                        derivs=out["desk_derivatives"])
+    except Exception as e:  # noqa: BLE001 - the framing is an addition; its failure is named, not fatal
+        out["horizons"] = {"available": False, "note": f"{type(e).__name__}: {e}"}
+    return out
+
+
 def director_payload(m: MarketSnapshot, analyses: dict[str, CategoryAnalysis], desks: dict, volatility, accuracy,
                      raw_metrics: list[tuple[str, str, str]], failed: list[str]) -> dict:
     out = common_payload(m, analyses)
+    out.update(desk_blocks(m, analyses))
     out.update({
         "desk_reports": {k: v.model_dump() for k, v in desks.items()},
         "volatility_agent": volatility.model_dump() if volatility else None,

@@ -19,7 +19,7 @@ from pydantic import ValidationError
 
 from core.agents import context
 from core.agents.llm import LLMClient
-from core.agents.prompts import PREAMBLE, SHARED_RULES
+from core.agents.prompts import HORIZON_TEXT, PLAN_TEXT, PREAMBLE, REGIME_TEXT, SHARED_RULES, WINDOWS_TEXT
 from core.agents.schemas import (
     AgentRun, DirectorReport, OneAgentOutput, TrapReport, schema_hint,
 )
@@ -35,25 +35,18 @@ def client_for(settings) -> LLMClient:
     from dataclasses import replace
     return LLMClient(replace(settings, timeout_s=max(settings.timeout_s, TIMEOUT_S)))
 
-ONE_AGENT_TEXT = """You are the DIVISION HEAD, codename DIRECTOR, working alone: you read the WHOLE state below and write the entire report yourself. Ruthlessly objective; never take a side before the evidence does.
+ONE_AGENT_TEXT = ("""You are the DIVISION HEAD, codename DIRECTOR, working alone: you read the WHOLE state below and write the entire report yourself. Ruthlessly objective; never take a side before the evidence does.
 1. BULL CASE and BEAR CASE (bull_case with desk="bullish", bear_case with desk="bearish"): argue each side as strongly as the evidence HONESTLY allows. A side with little support gets a low conviction and says so - do not invent a case. Each gets convergence, divergence, conviction 1-10, a best_setup and acknowledged_risks.
 2. CONTRADICTION ANALYSIS: metrics that read both ways; say which reading has the stronger evidence and why.
 3. CONVERGENCE: signals both cases accept; the highest-confidence evidence.
 4. BLIND SPOTS: what matters but is weak, missing or UNAVAILABLE.
 5. SCENARIOS: 2-4, probabilities summing to 100, each with the price path and an explicit invalidation level.
 6. FINAL TRAP CLASSIFICATION: BULL_TRAP (pump into resistance, fail, reverse down), BEAR_TRAP (dump into support, fail, reverse up), NO_TRAP (genuine move backed by flow, funding and OI), RANGE_TRAP (both sides liquidated before a trend).
-7. trade_plan (prose, as before) AND plan (numbers, watched by code for alerts):
-   - side LONG, SHORT or NONE. Choose NONE, with why_none, when there is no edge: a plan is not required.
-   - zone_low/zone_high: the entry zone, built from levels that appear in the data (supports, resistances, VWAP, value area, gamma walls, liquidity pools). Never enter at market.
-   - confirm_timeframe and confirm_close: the CLOSED candle that confirms. SHORT: a candle on confirm_timeframe closes below confirm_close (inside or under the zone). LONG: closes above it.
-   - taker_ratio_limit (optional): SHORT requires taker buy/sell below it; LONG above it.
-   - confirmations: the same rules in plain words, one per line.
-   - stop beyond the zone (SHORT above zone_high, LONG below zone_low) at a structural level; targets in order of distance, each a level from the data.
-   - expires_hours: how long the idea is valid if price never reaches the zone. risk_pct and max_leverage for this volatility regime.
+7. trade_plan (prose, as before) AND """ + PLAN_TEXT + """
 8. category_summaries: one paragraph each for live, intraday, weekly and monthly, in plain English, quoted levels only. executive_summary is three sentences at most. data_quality_flags: missing, stale or estimated inputs.
-9. horizon_framing (two or three sentences, quoted levels only): frame the 4-hour tactical execution zone against the 24-hour intraday liquidity horizon from the `horizons` block - where the 4-hour expected range sits inside the day's range and the 24-hour expected range, which of the day's edges (the day's high and low, the prior day's high and low, the day's average price, the 24-hour expected range) the 4-hour move reaches and so where resting orders and stops sit, and whether your plan's zone, stop and targets live inside that horizon or need it taken first. `horizons.framing.note` is computed from the data: do not contradict its numbers; add the judgment.
-10. EVENT REGIME: when macro_read.event_regime.active is true (an election, an FOMC, a Fed-chair print: its note says which and until when), any plan you give is a trade inside that regime. Place the stop beyond the NEXT structural level past the one you would otherwise use, so a sweep of the day's edge on the event's move does not stop it out; prefer the event's expansion over a range plan; name the regime in trade_plan.time_rules. Give risk_pct and max_leverage at your NORMAL size for this volatility: code halves them and tags the plan with the event (plan.event_regime), do not halve them yourself.
-READING THE DATA: cvd_5bars is REAL taker flow on the BTC perpetual (market buys minus market sells, BTC); if it says ESTIMATE it is not CVD. Each desk's forecast carries a track_record: when lean_right is not above price_rose_anyway, its lean has no edge - use its range and level odds, not its lean. COT is weekly context, not intraday timing. WINDOWS: derivatives.futures/liquidations are a 24-hour snapshot; desk_derivatives[desk] holds open interest, taker delta, liquidations, funding, max pain and dealer gamma (regime, flip, call and put walls, from only the options settling in that window) over THAT desk's own window (live 1h/4h, intraday 24h, weekly 7 days, monthly 30 days) - each category_summary and any plan on that horizon uses its own desk's figures, never the 24-hour ones for weekly or monthly. TIMING: use turning_window (measured US-session turning hours); its kill_zones carry the spec's three sessions with measured odds - only New York beat chance, so never time a turn on the Asian or London session; the Fibonacci reversal_window in each category was tested and timed turns no better than chance - never use it for timing."""
+9. """ + HORIZON_TEXT + """
+10. """ + REGIME_TEXT + """
+READING THE DATA: cvd_5bars is REAL taker flow on the BTC perpetual (market buys minus market sells, BTC); if it says ESTIMATE it is not CVD. Each desk's forecast carries a track_record: when lean_right is not above price_rose_anyway, its lean has no edge - use its range and level odds, not its lean. COT is weekly context, not intraday timing. """ + WINDOWS_TEXT + """ TIMING: use turning_window (measured US-session turning hours); its kill_zones carry the spec's three sessions with measured odds - only New York beat chance, so never time a turn on the Asian or London session; the Fibonacci reversal_window in each category was tested and timed turns no better than chance - never use it for timing.""")
 
 ONE_AGENT_RULES = SHARED_RULES.replace(
     "3. Quote the figures you rely on in raw_metrics exactly as given (same units), so the Director can audit you.",
@@ -86,29 +79,7 @@ def director_state(m, analyses: dict) -> dict:
             state["sentiment"] = data.get("sentiment")
             state["funding_by_exchange"] = data.get("funding_by_exchange")
             state["unusual_flow_radar"] = data.get("unusual_flow_radar")
-    from core.indicators import desk_derivs
-    now_ms = int(m.generated_at.timestamp() * 1000)
-    state["desk_derivatives"] = {key: desk_derivs.read(key, m, now_ms) for key in PROFILES}
-    state["cascade"], state["forecast"] = {}, {}
-    for key, profile in PROFILES.items():
-        try:
-            bias_tf, anchor_tf, engine_tfs = profile.cascade
-            state["cascade"][key] = classify(m.spot.frames, bias_tf, anchor_tf, engine_tfs).to_state()
-        except Exception as e:  # noqa: BLE001 - one desk's read must not take the payload down
-            state["cascade"][key] = {"available": False, "note": f"{type(e).__name__}: {e}"}
-        a = analyses.get(key)
-        if a is not None:
-            try:
-                f, tr = desk_forecast(a, desk_derivs.gamma_for(key, m), m.spot.frames.get(a.chart_tf))
-                state["forecast"][key] = to_state(f, tr)
-            except Exception as e:  # noqa: BLE001
-                state["forecast"][key] = {"available": False, "note": f"{type(e).__name__}: {e}"}
-    from core.indicators import horizons
-    try:
-        state["horizons"] = horizons.read(m, analyses, now_ms, forecasts=state["forecast"], cascade=state["cascade"],
-                                          derivs=state["desk_derivatives"])
-    except Exception as e:  # noqa: BLE001 - the framing is an addition; its failure is named, not fatal
-        state["horizons"] = {"available": False, "note": f"{type(e).__name__}: {e}"}
+    state.update(context.desk_blocks(m, analyses))
     state["unavailable"] = sorted(set(m.unavailable()) | set(missing))
     return state
 
@@ -158,7 +129,7 @@ def _validate(data: dict | None, horizons: dict | None = None,
             classification_rationale=out.classification_rationale, contradictions=out.contradictions,
             convergence=out.convergence, blind_spots=out.blind_spots, scenarios=out.scenarios,
             trade_plan=out.trade_plan, category_summaries=out.category_summaries,
-            horizon_framing=out.horizon_framing, horizon_check=check)
+            horizon_framing=out.horizon_framing, horizon_check=check, plan=out.plan)
         return out, director, None
     except (ValidationError, ValueError) as e:
         return None, None, str(e)[:900]

@@ -127,6 +127,10 @@ class DirectorReport(BaseModel):
     # sentences, and the code's own check of the plan against the day's edges (core.indicators.horizons)
     horizon_framing: str = ""
     horizon_check: Optional[dict[str, Any]] = None
+    # the plan as numbers (core.plan_alerts watches it): the classic Director writes it here since
+    # 5 November, the 1-agent Director in OneAgentOutput.plan; either way it is also TrapReport.plan.
+    # None on a report whose Director did not write one.
+    plan: Optional[PlanLevels] = None
 
     @model_validator(mode="after")
     def _normalise(self):

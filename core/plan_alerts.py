@@ -1,4 +1,4 @@
-"""Plan alerts: the latest 1-agent report's plan, watched against real candles, told in plain words.
+"""Plan alerts: the latest report's plan, watched against real candles, told in plain words.
 
 The alerts used to report the desks' internal state ("Strong setup down -> Pause in a downtrend"). A
 trader wants something else: what to watch, when to look again, when the setup is on, and when it is
@@ -14,7 +14,7 @@ over. Those all follow from the plan's numbers, so they are derived here from ca
 
 The sequence is replayed from the report's time on every pass, so it is the same however often the page
 loads, and each step has a fixed dedup key: the alert ledger's unique index makes each one a single
-message. Only the newest 1-agent plan is watched; a new report replaces it. A step older than
+message. Only the newest plan is watched (either pipeline's since 5 November); a new report replaces it. A step older than
 STALE_AFTER_MS is not announced as news - with no page open for hours, a five-hour-old WATCH helps no one.
 """
 from __future__ import annotations
@@ -238,7 +238,7 @@ def replay(plan: dict, ts_ms: int, frames: dict, flows: dict | None, now_ms: int
 
 def events(report_row: dict | None, frames: dict, flows: dict | None, now_ms: int, price_now: float | None,
            context: str = "") -> list[Event]:
-    """The alert events for the newest 1-agent plan; old steps are left out as stale."""
+    """The alert events for the newest plan; old steps are left out as stale."""
     if not report_row or not report_row.get("plan"):
         return []
     plan = json.loads(report_row["plan"])
@@ -257,8 +257,11 @@ def events(report_row: dict | None, frames: dict, flows: dict | None, now_ms: in
 
 
 def latest_plan_report(store) -> dict | None:
-    """The newest 1-agent report that carries a plan: a new report replaces the plan being watched."""
+    """The newest report that carries a plan, from either pipeline (the classic Director writes the same
+    numbers plan since 5 November): a new report replaces the plan being watched, a stand-aside included.
+    A report saved without one (a Director that failed, a report from before plans existed) leaves the
+    plan before it alone."""
     for r in store.reports(limit=50):
-        if (r.get("mode") or "15-agent") == "1-agent":
-            return r if r.get("plan") else None
+        if r.get("plan"):
+            return r
     return None

@@ -162,14 +162,23 @@ def test_an_old_watch_is_not_sent_as_news():
     assert ev == []
 
 
-def test_only_the_newest_one_agent_plan_is_watched(tmp_path):
+def test_the_newest_plan_of_either_pipeline_is_watched(tmp_path):
+    """Since 5 November the classic Director writes the same numbers plan, so the newest report that
+    carries one is the plan being watched, whichever pipeline wrote it. A report saved without a plan (a
+    Director that failed, a report from before plans existed) does not silence the plan before it."""
     s = Store(tmp_path / "p.sqlite")
     s.add_report("TIR1-OLD", T0, "BULL_TRAP", 1.0, 1.0, "NEUTRAL", mode="1-agent", plan=json.dumps(PLAN))
-    s.add_report("TIR-15", T0 + 1, "NO_TRAP", 1.0, 1.0, "NEUTRAL")
-    assert pa.latest_plan_report(s)["report_id"] == "TIR1-OLD", "a 15-agent report has no plan to replace it"
-    s.add_report("TIR1-NEW", T0 + 2, "RANGE_TRAP", 1.0, 1.0, "NEUTRAL", mode="1-agent", plan=None)
-    assert pa.latest_plan_report(s) is None, "the newest 1-agent report replaces the plan, even with none"
+    s.add_report("TIR-NOPLAN", T0 + 1, "NO_TRAP", 1.0, 1.0, "NEUTRAL")
+    assert pa.latest_plan_report(s)["report_id"] == "TIR1-OLD", "a report without a plan leaves the watched plan alone"
+    s.add_report("TIR-15", T0 + 2, "RANGE_TRAP", 1.0, 1.0, "NEUTRAL", mode="15-agent", plan=json.dumps(PLAN))
+    assert pa.latest_plan_report(s)["report_id"] == "TIR-15", "the classic report's plan replaces it"
+    s.add_report("TIR1-NONE", T0 + 3, "RANGE_TRAP", 1.0, 1.0, "NEUTRAL", mode="1-agent", plan=json.dumps({"side": "NONE"}))
+    assert pa.latest_plan_report(s)["report_id"] == "TIR1-NONE", "a stand-aside is a plan: it replaces the trade"
+    empty = Store(tmp_path / "e.sqlite")
+    empty.add_report("TIR-OLDEST", T0, "NO_TRAP", 1.0, 1.0, "NEUTRAL")
+    assert pa.latest_plan_report(empty) is None
     s.close()
+    empty.close()
 
 
 # ---------- two pages, one message ----------

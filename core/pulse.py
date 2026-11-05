@@ -313,7 +313,7 @@ def close_event(live, m, now_ms: int, plan_row: dict | None = None) -> Event | N
 
 def report_event(report_row: dict | None, live, m, now_ms: int) -> Event | None:
     """The pulse for a new report that carries a plan with a side, once, while it is fresh. A report
-    without one (the 15-agent report, or a 1-agent 'stand aside') adds nothing the 4h-close pulse does not
+    without one (a Director that wrote none, or a 'stand aside') adds nothing the 4h-close pulse does not
     already say, so it sends nothing: a compare run is one dispatch, not two."""
     if not report_row or now_ms - int(report_row.get("ts_ms") or 0) > SEND_WITHIN_MS:
         return None

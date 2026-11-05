@@ -328,10 +328,15 @@ whichever desk found it.
   candle and level, taker ratio, stop, targets, expiry). This is the one the top-bar button runs and the
   one the plan alerts follow.
 - **15-agent**: ten specialists (Bullish B1–B5, Bearish R1–R5), a volatility agent, two desk syntheses,
-  an accuracy agent and the Director. Richer, slower, more quota.
+  an accuracy agent and the Director. Richer, slower, more quota. Since 5 November its Director reads the
+  same per-desk blocks as the 1-agent one (derivatives over each desk's window, cascade and forecast per
+  desk, the 4-hour-versus-24-hour framing) under the same rules, word for word, and writes the same plan as
+  numbers, the framing sentences and the event-regime tag; so a classic report drives the plan alerts and
+  the Pulse exactly as a 1-agent one does. Before that its plan was prose only and nothing watched it.
 
-Both are scored at 24 hours and 7 days, and the 1-agent plan is scored to its outcome (zone touch, confirm,
-then stop or target). Report bodies are stored in full since 30 October, so one report serves every
+Both are scored at 24 hours and 7 days, and either pipeline's plan is scored to its outcome (zone touch,
+confirm, then stop or target). The plan being watched is the newest report's, whichever pipeline wrote it;
+a report saved without a plan (a Director that failed) leaves the plan before it alone. Report bodies are stored in full since 30 October, so one report serves every
 reader and the MCP.
 
 Reports are run by a person, never by the worker, so the Gemini quota is spent only when someone asks.
@@ -462,6 +467,7 @@ report runs and are not stored, so there is nothing to read back. See section 9.
 | Roadmap item 10: four macro feeds | Live 5 Nov: 2-year minus funds rate (FRED, New York Fed fallback) with the ±25 bp read; BTC dominance (CoinGecko, change from own samples); USD/JPY yen carry (ECB via frankfurter.dev, BoJ rate hand-set); election odds parked, VoxOdds 404 (section 3) |
 | Roadmap item 11: dollar index reconstructed | Live 5 Nov: ICE's DXY formula on the ECB's six daily rates, a day behind and within a few tenths; 1% week = spike or slide; spike + bitcoin up 3% between the same dates = false-breakout signal (section 3) |
 | Roadmap item 12: Director 4-hour zone vs 24-hour horizon | Live 5 Nov: framing computed in code (price in the day's range, which day edges the 4-hour range reaches), the Director's sentences on it, the plan checked against the day's edges (tactical / needs the edge taken / at the edge) (section 3) |
+| Classic 15-agent Director parity | Live 5 Nov: the classic Director gets the per-desk derivatives, cascade, forecast and horizons blocks and the same plan, framing and regime rules as the 1-agent Director, and its numbers plan is watched by the alerts and the Pulse (section 5) |
 | WATCH / Pulse "touched" wording and the event regime in the Director's plan | Live 5 Nov: the WATCH and the Pulse name the touch (the candle high or low, with its time) and then the current price, instead of "Price reached the zone" under a headline price below it; a plan made inside an event regime is tagged, its size halved in code, the Director asked for the wider stop, and the Pulse says the no-range rule is the day plan's (section 3, fix 3) |
 | Per-desk chart switch (Section 3, Main Chart View) | Built 4 Nov: the desk's own candle by default, one coarser view a click away (4h / 1D / 3D / 2W); the call, forecast, summary and alerts stay on the desk's candle (section 3) |
 | Derived candles 12H / 3D / 0.5W / 2W and the cascade read order (Section 3) | Built 4 Nov: built from the fetched candles each refresh; each war room reads your cascade order as briefs beside its three timeframes; 24H is the daily candle (section 3) |
