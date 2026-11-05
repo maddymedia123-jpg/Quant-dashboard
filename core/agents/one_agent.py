@@ -12,6 +12,7 @@ the validation error, then reported as failed rather than shown half-built."""
 from __future__ import annotations
 
 import json
+import re
 import time
 from datetime import datetime, timezone
 
@@ -19,7 +20,8 @@ from pydantic import ValidationError
 
 from core.agents import context
 from core.agents.llm import LLMClient
-from core.agents.prompts import HORIZON_TEXT, PLAN_TEXT, PREAMBLE, REGIME_TEXT, SHARED_RULES, WINDOWS_TEXT
+from core.agents.prompts import (DISCIPLINE_TEXT, HORIZON_TEXT, PLAN_TEXT, PREAMBLE, REGIME_TEXT, SHARED_RULES,
+                                 WINDOWS_TEXT)
 from core.agents.schemas import (
     AgentRun, DirectorReport, OneAgentOutput, TrapReport, schema_hint,
 )
@@ -46,7 +48,8 @@ ONE_AGENT_TEXT = ("""You are the DIVISION HEAD, codename DIRECTOR, working alone
 8. category_summaries: one paragraph each for live, intraday, weekly and monthly, in plain English, quoted levels only. executive_summary is three sentences at most. data_quality_flags: missing, stale or estimated inputs.
 9. """ + HORIZON_TEXT + """
 10. """ + REGIME_TEXT + """
-READING THE DATA: cvd_5bars is REAL taker flow on the BTC perpetual (market buys minus market sells, BTC); if it says ESTIMATE it is not CVD. Each desk's forecast carries a track_record: when lean_right is not above price_rose_anyway, its lean has no edge - use its range and level odds, not its lean. COT is weekly context, not intraday timing. """ + WINDOWS_TEXT + """ TIMING: use turning_window (measured US-session turning hours); its kill_zones carry the spec's three sessions with measured odds - only New York beat chance, so never time a turn on the Asian or London session; the Fibonacci reversal_window in each category was tested and timed turns no better than chance - never use it for timing.""")
+READING THE DATA: cvd_5bars is REAL taker flow on the BTC perpetual (market buys minus market sells, BTC); if it says ESTIMATE it is not CVD. Each desk's forecast carries a track_record: when lean_right is not above price_rose_anyway, its lean has no edge - use its range and level odds, not its lean. COT is weekly context, not intraday timing. """ + WINDOWS_TEXT + """ TIMING: use turning_window (measured US-session turning hours); its kill_zones carry the spec's three sessions with measured odds - only New York beat chance, so never time a turn on the Asian or London session; the Fibonacci reversal_window in each category was tested and timed turns no better than chance - never use it for timing.
+""" + DISCIPLINE_TEXT)
 
 ONE_AGENT_RULES = SHARED_RULES.replace(
     "3. Quote the figures you rely on in raw_metrics exactly as given (same units), so the Director can audit you.",
@@ -110,6 +113,29 @@ def tag_plan(plan: PlanLevels | None, regime: dict | None) -> PlanLevels | None:
                                    "risk_pct": half(plan.risk_pct), "max_leverage": half(plan.max_leverage)})
 
 
+_PRICE = re.compile(r"\d{1,3}(?:,\d{3})+|\d{4,6}")
+
+
+def plan_notes(plan: PlanLevels | None, scenarios) -> list[str]:
+    """Code's check of the plan against the Director's own words. TIR1-20261105-153911: the 55% scenario died
+    on a 1-hour close below 75,700 while the plan's stop sat at 75,350, so the trade outlived its thesis by
+    350 dollars. The first price in the primary (first) scenario's invalidation is read; a LONG stop below
+    it, or a SHORT stop above it, is named. No price in the words, no plan, no stop: nothing to say."""
+    if plan is None or plan.side == "NONE" or plan.stop is None or not scenarios:
+        return []
+    words = str(getattr(scenarios[0], "invalidation", "") or "")
+    m = _PRICE.search(words)
+    if not m:
+        return []
+    inv = float(m.group(0).replace(",", ""))
+    gap = inv - plan.stop if plan.side == "LONG" else plan.stop - inv
+    if gap <= 0:
+        return []
+    return [f"the stop {plan.stop:,.0f} sits {gap:,.0f} {'below' if plan.side == 'LONG' else 'above'} the primary "
+            f"scenario's invalidation ({words.strip()}): the trade outlives its thesis; the stop belongs at the "
+            "invalidation, or the invalidation at the stop"]
+
+
 def _validate(data: dict | None, horizons: dict | None = None,
               regime: dict | None = None) -> tuple[OneAgentOutput | None, DirectorReport | None, str | None]:
     if data is None:
@@ -129,7 +155,8 @@ def _validate(data: dict | None, horizons: dict | None = None,
             classification_rationale=out.classification_rationale, contradictions=out.contradictions,
             convergence=out.convergence, blind_spots=out.blind_spots, scenarios=out.scenarios,
             trade_plan=out.trade_plan, category_summaries=out.category_summaries,
-            horizon_framing=out.horizon_framing, horizon_check=check, plan=out.plan)
+            horizon_framing=out.horizon_framing, horizon_check=check, plan=out.plan,
+            plan_notes=plan_notes(out.plan, out.scenarios))
         return out, director, None
     except (ValidationError, ValueError) as e:
         return None, None, str(e)[:900]

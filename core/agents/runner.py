@@ -142,7 +142,7 @@ def finish_director(director, payload: dict):
     """The code's part of the Director's plan, the same for both pipelines (core.agents.one_agent does it
     for the 1-agent Director): the event-regime tag with the halved size, and the plan checked against
     the day's edges (horizon_check). A Director without a plan is left as it is."""
-    from core.agents.one_agent import tag_plan
+    from core.agents.one_agent import plan_notes, tag_plan
     from core.indicators.horizons import plan_check
     plan = tag_plan(director.plan, (payload.get("macro_read") or {}).get("event_regime"))
     horizons = payload.get("horizons")
@@ -152,7 +152,8 @@ def finish_director(director, payload: dict):
             check = plan_check(plan, horizons)
         except Exception as e:  # noqa: BLE001 - the check is an addition to the report, never its failure
             check = {"verdict": "unknown", "note": f"plan check failed: {type(e).__name__}: {e}"}
-    return director.model_copy(update={"plan": plan, "horizon_check": check})
+    return director.model_copy(update={"plan": plan, "horizon_check": check,
+                                       "plan_notes": plan_notes(plan, director.scenarios)})
 
 
 def run_pipeline_sync(client: LLMClient, m: MarketSnapshot, analyses: dict[str, CategoryAnalysis], settings: LLMSettings,

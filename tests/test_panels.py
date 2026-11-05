@@ -64,7 +64,7 @@ def test_trade_result_macro_and_status():
     assert "unavailable" in status and "kraken" in status
     rows = panels.raw_metrics_rows(m)
     assert any(r[0] == "Max pain" and "80,000" in r[1] for r in rows)
-    assert any(r[0] == "Liquidations 24h" and "$204.0M" in r[1] for r in rows)
+    assert any(r[0] == "Liquidations 24h (all coins)" and "$204.0M" in r[1] for r in rows), "the label says whose liquidations"
     assert "hyperliquid" in status and "stablecoins" in status
 
 

@@ -26,7 +26,9 @@ SHARED_RULES = """HONESTY RULES (non-negotiable):
 4. Argue your desk's side as hard as the evidence allows, then state the single strongest argument AGAINST your thesis in key_risk_to_thesis.
 5. Conviction is 1-10. If your domain's data is unavailable, conviction is at most 3.
 6. Output must be a single JSON object matching the schema. No prose outside the JSON.
-7. Quote numbers the way a desk would read them: prices to the nearest dollar (78,056), percentages to two decimals (0.38%), ratios to two decimals (1.68), USD totals in millions or billions ($168.2M). Never paste more digits than the data needs."""
+7. Quote numbers the way a desk would read them: prices to the nearest dollar (78,056), percentages to two decimals (0.38%), ratios to two decimals (1.68), USD totals in millions or billions ($168.2M). Never paste more digits than the data needs.
+8. liquidations.total_usd, long_usd and short_usd are ALL coins; btc_usd, btc_long_usd and btc_short_usd are Bitcoin's. A claim about BTC quotes the BTC figures; the all-coins total is named as "all markets" when it is used at all.
+9. The Fibonacci reversal_window in each category timed turns no better than chance: never cite a reversal_window as evidence, timing or support for any case."""
 
 _DOMAINS = {
     "options": {
@@ -100,6 +102,7 @@ PLAN_TEXT = """plan (numbers, watched by code for alerts):
    - expires_hours: how long the idea is valid if price never reaches the zone. risk_pct and max_leverage for this volatility regime."""
 HORIZON_TEXT = """horizon_framing (two or three sentences, quoted levels only): frame the 4-hour tactical execution zone against the 24-hour intraday liquidity horizon from the `horizons` block - where the 4-hour expected range sits inside the day's range and the 24-hour expected range, which of the day's edges (the day's high and low, the prior day's high and low, the day's average price, the 24-hour expected range) the 4-hour move reaches and so where resting orders and stops sit, and whether your plan's zone, stop and targets live inside that horizon or need it taken first. `horizons.framing.note` is computed from the data: do not contradict its numbers; add the judgment."""
 REGIME_TEXT = """EVENT REGIME: when macro_read.event_regime.active is true (an election, an FOMC, a Fed-chair print: its note says which and until when), any plan you give is a trade inside that regime. Place the stop beyond the NEXT structural level past the one you would otherwise use, so a sweep of the day's edge on the event's move does not stop it out; prefer the event's expansion over a range plan; name the regime in trade_plan.time_rules. Give risk_pct and max_leverage at your NORMAL size for this volatility: code halves them and tags the plan with the event (plan.event_regime), do not halve them yourself."""
+DISCIPLINE_TEXT = """DISCIPLINE (from the review of 5 November): liquidations.total_usd, long_usd and short_usd are ALL coins; a claim about BTC quotes btc_usd / btc_long_usd / btc_short_usd. The hours to name for timing are turning_window.next_window (the measured 12:00-16:00 UTC window); kill_zones are the spec's sessions for reference, not the hours to quote. The plan's stop sits at or inside the primary scenario's invalidation level: a trade must not outlive its thesis (code names a stop placed beyond it). Quote every macro_read label exactly as given (delta_2y_read.label, dollar_index, yen_carry, btc_dominance): never relabel a contraction as an expansion. Never cite a reversal_window. A move is named by the candle high or low in the data, not by a candle's open."""
 WINDOWS_TEXT = """WINDOWS: derivatives.futures/liquidations are a 24-hour snapshot; desk_derivatives[desk] holds open interest, taker delta, liquidations, funding, max pain and dealer gamma (regime, flip, call and put walls, from only the options settling in that window) over THAT desk's own window (live 1h/4h, intraday 24h, weekly 7 days, monthly 30 days) - each category_summary and any plan on that horizon uses its own desk's figures, never the 24-hour ones for weekly or monthly."""
 
 
@@ -119,7 +122,8 @@ Also write category_summaries: one paragraph each for live, intraday, weekly and
 7. The trade_plan above is prose. ALSO write """ + PLAN_TEXT + """
 8. """ + HORIZON_TEXT + """
 9. """ + REGIME_TEXT + """
-The cascade, forecast and desk_derivatives blocks are per desk (live, intraday, weekly, monthly). """ + WINDOWS_TEXT
+The cascade, forecast and desk_derivatives blocks are per desk (live, intraday, weekly, monthly). """ + WINDOWS_TEXT + """
+""" + DISCIPLINE_TEXT
 
 
 def _role_block(agent_id: str) -> tuple[str, type]:

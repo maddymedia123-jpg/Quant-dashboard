@@ -131,6 +131,9 @@ class DirectorReport(BaseModel):
     # 5 November, the 1-agent Director in OneAgentOutput.plan; either way it is also TrapReport.plan.
     # None on a report whose Director did not write one.
     plan: Optional[PlanLevels] = None
+    # code's notes on the plan (core.agents.one_agent.plan_notes): the stop placed beyond the primary
+    # scenario's invalidation (TIR1-20261105-153911: stop 75,350 under an invalidation at 75,700)
+    plan_notes: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _normalise(self):

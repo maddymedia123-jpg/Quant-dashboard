@@ -138,6 +138,23 @@ def test_a_target_beyond_the_days_edge_needs_the_horizon_taken():
     assert c["verdict"] == "reaches_beyond" and "beyond the 24-hour expected high 81,300" in c["note"]
 
 
+def test_targets_beyond_the_expected_range_are_named_even_inside_the_horizon():
+    """TIR1-20261105-153911: targets 79,448 and 80,219 sat beyond the 24-hour expected high 78,752 but inside
+    the prior day's high 81,194, and the verdict 'tactical' hid it. The horizon keeps its widest edge; the
+    targets past the expected range are named as needing more than an ordinary day's range."""
+    h = horizons.read(market(), analyses(), DAY + 13 * H, **state((79_700, 80_300), intraday_range=(78_800, 80_700)))
+    c = horizons.plan_check(plan("LONG", (79_600, 79_800), 79_300, (80_400, 80_800, 80_900)), h)
+    assert c["verdict"] == "tactical" and c["horizon"] == [78_000, 81_000]
+    assert c["targets_beyond_expected_range"] == [80_800, 80_900]
+    assert "targets 80,800, 80,900 lie beyond the 24-hour expected high 80,700" in c["note"]
+    assert "more than an ordinary day's range" in c["note"]
+    s = horizons.plan_check(plan(targets=(79_600, 78_700, 78_200)), h)
+    assert s["verdict"] == "tactical" and s["targets_beyond_expected_range"] == [78_700, 78_200]
+    assert "beyond the 24-hour expected low 78,800" in s["note"]
+    inside = horizons.plan_check(plan(targets=(79_600, 79_100)), h)
+    assert inside["targets_beyond_expected_range"] == [] and "expected" not in inside["note"].split("tactical trade inside the day")[-1]
+
+
 def test_a_zone_outside_the_days_edges_is_a_trade_at_the_edge():
     c = horizons.plan_check(plan(zone=(81_400, 81_600), stop=81_900, targets=(80_000,)), hz())
     assert c["verdict"] == "outside" and "a trade at the day's edge, not inside it" in c["note"]
@@ -167,3 +184,6 @@ def test_the_director_card_shows_the_framing_the_sentences_and_the_verdict():
     quiet = panels.horizon_block_html(SimpleNamespace(horizon_framing="", horizon_check={"verdict": "no_trade", "framing_note": "Price 1 is x"}))
     assert "Price 1 is x" in quiet and "no plan" not in quiet
     assert "&lt;b&gt;" in panels.horizon_block_html(SimpleNamespace(horizon_framing="<b>", horizon_check=None))
+    noted = panels.horizon_block_html(SimpleNamespace(horizon_framing="", horizon_check=None,
+                                                      plan_notes=["the stop 75,350 sits 350 below the primary scenario's invalidation"]))
+    assert "plan check" in noted and "the stop 75,350 sits 350 below" in noted

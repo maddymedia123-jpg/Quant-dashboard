@@ -220,4 +220,13 @@ def plan_check(plan, horizons: dict | None) -> dict | None:
                        f"24-hour horizon {lo[2]:,.0f}-{hi[2]:,.0f} ({lo[1]} to {hi[1]}): a tactical trade inside the day")
     if out["stop_beyond_horizon"]:
         out["note"] += f"; the stop {plan.stop:,.0f} is beyond the horizon, so a day-edge sweep is what stops it out"
+    # TIR1-20261105-153911: targets 79,448 and 80,219 sat beyond the 24-hour expected high 78,752 but inside the
+    # prior day's high 81,194, and "tactical" hid it. The horizon keeps its widest edge; the targets past the
+    # expected range are named as needing more than an ordinary day's range.
+    stretched = [t for t in plan.targets if r and (t > r[1] if side == "LONG" else t < r[0])] if r else []
+    out["targets_beyond_expected_range"] = [round(t) for t in stretched]
+    if stretched and out["verdict"] == "tactical":
+        edge = ("the 24-hour expected high", r[1]) if side == "LONG" else ("the 24-hour expected low", r[0])
+        out["note"] += (f"; targets {', '.join(f'{t:,.0f}' for t in stretched)} lie beyond {edge[0]} {edge[1]:,.0f}: "
+                        "they need more than an ordinary day's range")
     return out

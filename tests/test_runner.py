@@ -140,6 +140,8 @@ def test_the_classic_report_carries_a_numbers_plan_framing_and_check(ctx):
     assert r.director.plan == r.plan and r.director.horizon_framing.startswith("The short sits")
     assert r.director.horizon_check and r.director.horizon_check["verdict"] in ("tactical", "reaches_beyond", "outside", "unknown")
     assert r.plan.event_regime == "" and r.plan.risk_pct == 1
+    assert r.director.plan_notes and "sits 6,200 above the primary scenario's invalidation" in r.director.plan_notes[0], \
+        "the fixture's SHORT stop 84,200 is beyond its primary invalidation 78,000: the classic report is checked too"
     # the fallback model's answer is finished the same way
     r2 = run_pipeline_sync(FakeClient(fail=(), fail_models=("dir",), director=director), m, analyses, settings)
     assert r2.plan is not None and r2.director.horizon_check is not None
