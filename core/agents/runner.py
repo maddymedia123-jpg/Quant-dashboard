@@ -127,12 +127,32 @@ async def run_pipeline(client: LLMClient, m: MarketSnapshot, analyses: dict[str,
     else:
         runs.append(AgentRun(agent_id="DIRECTOR", ok=False, model=dir_model, latency_s=0.0, error="skipped: no desk reports"))
 
+    if director is not None:
+        director = finish_director(director, dpayload)
     now = datetime.now(timezone.utc)
     return TrapReport(
         report_id=f"TIR-{now:%Y%m%d-%H%M%S}", generated_at=now, window=WINDOW, provider=settings.provider,
         briefs=briefs, desks=desks, volatility=volatility, accuracy=accuracy, director=director, runs=runs,
         wall_time_s=round(time.perf_counter() - t0, 1), unavailable_domains=m.unavailable(), raw_metrics=raw_metrics,
+        plan=director.plan if director is not None else None,
     )
+
+
+def finish_director(director, payload: dict):
+    """The code's part of the Director's plan, the same for both pipelines (core.agents.one_agent does it
+    for the 1-agent Director): the event-regime tag with the halved size, and the plan checked against
+    the day's edges (horizon_check). A Director without a plan is left as it is."""
+    from core.agents.one_agent import tag_plan
+    from core.indicators.horizons import plan_check
+    plan = tag_plan(director.plan, (payload.get("macro_read") or {}).get("event_regime"))
+    horizons = payload.get("horizons")
+    check = None
+    if plan is not None and horizons and horizons.get("framing"):
+        try:
+            check = plan_check(plan, horizons)
+        except Exception as e:  # noqa: BLE001 - the check is an addition to the report, never its failure
+            check = {"verdict": "unknown", "note": f"plan check failed: {type(e).__name__}: {e}"}
+    return director.model_copy(update={"plan": plan, "horizon_check": check})
 
 
 def run_pipeline_sync(client: LLMClient, m: MarketSnapshot, analyses: dict[str, CategoryAnalysis], settings: LLMSettings,

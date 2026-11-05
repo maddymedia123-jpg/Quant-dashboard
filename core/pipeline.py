@@ -61,7 +61,7 @@ def ledger(store, m, analyses: dict, now_ms: int, classification: str | None = N
 
 
 def market_events(store, m, analyses: dict, now_ms: int) -> list[Event]:
-    """Plan alerts for the newest 1-agent plan, a desk's cascade only into A or C once it has held, TRAP
+    """Plan alerts for the newest report's plan, a desk's cascade only into A or C once it has held, TRAP
     calls, and the Market Pulse (once per report, once per 4h close)."""
     from core import market_alerts as ma
     from core import plan_alerts as pa

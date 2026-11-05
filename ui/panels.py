@@ -2405,7 +2405,7 @@ def compare_html(r1, r15) -> str:
     def plan(r):
         p = r.plan
         if p is None:
-            return "prose only (no numbers)"
+            return "none written"
         if p.side == "NONE":
             return "no trade"
         return (f"{p.side} {fmt_num(p.zone_low, 0, '$')}–{fmt_num(p.zone_high, 0, '$')} · stop "

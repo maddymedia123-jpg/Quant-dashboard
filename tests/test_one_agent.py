@@ -212,7 +212,7 @@ def test_compare_view_and_markdown(ctx):
     r1 = one_agent.run_one_agent_sync(Fake([OUT]), m, an, "x", snapshot_id="S-1")
     r15 = r1.model_copy(update={"mode": "15-agent", "plan": None, "report_id": "TIR-X"})
     h = panels.compare_html(r1, r15)
-    assert "1-agent" in h and "15-agent" in h and "prose only" in h and "SHORT $83,520–$83,945" in h
+    assert "1-agent" in h and "15-agent" in h and "none written" in h and "SHORT $83,520–$83,945" in h
     assert "same market snapshot" in h
     other = r15.model_copy(update={"snapshot_id": "S-2"})
     assert "not like for like" in panels.compare_html(r1, other)

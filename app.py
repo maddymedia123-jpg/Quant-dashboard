@@ -340,7 +340,7 @@ def run_war_room(profile) -> None:
 
 
 # ---------- run analysis ----------
-# Two pipelines write the same report: the 1-agent Director (one call, plan as numbers) and the classic
+# Two pipelines write the same report, plan as numbers included: the 1-agent Director (one call) and the classic
 # 15-agent chain. "both" runs them on this one snapshot, so the compare view sets like against like.
 if not isinstance(st.session_state.get("director_reports"), dict):
     st.session_state["director_reports"] = {}
@@ -1232,7 +1232,8 @@ if screen == "director":
     _runs = (
         (b1, "Run 1-agent (fast)", "1-agent", f"One call on {settings.director_model if settings else '-'}, about "
                                               "a minute. Writes the plan as numbers the alerts watch."),
-        (b2, "Run 15-agent (classic)", "15-agent", "Fifteen calls, about four minutes. The plan is prose only."),
+        (b2, "Run 15-agent (classic)", "15-agent", "Fifteen calls, about four minutes. Writes the same numbers plan "
+                                                   "since 5 November."),
         (b3, "Run both (compare)", "both", "Both on the same snapshot: sixteen calls, so about one comparison a "
                                            "day on the free Gemini tier."),
     )
