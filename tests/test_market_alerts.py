@@ -195,7 +195,8 @@ def test_a_refused_send_is_not_marked_delivered():
 def test_the_test_alert_says_what_will_arrive():
     sent = []
     ok, _ = Dispatcher({"DISCORD_WEBHOOK_URL": "https://discord.test/hook"}, client=_discord(sent)).send_test()
-    assert ok and "Cascade changes and TRAP calls will arrive here" in sent[0]["content"]
+    assert ok and sent[0]["content"] == ("✅ Alerts connected. This channel gets the hourly Pulse, the day plan and its "
+                                         "warnings, trade plans (watch, confirm, targets, stop) and trend changes.")
 
 
 def test_no_test_can_reach_a_real_channel(_no_real_alerts, monkeypatch):

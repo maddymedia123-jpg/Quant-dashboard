@@ -47,15 +47,14 @@ def test_a_target_reached_is_an_event_that_names_the_level_and_the_r():
     events = detect_events(trade(), 80_650.0, p, now_ms=NOW)
     assert [e.kind for e in events] == ["target"]
     assert events[0].dedup_key == "target:TP1"
-    assert "TP1 reached at 80,600" in events[0].headline and "+0.7R" in events[0].headline
+    assert events[0].headline == "🎯 BTC/USDT LONG · target TP1 hit · BTC $80,600 (+0.7R: 0.7 times your risk)"
 
 
 def test_the_stop_being_reached_is_urgent():
     p = progress(LONG, ENTRY, 79_000.0, targets(), 78_900.0)
     events = detect_events(trade(), 78_900.0, p, now_ms=NOW)
     stop_event = next(e for e in events if e.kind == "stop")
-    assert stop_event.urgent and "the stop at 79,000 was reached" in stop_event.headline
-    assert "-1.1R" in stop_event.headline
+    assert stop_event.urgent and stop_event.headline == "🔴 BTC/USDT LONG · stopped out at $79,000 (-1.1R)"
 
 
 def test_several_targets_reached_are_separate_events():
@@ -76,7 +75,8 @@ def test_a_trap_near_the_position_is_urgent_and_identifies_the_trap():
     events = detect_events(trade(), ENTRY, None, traps=[Trap()], now_ms=NOW)
     assert [e.kind for e in events] == ["trap"]
     assert events[0].urgent and events[0].dedup_key == "trap:7:TP1"
-    assert "anchored bull trap on the 1h" in events[0].headline
+    assert events[0].headline == ("🪤 BTC/USDT LONG · a bull trap call on the 1h chart sits $50 from your TP1: "
+                                  "expect price to turn there.")
 
 
 def test_a_checkpoint_only_fires_once_it_has_passed():
@@ -85,7 +85,7 @@ def test_a_checkpoint_only_fires_once_it_has_passed():
     passed = Checkpoint("4h", NOW - 60_000, "the 4h close")
     events = detect_events(trade(), ENTRY, None, checkpoints=[passed], now_ms=NOW)
     assert [e.kind for e in events] == ["checkpoint"]
-    assert "review the position" in events[0].headline
+    assert events[0].headline == "⏰ BTC/USDT LONG · the 4h close has passed: review the position."
 
 
 def test_a_quiet_position_produces_nothing():

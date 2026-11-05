@@ -51,29 +51,32 @@ def detect_events(trade: dict, price: float | None, progress=None, traps=(), che
     side = str(trade.get("side") or "")
     asset = str(trade.get("asset") or "the position")
 
+    # wording batch 5 (6 Nov): one shape for every trade alert - an emoji, the trade, what happened, the
+    # level as a dollar figure, and the R-multiple explained as "times your risk"
     if progress is not None:
         for name in progress.hit:
             target = next((t for t in (trade.get("plan") or {}).get("targets", [])
                            if t.get("name") == name), {})
             level = target.get("price")
             out.append(Event("target", f"target:{name}",
-                             f"{asset} {side}: {name} reached"
-                             + (f" at {float(level):,.0f}" if level is not None else "")
-                             + (f" ({progress.pnl_r:+.1f}R)" if progress.pnl_r else ""), price))
+                             f"🎯 {asset} {side} · target {name} hit"
+                             + (f" · BTC ${float(level):,.0f}" if level is not None else "")
+                             + (f" ({progress.pnl_r:+.1f}R: {abs(progress.pnl_r):.1f} times your risk)"
+                                if progress.pnl_r else ""), price))
         if progress.stopped:
             out.append(Event("stop", "stop",
-                             f"{asset} {side}: the stop at {float(trade.get('stop') or 0):,.0f} was "
-                             f"reached ({progress.pnl_r:+.1f}R)", price))
+                             f"🔴 {asset} {side} · stopped out at ${float(trade.get('stop') or 0):,.0f} "
+                             f"({progress.pnl_r:+.1f}R)", price))
 
     for t in traps:
         out.append(Event("trap", f"trap:{t.trap_id}:{t.near}",
-                         f"{asset} {side}: an anchored {t.side.replace('_', ' ')} on the {t.timeframe} "
-                         f"sits {t.distance:,.0f} from this trade's {t.near}", price))
+                         f"🪤 {asset} {side} · a {_trap_word(t.side)} trap call on the {t.timeframe} chart sits "
+                         f"${float(t.distance):,.0f} from your {t.near}: expect price to turn there.", price))
 
     for c in checkpoints:
         if c.at_ms and c.at_ms <= now_ms:
             out.append(Event("checkpoint", f"checkpoint:{c.at_ms}",
-                             f"{asset} {side}: {c.reason} has passed - review the position", price))
+                             f"⏰ {asset} {side} · {c.reason} has passed: review the position.", price))
 
     # Urgent first, then the rest, before the cap. Truncating in append order dropped the stop event
     # whenever eight targets had already been reached - and because detection is deterministic, it was
@@ -83,6 +86,11 @@ def detect_events(trade: dict, price: float | None, progress=None, traps=(), che
         log.warning("trade %s has %s pending events; sending the %s most urgent this pass",
                     trade.get("id"), len(out), MAX_PER_PASS)
     return out[:MAX_PER_PASS]
+
+
+def _trap_word(side) -> str:
+    s = str(side or "").lower()
+    return "bull" if "bull" in s else "bear" if "bear" in s else s.replace("_", " ")
 
 
 # ---------- dispatch ----------
@@ -141,8 +149,9 @@ class Dispatcher:
 
     def send_test(self) -> tuple[bool, list[str]]:
         """One message, on request, so the trader can see the channel works before anything happens."""
-        delivered, problems = self.send([Event("test", "test", "Trap Intelligence alerts are connected. "
-                                               "Cascade changes and TRAP calls will arrive here.")])
+        delivered, problems = self.send([Event("test", "test", "✅ Alerts connected. This channel gets the hourly Pulse, "
+                                               "the day plan and its warnings, trade plans (watch, confirm, targets, "
+                                               "stop) and trend changes.")])
         return bool(delivered), problems
 
     def send(self, events: list[Event]) -> tuple[list[Event], list[str]]:
