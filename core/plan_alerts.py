@@ -16,6 +16,12 @@ The sequence is replayed from the report's time on every pass, so it is the same
 loads, and each step has a fixed dedup key: the alert ledger's unique index makes each one a single
 message. Only the newest plan is watched (either pipeline's since 5 November); a new report replaces it. A step older than
 STALE_AFTER_MS is not announced as news - with no page open for hours, a five-hour-old WATCH helps no one.
+
+Wording batch 4 (6 Nov, the owner agreed the rewrite): the same verbs on every step - "Buy only if" /
+"Sell only if", "Forget it if", "Stop … · targets …" - the WATCH carries the targets and no desk context,
+CONFIRMED is "✅ SELL NOW" with the percent distance to the stop and the targets and the expiry, NO SETUP
+is "⚪ NO TRADE · short off" with a price and the next step, TARGET says "1 OF 3", STOPPED OUT names the
+loss, and every end state says "Next: the hourly Pulse, or a new report". The report is named by its time.
 """
 from __future__ import annotations
 
@@ -40,6 +46,15 @@ def _money(x: float | None) -> str:
 def _when(ms: int) -> str:
     from core.trades import fmt_when
     return fmt_when(ms)
+
+
+def _hhmm(ms: int) -> str:
+    from datetime import datetime, timezone
+    return f"{datetime.fromtimestamp(ms / 1000, timezone.utc):%H:%M} UTC"
+
+
+def _pct(a: float, b: float) -> str:
+    return f"{abs(a - b) / b * 100:.1f}%"
 
 
 @dataclass
@@ -115,8 +130,7 @@ def _taker_ratio(flow_frame, open_ms: int) -> float | None:
     return buy / sell if sell > 0 else None
 
 
-def replay(plan: dict, ts_ms: int, frames: dict, flows: dict | None, now_ms: int, price_now: float | None,
-           classification: str = "", context: str = "") -> list[Step]:
+def replay(plan: dict, ts_ms: int, frames: dict, flows: dict | None, now_ms: int, price_now: float | None) -> list[Step]:
     """Every step this plan has reached so far, in order."""
     side = plan.get("side")
     if side not in ("LONG", "SHORT"):
@@ -135,7 +149,11 @@ def replay(plan: dict, ts_ms: int, frames: dict, flows: dict | None, now_ms: int
     if fine is None or conf is None or not len(fine):
         return []
     word, beyond, far = ("short", "below", "above") if short else ("long", "above", "below")
+    act = "sell" if short else "buy"
+    candle = TF_WORDS.get(tf, tf)
     zone = f"{_money(low)}–{_money(high)}"
+    idea = f"The {act} idea from the {_hhmm(ts_ms)} report"
+    next_step = "Next: the hourly Pulse, or a new report."
     steps: list[Step] = []
 
     # 1. the zone is touched (a forming candle counts: this is the real-time part)
@@ -143,17 +161,16 @@ def replay(plan: dict, ts_ms: int, frames: dict, flows: dict | None, now_ms: int
     touch = reached.at_ms if reached else None
     if touch is None:
         if now_ms >= expires:
-            steps.append(Step("expired", expires, f"⌛ PLAN EXPIRED · {word}\nPrice never reached the zone ({zone}) "
-                                                  f"before {_when(expires)}. No trade.", price_now))
+            steps.append(Step("expired", expires, (
+                f"⌛ PLAN EXPIRED · BTC {_money(price_now)}\n{idea} ran out at {_when(expires)}: price never reached "
+                f"the zone {zone}. No trade.\n{next_step}"), price_now))
         return steps
     next_close = (touch // bar + 1) * bar
     # The rules are written here from the plan's numbers, not copied from the model's own wording: that
     # wording ("4h CVD remains net negative") is exactly the jargon the bot must not send.
-    rules = f"a {TF_WORDS.get(tf, tf)} candle closes {beyond} {_money(level)}"
+    rules = f"a {candle} candle closes {beyond} {_money(level)}"
     if ratio_limit is not None:
-        rules += f", with {'sellers' if short else 'buyers'} doing more of the trading on that candle"
-    kind_word = {"BULL_TRAP": "fake breakout up", "BEAR_TRAP": "fake breakdown", "RANGE_TRAP": "range",
-                 "NO_TRAP": "trend"}.get(classification, "latest")
+        rules += f" with {'sellers' if short else 'buyers'} doing more of the trading"
     from core.indicators.turn_window import next_window
     tw = next_window(touch)
     # "Price reached the zone" under a headline price below it read as a contradiction (4 Nov, 21:00 UTC:
@@ -161,17 +178,13 @@ def replay(plan: dict, ts_ms: int, frames: dict, flows: dict | None, now_ms: int
     # extreme, then where price is now.
     steps.append(Step("watch", touch, (
         f"🟡 WATCH · BTC {_money(price_now)}\n"
-        f"Price touched the {word} zone ({zone}) from the {kind_word} report: the candle "
-        f"{'high' if short else 'low'} reached {_money(reached.extreme)} at {_when(touch)}."
-        f"{_stands(price_now, low, high, short)}\n"
-        f"Next check: {TF_WORDS.get(tf, tf)} close at {_when(next_close)}.\n"
-        f"{word.capitalize()} only if: {rules}.\n"
-        f"Cancelled if a {TF_WORDS.get(tf, tf)} candle closes {far} {_money(high if short else low)}. "
-        f"Plan wrong past {_money(stop)}.\n"
-        + ("We are inside the busiest turning hours of the day right now." if tw.active
-           else f"Busiest turning hours: {tw.label}.")
-        + regime_line(plan)
-        + (f"\nContext: {context}" if context else "")), price_now))
+        f"The {act} zone {zone} was touched: the candle {'high' if short else 'low'} reached "
+        f"{_money(reached.extreme)} at {_when(touch)}.{_stands(price_now, low, high, short)}\n"
+        f"{act.capitalize()} only if {rules}. Next close: {_when(next_close)}.\n"
+        f"Forget it if a {candle} candle closes {far} {_money(high if short else low)}. "
+        f"Stop {_money(stop)} · targets " + " / ".join(_money(t) for t in targets) + ".\n"
+        + ("We are inside the busiest turning hours now." if tw.active else f"Busiest turning hours: {tw.label}.")
+        + regime_line(plan)), price_now))
 
     # 2. the confirming close, or the setup breaking first
     entry_ms = entry_px = None
@@ -181,13 +194,14 @@ def replay(plan: dict, ts_ms: int, frames: dict, flows: dict | None, now_ms: int
         if close_ms <= touch or close_ms > now_ms or open_ms >= expires:
             continue
         if (short and r.high >= stop) or (not short and r.low <= stop):
-            steps.append(Step("cancelled", close_ms, f"⚪ NO SETUP · {word} cancelled\nPrice traded through the "
-                                                     f"stop level {_money(stop)} before any confirmation.", stop))
+            steps.append(Step("cancelled", close_ms, (
+                f"⚪ NO TRADE · {word} off · BTC {_money(stop)}\nPrice went through the stop {_money(stop)} before any "
+                f"confirmation. {idea} is over.\n{next_step}"), stop))
             return steps
         if (short and r.close > high) or (not short and r.close < low):
-            steps.append(Step("cancelled", close_ms, f"⚪ NO SETUP · {word} cancelled\nThe {TF_WORDS.get(tf, tf)} candle closed at "
-                                                     f"{_money(r.close)}, {far} the zone ({zone}): no rejection.",
-                              float(r.close)))
+            steps.append(Step("cancelled", close_ms, (
+                f"⚪ NO TRADE · {word} off · BTC {_money(float(r.close))}\nA {candle} candle closed at {_money(float(r.close))}, "
+                f"{far} the zone {zone}, before any confirmation. {idea} is over.\n{next_step}"), float(r.close)))
             return steps
         if (short and r.close < level) or (not short and r.close > level):
             ratio = _taker_ratio(flow, open_ms)
@@ -196,19 +210,24 @@ def replay(plan: dict, ts_ms: int, frames: dict, flows: dict | None, now_ms: int
                 continue                                   # the close is there, the flow is not: keep waiting
             entry_ms, entry_px = close_ms, float(r.close)
             who = ("sellers" if ratio < 1 else "buyers") if ratio is not None else None
-            flow_note = (f" ({who} did more of the trading)" if who else
+            flow_note = (f", with {who} doing more of the trading" if who else
                          " (the buyer/seller check was not available for this candle)" if ratio_limit is not None
                          else "")
+            past = entry_px < low if short else entry_px > high
             steps.append(Step("confirmed", close_ms, (
-                f"✅ SETUP CONFIRMED · {word} · BTC {_money(entry_px)}\n"
-                f"The {TF_WORDS.get(tf, tf)} candle closed at {_money(entry_px)}, {beyond} {_money(level)}{flow_note}.\n"
-                f"Entry zone {zone} · stop {_money(stop)} · targets " + " / ".join(_money(t) for t in targets)),
-                entry_px))
+                f"✅ {act.upper()} NOW · BTC {_money(entry_px)}\n"
+                f"A {candle} candle closed at {_money(entry_px)}, {beyond} {_money(level)}{flow_note}.\n"
+                f"Stop {_money(stop)} ({_pct(stop, entry_px)} away) · targets " + " / ".join(_money(t) for t in targets)
+                + " (" + " / ".join(_pct(t, entry_px) for t in targets) + ").\n"
+                f"Entry was planned at {zone}; price is "
+                + ("past it, so the risk is the distance to the stop from here." if past else "inside it.") + "\n"
+                f"Good until {_when(expires)}."), entry_px))
             break
     if entry_ms is None:
         if now_ms >= expires + bar:
-            steps.append(Step("expired", expires, f"⌛ PLAN EXPIRED · {word}\nPrice touched the zone but no {TF_WORDS.get(tf, tf)} "
-                                                  f"candle confirmed before {_when(expires)}. No trade.", price_now))
+            steps.append(Step("expired", expires, (
+                f"⌛ PLAN EXPIRED · BTC {_money(price_now)}\n{idea} ran out at {_when(expires)}: the zone was touched "
+                f"but no {candle} candle confirmed. No trade.\n{next_step}"), price_now))
         return steps
 
     # 3. after the entry: targets in order, or the stop (a candle spanning both counts as the stop)
@@ -218,34 +237,33 @@ def replay(plan: dict, ts_ms: int, frames: dict, flows: dict | None, now_ms: int
         if t < entry_ms:
             continue
         if (short and r.high >= stop) or (not short and r.low <= stop):
-            move = (entry_px - stop) / entry_px * 100 if short else (stop - entry_px) / entry_px * 100
+            loss = abs(stop - entry_px) / entry_px * 100
             steps.append(Step("stopped", t, (
-                f"🔴 STOPPED · {word} from {_money(entry_px)}\nPrice reached the stop {_money(stop)} "
-                f"({move:+.2f}%). The {classification.replace('_', ' ').lower() or 'plan'} call was wrong this time."),
-                stop))
+                f"🔴 STOPPED OUT · BTC {_money(stop)}\n{word.capitalize()} from {_money(entry_px)} hit the stop "
+                f"{_money(stop)}: {loss:.2f}% loss. {idea} was wrong.\n{next_step} No re-entry from this plan."), stop))
             return steps
         while hit < len(targets) and ((short and r.low <= targets[hit]) or (not short and r.high >= targets[hit])):
             tgt = targets[hit]
             hit += 1
             move = (entry_px - tgt) / entry_px * 100 if short else (tgt - entry_px) / entry_px * 100
-            nxt = f" Next: {_money(targets[hit])}." if hit < len(targets) else " That was the last target."
-            steps.append(Step(f"target{hit}", t, f"🎯 TARGET {hit} HIT · {_money(tgt)}\n{word.capitalize()} from "
-                                                 f"{_money(entry_px)}: {move:+.2f}%.{nxt}", tgt))
+            nxt = f"Next target {_money(targets[hit])}." if hit < len(targets) else "That was the last target: the plan is done."
+            breakeven = f" and move the stop to {_money(entry_px)} (break-even)" if hit == 1 else ""
+            steps.append(Step(f"target{hit}", t, (
+                f"🎯 TARGET {hit} OF {len(targets)} HIT · BTC {_money(tgt)}\n{word.capitalize()} from "
+                f"{_money(entry_px)}: {move:+.2f}% in your favour.\n{nxt}\nSuggested: take some profit here{breakeven}."), tgt))
         if hit == len(targets):
             return steps
     return steps
 
 
-def events(report_row: dict | None, frames: dict, flows: dict | None, now_ms: int, price_now: float | None,
-           context: str = "") -> list[Event]:
+def events(report_row: dict | None, frames: dict, flows: dict | None, now_ms: int, price_now: float | None) -> list[Event]:
     """The alert events for the newest plan; old steps are left out as stale."""
     if not report_row or not report_row.get("plan"):
         return []
     plan = json.loads(report_row["plan"])
     rid = report_row["report_id"]
     out = []
-    for s in replay(plan, int(report_row["ts_ms"]), frames, flows, now_ms, price_now,
-                    report_row.get("classification") or "", context):
+    for s in replay(plan, int(report_row["ts_ms"]), frames, flows, now_ms, price_now):
         if now_ms - s.at_ms > STALE_AFTER_MS and s.name in ("watch",):
             continue                     # a WATCH hours later is history, not a call to look
         kind = {"confirmed": "plan_confirmed", "stopped": "plan_stopped"}.get(s.name, "plan")

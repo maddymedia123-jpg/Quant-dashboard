@@ -70,7 +70,7 @@ def market_events(store, m, analyses: dict, now_ms: int) -> list[Event]:
     from core.config import CATEGORIES
     from core.indicators.cascade import classify
 
-    context, events = [], []
+    events = []
     for key in CATEGORIES:
         bias_tf, anchor_tf, engine_tfs = PROFILES[key].cascade
         c = classify(m.spot.frames, bias_tf, anchor_tf, engine_tfs)
@@ -83,13 +83,9 @@ def market_events(store, m, analyses: dict, now_ms: int) -> list[Event]:
         r = ma.reversal_event(key, PROFILES[key].label, track, c, m.spot.frames, now_ms, m.spot.last, recent=recent)
         if r is not None:
             events.append(r)
-        if key in ("live", "intraday") and c.state not in ma.SILENT_STATES:
-            trend = c.bias.direction if c.bias is not None else None
-            context.append(f"{PROFILES[key].label} {ma.state_name(c.state, trend).lower()}")
     plan_row = pa.latest_plan_report(store)
     events += pa.events(plan_row, m.spot.frames,
-                        m.taker_flow.frames if m.taker_flow.available else None, now_ms, m.spot.last,
-                        context="; ".join(context))
+                        m.taker_flow.frames if m.taker_flow.available else None, now_ms, m.spot.last)
     events += ma.trap_events(store.traps(limit=200), now_ms)
     latest = store.reports(limit=1)
     rep_pulse = pulse.report_event(latest[0] if latest else None, analyses.get("live"), m, now_ms)
