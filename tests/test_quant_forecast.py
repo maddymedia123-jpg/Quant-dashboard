@@ -180,7 +180,7 @@ def test_cautions_are_one_an_hour_and_stale_ones_are_not_sent():
     assert len(qa.audit_events(plan, a, DAY0 + H + 1_900_000)) == 1
     assert qa.audit_events(plan, a, DAY0 + 5 * H) == [], "an hours-old caution is not news"
     text = qa.caution_headline(plan, a["cautions"][0])
-    assert "NOT been breached" in text and "79,000" in text
+    assert "it is only off below $79,000" in text
     # the worker was down for the first caution of the hour: the fresh one still goes out, and the hour's
     # ledger key is what keeps a third from following it
     late = qa.audit_events(plan, a, DAY0 + H + 1_800_000 + 5 * 60_000)
@@ -330,7 +330,9 @@ def test_one_pass_makes_the_day_plan_once_and_replaces_it_when_broken(tmp_path, 
     assert store.qf_week(qf_weekly.week_start(now))["payload"]["weekly_gex_walls"] == [1.0, 2.0], "the week's plan is written on the pass"
     # the morning post carries the compact timeline (message 6); this day is normal with lone chop and
     # expansion hours, which fold into one node, so the line names the active node and no next one
-    assert ("Now ⚡" in ev[0].headline or "Next 🎯" in ev[0].headline), ev[0].headline
+    assert ("Now (" in ev[0].headline or "Next (" in ev[0].headline), ev[0].headline
+    assert ev[0].headline.startswith("📊 DAY PLAN · ") and "confidence" in ev[0].headline
+    assert "Regime:" not in ev[0].headline and " | " not in ev[0].headline and "Trap Agent" not in ev[0].headline
     assert len(qf_tree.timeline_tree(store.qf_plans(DAY0)[0]["payload"], now)) <= 6, "no fragmented day"
     plan = store.qf_plans(DAY0)[0]["payload"]
     assert plan["backtest"]["days"] >= 1
@@ -343,9 +345,10 @@ def test_one_pass_makes_the_day_plan_once_and_replaces_it_when_broken(tmp_path, 
     away = level * (0.99 if side == "below" else 1.01)
     later = pd.concat([hist, candles([plan["origin"]] * 3 + [away], start=DAY0)], ignore_index=True)
     ev = qa.run(store, _M(later, price=away), DAY0 + 4 * H + 60_000)
-    assert [e.kind for e in ev] == ["qf_invalid"] and "SCENARIO B · FORECAST #1" in ev[0].headline
-    assert ev[0].headline.startswith("🔴 WHOLE-DAY PLAN INVALIDATED: Macro structure breached at"), "Hammad's words"
-    assert "Original roadmap voided. Scenario B secondary chart activated with new targets." in ev[0].headline
+    assert [e.kind for e in ev] == ["qf_invalid"] and "\n📊 PLAN B · " in ev[0].headline
+    assert ev[0].headline.startswith(f"🔴 DAY PLAN OFF · BTC ${away:,.0f}\nA 4-hour candle closed at ${away:,.0f}, {side} the ${level:,.0f} line at ")
+    assert "The morning plan is over; here is the replacement." in ev[0].headline
+    assert "Macro structure" not in ev[0].headline and "roadmap" not in ev[0].headline
     rows = store.qf_plans(DAY0)
     assert [(r["version"], r["status"]) for r in rows] == [(0, "invalidated"), (1, "active")]
     assert rows[1]["payload"]["replaces"]["version"] == 0
@@ -356,8 +359,10 @@ def test_one_pass_makes_the_day_plan_once_and_replaces_it_when_broken(tmp_path, 
     far = lvl * (0.98 if "below" in p1["invalidation"] else 1.02)
     later2 = pd.concat([later, candles([away] * 3 + [far], start=DAY0 + 4 * H)], ignore_index=True)
     ev = qa.run(store, _M(later2, price=far), DAY0 + 8 * H + 60_000)
-    assert [e.kind for e in ev] == ["qf_invalid"] and "LOCKOUT MODE: HIGH CHOP / STAND ASIDE" in ev[0].headline
-    assert "Invalidated twice today" in ev[0].headline and "Two plans failed" in ev[0].headline
+    assert [e.kind for e in ev] == ["qf_invalid"] and ev[0].headline.startswith(f"🔴 DAY PLAN OFF AGAIN · BTC ${far:,.0f}\n")
+    assert ("That is the second time today, so there is no plan for the rest of the day: stand aside until "
+            "00:00 UTC (05:00 PKT).") in ev[0].headline
+    assert "Today's range so far: $" in ev[0].headline and "LOCKOUT" not in ev[0].headline
     rows = store.qf_plans(DAY0)
     assert rows[-1]["regime"] == "locked" and rows[-1]["status"] == "active" and rows[-1]["version"] == 2
     assert qa.run(store, _M(later2, price=far), DAY0 + 9 * H) == [], "a locked day raises nothing more"
@@ -374,7 +379,7 @@ def test_a_day_left_with_no_active_plan_gets_its_replacement_on_the_next_pass(tm
     hit = {"side": "below", "level": 1.0, "close": 0.5, "close_ms": DAY0 + 4 * H, "basis": "4-hour close"}
     assert store.close_qf_plan(row["id"], "invalidated", json.dumps(hit), DAY0 + 4 * H)
     ev = qa.run(store, _M(hist), DAY0 + 4 * H + 120_000)
-    assert [e.kind for e in ev] == ["qf_invalid"] and "SCENARIO B · FORECAST #1" in ev[0].headline
+    assert [e.kind for e in ev] == ["qf_invalid"] and "\n📊 PLAN B · " in ev[0].headline
     assert [(r["version"], r["status"]) for r in store.qf_plans(DAY0)] == [(0, "invalidated"), (1, "active")]
     assert qa.run(store, _M(hist), DAY0 + 4 * H + 180_000) == []
     store.close()
@@ -392,7 +397,7 @@ def test_the_plan_row_is_written_before_the_ai_is_asked(tmp_path, monkeypatch):
         return {"summary": "Dips hold, then up.", "scenario_a": "Up.", "scenario_b": "Fails.", "model": "t"}
     monkeypatch.setattr(qw, "write", write)
     ev = qa.run(store, _M(hourly(800, DAY0 - 800 * H)), DAY0 + 60_000)
-    assert calls == [0] and "Directive: Dips hold, then up." in ev[0].headline
+    assert calls == [0] and "\nDips hold, then up.\n" in ev[0].headline
     assert store.qf_plans(DAY0)[0]["payload"]["writeup"]["summary"] == "Dips hold, then up."
     assert qa.run(store, _M(hourly(800, DAY0 - 800 * H)), DAY0 + 60_000) == [] and calls == [0], \
         "a second process finds the row and asks nothing"
@@ -489,16 +494,40 @@ def test_the_wire_plan_carries_no_math_and_the_bot_message_matches_it():
     assert "$79,600" in wire and "03:00 UTC (08:00 PKT)" in wire and "$80,800" in wire
     assert "dips hold above $79,600" in wire.lower() and "Higher:" not in wire
     msg = qa.plan_headline(p)
-    assert "direction right" not in msg and "Directive: Dips hold above" in msg
-    assert "Low $79,600 at 03:00 UTC (08:00 PKT) → High $80,800 at 14:00 UTC (19:00 PKT)" in msg
-    assert msg.splitlines()[-1] == "Whole-day invalidation: below $79,000"
-    assert qa.regime_line(p, "Trap Agent: Clear") == "BULLISH EXPANSION | 60% Confidence | Trap Agent: Clear"
+    assert "direction right" not in msg and "\nDips hold above" in msg and "Directive:" not in msg
+    lines = msg.splitlines()
+    assert lines[0].startswith("📊 DAY PLAN · ") and lines[0].endswith(" · BTC $80,000")
+    assert lines[1] == "Leaning higher · 60% confidence."
+    assert ("Expected range $79,600–$80,800 until 00:00 UTC (05:00 PKT), low near 03:00 UTC (08:00 PKT), "
+            "high near 14:00 UTC (19:00 PKT). Plan is off below $79,000.") in lines
+    assert lines[-1].startswith("Trade: LONG · entry ") and " · targets " in lines[-1] and "TP" not in lines[-1]
+    for gone in ("Regime:", "Whole-day invalidation", "Low $79,600 at", "→", "Chop ", "Trap Agent", " | "):
+        assert gone not in msg, gone
+    assert qa.regime_line(p, "Trap Agent: Clear") == "BULLISH EXPANSION | 60% Confidence | Trap Agent: Clear", "the panel's line stands"
+    # the low and high at the same hour: no times (5 Nov: 'Low at 13:00 → High at 13:00')
+    same = {**p, "projected_low": {"price": 79_600.0, "t_ms": DAY0 + 3 * H}, "projected_high": {"price": 80_800.0, "t_ms": DAY0 + 3 * H + 20 * 60_000}}
+    assert "Expected range $79,600–$80,800 until 00:00 UTC (05:00 PKT). Plan is off below $79,000." in qa.plan_headline(same)
     # the hit rate (message 5): the backtest's last 10 days until a live day has finished, then the live ones
     p["backtest"]["recent"] = {"direction_days": 10, "direction_right": 7, "range_days": 0, "range_held": 0}
     assert qa.regime_line(p) == "BULLISH EXPANSION | 60% Confidence | backtest: 7 of last 10 days"
     live = {"days": 3, "direction_days": 3, "direction_right": 1, "range_days": 0, "range_held": 0}
     assert "live: 1 of last 3 days" in qa.regime_line(p, live=live) and "7 of last 10" not in qa.regime_line(p, live=live)
-    assert "live: 1 of last 3 days" in qa.plan_headline(p, live)
+    assert "Leaning higher · 60% confidence · record 1 of last 3 days." in qa.plan_headline(p, live=live)
+    assert "Leaning higher · 60% confidence · backtest record 7 of last 10 days." in qa.plan_headline(p)
+    rng = {**p, "regime": "neutral", "invalidation": {"below": 79_000.0, "above": 81_000.0}}
+    assert "\nRange day · 60% confidence" in qa.plan_headline(rng) and "Trade:" not in qa.plan_headline(rng)
+    assert "Plan is off below $79,000 or above $81,000." in qa.plan_headline(rng)
+    # the busiest hours: the expansion windows, at most two, no chop list
+    windows = {**p, "windows": [{"phase": "chop", "start_ms": DAY0 + 3 * H, "end_ms": DAY0 + 4 * H},
+                                {"phase": "expansion", "start_ms": DAY0 + 8 * H, "end_ms": DAY0 + 9 * H},
+                                {"phase": "chop", "start_ms": DAY0 + 10 * H, "end_ms": DAY0 + 12 * H},
+                                {"phase": "expansion", "start_ms": DAY0 + 12 * H, "end_ms": DAY0 + 16 * H},
+                                {"phase": "expansion", "start_ms": DAY0 + 20 * H, "end_ms": DAY0 + 21 * H}]}
+    w = qa.plan_headline(windows)
+    assert "Busiest hours today: 08:00–09:00 and 12:00–16:00 UTC (13:00–14:00 and 17:00–21:00 PKT)." in w
+    assert "20:00" not in w and "Chop" not in w and "03:00–04:00" not in w
+    assert "Busiest hours" not in qa.plan_headline(p)
+    assert "record 1 of last 3 days" in qa.plan_headline(p, live)
     neutral = {**p, "regime": "neutral", "invalidation": {"below": 79_000.0, "above": 81_000.0}}
     assert qf.hit_rate(neutral, live) is None, "a range plan quotes range days only, and there are none"
     assert qf.wire_line({"regime": "neutral", "scenario_a": "Range: price stays between."}) == "Price stays between."
@@ -583,7 +612,7 @@ def test_the_plan_carries_the_write_up_into_the_message_and_the_screen(tmp_path,
                                                              "scenario_a": "Up.", "scenario_b": "Fails.",
                                                              "model": "gemini-test"})
     ev = qa.run(store, _M(hourly(800, DAY0 - 800 * H)), DAY0 + 60_000)
-    assert "Directive: A calm day, leaning up." in ev[0].headline
+    assert "\nA calm day, leaning up.\n" in ev[0].headline
     plan = store.qf_plans(DAY0)[0]["payload"]
     assert plan["writeup"]["model"] == "gemini-test"
     shown = panels.qf_gameplan_html(plan, {"days": 0})
@@ -605,14 +634,15 @@ def test_an_active_4h_trap_forces_the_day_neutral_and_the_wire_says_so(tmp_path)
     plan = store.qf_plans(DAY0)[0]["payload"]
     assert plan["regime"] == "neutral" and plan["preflight_override"] == "trap"
     assert plan["preflight"]["trap"]["label"] == "Trap Agent: BULL TRAP active (4H)"
-    assert "NEUTRAL / RANGE-BOUND" in ev[0].headline and "| Trap Agent: BULL TRAP active (4H)" in ev[0].headline
+    assert "\nRange day · " in ev[0].headline and "NEUTRAL / RANGE-BOUND" not in ev[0].headline
+    assert "\nA bull trap is active on the 4-hour chart: the day is held to a range.\n" in ev[0].headline
     wire = panels.qf_wire_html(plan, "on track")
     assert "Trap Agent: BULL TRAP active (4H)" in wire
     assert "overridden to NEUTRAL" in panels.qf_gameplan_html(plan, {"days": 0})
     store.close()
     clear = Store(tmp_path / "c.sqlite")
     ev = qa.run(clear, _M(hist), DAY0 + 60_000)
-    assert "| Trap Agent: Clear" in ev[0].headline and clear.qf_plans(DAY0)[0]["payload"]["regime"] == "bullish"
+    assert "trap" not in ev[0].headline.lower() and clear.qf_plans(DAY0)[0]["payload"]["regime"] == "bullish"
     clear.close()
 
 
@@ -786,25 +816,65 @@ def test_the_magnitude_scaler_widens_the_target_once_on_force_the_simulation_did
     assert "rejected" in plan["writeup"] and "Target widened $80,800 → $81,200 (call wall)" in panels.qf_wire_html(plan)
 
 
-def test_the_tier_messages_use_hammads_words():
+def test_the_tier_messages_say_what_happened_and_that_the_plan_stands():
+    """Wording batch 2 (6 Nov): 'Order flow metrics are moving differently than baseline projection' opened
+    every CAUTION and the flow variant said 'CVD divergence' and 'taker flow', banned words. Now: what
+    moved, in which window, the plan still stands and where it is off, what to do."""
+    from core.plan_alerts import BANNED_WORDS
     p = _plan_fixed()
     c = {"t_ms": DAY0 + H, "why": "move", "sigmas": 2.5, "from": 80_000.0, "to": 79_500.0}
     text = qa.caution_headline(p, c)
-    assert text.startswith("⚠️ CAUTION [00:00–00:00 UTC (05:00–05:00 PKT) normal window]: Order flow metrics are moving "
-                           "differently than baseline projection. Volatility spike detected: a 15-minute candle moved 2.5x")
-    assert "Whole-Day Invalidation at below $79,000 has NOT been breached. Plan remains active.\nNow ⚡" in text
-    assert "CVD divergence detected" in qa.caution_headline(p, {**c, "why": "flow", "delta_btc": -300.0})
+    lines = text.splitlines()
+    assert lines[0] == "⚠️ SHARP MOVE · BTC $79,500"
+    assert lines[1] == "A 15-minute candle moved 2.5x its usual size ($80,000 → $79,500) in the normal window (00:00–00:00 UTC, 05:00–05:00 PKT)."
+    assert lines[2] == "The day plan still stands: it is only off below $79,000. Do nothing new; watch the next 15-minute close."
+    assert lines[3].startswith("Now: normal, $")
+    flow = qa.caution_headline(p, {**c, "why": "flow", "delta_btc": -300.0, "to": None}, price=79_800.0)
+    assert flow.startswith("⚠️ SELLING PRESSURE AGAINST THE PLAN · BTC $79,800\nIn the last hour sellers did 300 BTC more than "
+                           "the other side, against the plan's direction, in the normal window (")
+    assert "Do nothing new; if it continues, expect a PLAN HELD or DAY PLAN OFF message." in flow
+    assert "⚠️ BUYING PRESSURE AGAINST THE PLAN · BTC —" in qa.caution_headline(p, {**c, "why": "flow", "delta_btc": 120.0, "to": None})
+    assert "buyers did 120 BTC more" in qa.caution_headline(p, {**c, "why": "flow", "delta_btc": 120.0, "to": None})
     held = qa.held_headline(p, {"t_ms": DAY0 + H, "shock_ms": 0, "from": 80_000.0, "to": 79_500.0})
-    assert held.startswith("🟢 MODEL HELD: Intraday shock to $79,500 absorbed successfully above whole-day invalidation "
-                           "boundary $79,000. Baseline 1-day forecast path remains active.\nNow ⚡")
+    assert held.startswith("🟢 PLAN HELD · BTC $79,500\nThe sharp move to $79,500 did not break the plan: price stayed above "
+                           "$79,000. The day plan stands.\nNow: normal, $")
     bear = _plan_fixed(regime="bearish", above=81_000.0)
-    assert "below whole-day invalidation boundary $81,000" in qa.held_headline(bear, {"t_ms": DAY0 + H, "shock_ms": 0, "from": 1.0, "to": 2.0})
+    assert "price stayed below $81,000." in qa.held_headline(bear, {"t_ms": DAY0 + H, "shock_ms": 0, "from": 1.0, "to": 2.0})
+    both = _plan_fixed(regime="neutral", below=79_000.0, above=81_000.0)
+    assert "price stayed inside $79,000–$81,000." in qa.held_headline(both, {"t_ms": DAY0 + H, "shock_ms": 0, "from": 1.0, "to": 2.0})
     hit = {"side": "below", "level": 79_000.0, "close": 78_900.0, "close_ms": DAY0 + 4 * H, "basis": "4-hour close"}
-    assert qa.invalidated_headline(p, hit, None).startswith(
-        "🔴 WHOLE-DAY PLAN INVALIDATED: Macro structure breached at $78,900 (4-hour close, below the $79,000 line, "
-        "04:00 UTC (09:00 PKT)). Original roadmap voided. Scenario B secondary chart activated with new targets.")
+    assert qa.invalidated_headline(p, hit, None) == (
+        "🔴 DAY PLAN OFF · BTC $78,900\nA 4-hour candle closed at $78,900, below the $79,000 line at 04:00 UTC (09:00 PKT). "
+        "The morning plan is over; the replacement follows on the next pass.")
+    two = {**hit, "basis": "2 hourly closes in a row"}
+    assert "A second 1-hour candle in a row closed at $78,900, below the $79,000 line at " in qa.invalidated_headline(p, two, None)
     b = {**_plan_fixed(created=DAY0 + 4 * H), "version": 1}
     b["scenario_a"], b["scenario_b"] = qf.scenarios(b)
-    assert "SCENARIO B · FORECAST #1" in qa.invalidated_headline(p, hit, b)
+    with_b = qa.invalidated_headline(p, hit, b)
+    assert "The morning plan is over; here is the replacement.\n📊 PLAN B · " in with_b
+    assert "Plan B is off below $79,000." in with_b and "Expected range $79,600–$80,800 until 00:00 UTC (05:00 PKT)" in with_b
     locked = qf.locked_plan(DAY0 + 4 * H, DAY0 + qf.DAY_MS, 78_900.0, 2, 80_100.0, 78_800.0)
-    assert "LOCKOUT MODE: HIGH CHOP / STAND ASIDE" in qa.invalidated_headline(p, hit, locked)
+    lock = qa.invalidated_headline(p, hit, locked)
+    assert lock == ("🔴 DAY PLAN OFF AGAIN · BTC $78,900\nA 4-hour candle closed at $78,900, below the $79,000 line at 04:00 UTC "
+                    "(09:00 PKT). That is the second time today, so there is no plan for the rest of the day: stand aside "
+                    "until 00:00 UTC (05:00 PKT).\nToday's range so far: $78,800–$80,100.")
+    for msg in (text, flow, held, with_b, lock, qa.plan_headline(p)):
+        assert not [w for w in BANNED_WORDS if w in msg.lower()], msg
+        assert "[" not in msg and "whole-day" not in msg.lower() and "baseline" not in msg.lower(), msg
+
+
+def test_a_held_within_thirty_minutes_of_its_caution_is_not_sent():
+    """5 Nov: MODEL HELD came 15 minutes after the CAUTION for the same candle, both saying the plan stands.
+    A hold is sent only when its caution went out HELD_GAP_MS or more earlier."""
+    p = _plan_fixed()
+    shock = {"t_ms": DAY0 + H, "why": "move", "sigmas": 2.5, "from": 80_000.0, "to": 79_500.0}
+    quick = {"t_ms": DAY0 + H + 15 * 60_000, "shock_ms": DAY0 + H, "from": 80_000.0, "to": 79_500.0}
+    slow = {"t_ms": DAY0 + H + 35 * 60_000, "shock_ms": DAY0 + H, "from": 80_000.0, "to": 79_500.0}
+    kinds = lambda a, now: [e.kind for e in qa.audit_events(p, a, now)]  # noqa: E731
+    assert kinds({"cautions": [shock], "holds": [quick]}, DAY0 + H + 16 * 60_000) == ["qf_caution"]
+    assert kinds({"cautions": [shock], "holds": [slow]}, DAY0 + H + 36 * 60_000) == ["qf_held"], "its caution went out on an earlier pass"
+    assert qa.HELD_GAP_MS == 30 * 60_000
+    # the flow caution carries the spot price in its header, not None
+    flow = {"t_ms": DAY0 + H, "why": "flow", "delta_btc": -300.0}
+    ev = qa.audit_events(p, {"cautions": [flow], "holds": []}, DAY0 + H + 60_000, price=79_800.0)
+    assert ev[0].headline.startswith("⚠️ SELLING PRESSURE AGAINST THE PLAN · BTC $79,800") and ev[0].price == 79_800.0
