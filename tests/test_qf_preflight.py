@@ -218,14 +218,15 @@ def test_a_major_print_inside_its_window_puts_the_plan_in_event_mode(trending):
     assert "EVENT REGIME (Congressional Elections): no range plan today." in qf.directive(p, lambda ms: "t")
     # the bot's messages, every tier
     head = qf_alerts.plan_headline(p)
-    assert "Regime: EVENT REGIME · Congressional Elections |" in head
-    assert "Event: Congressional Elections printed 9 hours ago" in head and "Directive: Event regime (" in head
-    assert "NEUTRAL / RANGE-BOUND" not in head
+    assert "\nEvent day: Congressional Elections · " in head and "Regime:" not in head
+    assert "Congressional Elections printed 9 hours ago" in head
+    assert "\nNo range plan. Expect sharp moves either way" in head, "the directive without the event prefix the header carries"
+    assert "NEUTRAL / RANGE-BOUND" not in head and "Range day" not in head
     c = {"why": "move", "sigmas": 3.1, "from": 80_000.0, "to": 81_000.0, "t_ms": DAY0 + 2 * H, "delta_btc": 0.0}
-    assert "[EVENT REGIME · Congressional Elections]" in qf_alerts.caution_headline(p, c)
-    assert "MODEL HELD [EVENT REGIME · Congressional Elections]" in qf_alerts.held_headline(p, {"to": 81_000.0, "t_ms": DAY0 + 2 * H})
-    hit = {"basis": "4h close", "side": "above", "level": 82_000.0, "close": 82_100.0, "close_ms": DAY0 + 4 * H}
-    assert "INVALIDATED [EVENT REGIME · Congressional Elections]" in qf_alerts.invalidated_headline(p, hit, None)
+    assert "on an event day (Congressional Elections)." in qf_alerts.caution_headline(p, c)
+    assert "The day plan stands; it is an event day (Congressional Elections)." in qf_alerts.held_headline(p, {"to": 81_000.0, "t_ms": DAY0 + 2 * H})
+    hit = {"basis": "4-hour close", "side": "above", "level": 82_000.0, "close": 82_100.0, "close_ms": DAY0 + 4 * H}
+    assert "on an event day (Congressional Elections). The morning plan is over" in qf_alerts.invalidated_headline(p, hit, None)
     assert trade_directive(p)["setup_type"] == "Stand aside: event regime (Congressional Elections), no range plan."
     # the AI writeup stands down: its sentence would replace the one that names the event
     from core import qf_writeup

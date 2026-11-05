@@ -15,6 +15,12 @@ The tiers, as agreed with Hammad (28 Oct):
 * The magnitude scaler (core.quant_forecast.magnitude_scale) runs on every pass that finds the plan intact
   and widens its target once when open interest or taker flow shows more force than the simulation gave it.
   Every message carries the compact timeline (which window is active, which is next) - message 6.
+* Wording batch 2 (6 Nov, the owner agreed the rewrite): the bot's messages are plain sentences with one
+  header shape ("📊 DAY PLAN · Thu 05 Nov · BTC $80,467", "⚠️ SHARP MOVE · BTC $76,840", "🟢 PLAN HELD",
+  "🔴 DAY PLAN OFF", "🔴 DAY PLAN OFF AGAIN"); the stat line, the chop list and the spec's phrases
+  ("Order flow metrics are moving differently than baseline projection", "Macro structure breached") are
+  gone from Discord. The dashboard's wire panel keeps regime_line and windows_line. A MODEL HELD within
+  HELD_GAP_MS of its own caution is not sent: both said the plan stands about the same candle.
 
 Detection is read from the candles each pass, so it holds no state of its own; what is new is decided by
 the alert ledger's unique keys, and who replaces a plan by the one-statement update in the store. A plan's
@@ -44,7 +50,10 @@ CVD_BARS = 4                     # the last hour of 15-minute taker delta
 CVD_TYPICAL_ROWS = 96            # its usual size, from the day before
 CVD_FLIP_X = 1.5
 HOLD_WINDOW_MS = HOUR_MS
+HELD_GAP_MS = 30 * 60_000        # a hold this soon after its caution repeats it (5 Nov: 15 minutes apart)
 SEND_WITHIN_MS = 30 * 60_000
+LEAN_WORD = {"bullish": "Leaning higher", "bearish": "Leaning lower", "neutral": "Range day",
+             "locked": "Stand aside (locked)"}
 REGIME_WORD = {"bullish": "BULLISH EXPANSION", "bearish": "BEARISH EXPANSION",
                "neutral": "NEUTRAL / RANGE-BOUND", "locked": "LOCKOUT MODE: HIGH CHOP / STAND ASIDE"}
 
@@ -213,10 +222,110 @@ def regime_word(plan: dict) -> str:
     return REGIME_WORD[plan["regime"]]
 
 
-def _event_tag(plan: dict) -> str:
-    """' [EVENT REGIME · Congressional Elections]' on an event day, so every tier names the event."""
+def _event_title(plan: dict) -> str | None:
     ev = plan.get("event_regime")
-    return f" [EVENT REGIME · {ev.get('title')}]" if ev else ""
+    return ev.get("title") if ev else None
+
+
+def _event_clause(plan: dict) -> str:
+    """' on an event day (Congressional Elections)' or '': every tier names the event (fix 3)."""
+    t = _event_title(plan)
+    return f" on an event day ({t})" if t else ""
+
+
+def lean_line(plan: dict, live: dict | None = None) -> str:
+    """'Leaning higher · 60% confidence · record 1 of last 3 days.' - the bot's second line."""
+    t = _event_title(plan)
+    bits = [f"Event day: {t}" if t else LEAN_WORD.get(plan["regime"], plan["regime"])]
+    p = plan.get("p_scenario_a")
+    if p is not None:
+        bits.append(f"{p:.0%} confidence")
+    rate = qf.hit_rate(plan, live)
+    if rate:
+        bits.append(rate.replace("live: ", "record ").replace("backtest: ", "backtest record "))
+    return " · ".join(bits) + "."
+
+
+def trap_sentence(plan: dict, trap: str | None = None) -> str:
+    """'A bull trap is active on the 4-hour chart: the day is held to a range.' from the pre-flight's
+    label ('Trap Agent: BULL TRAP active (4H)'), or '' when it is clear."""
+    import re
+    label = trap or trap_label(plan) or ""
+    m = re.match(r"Trap Agent: (.+?) active \((\d+)H\)", label)
+    if not m:
+        return ""
+    names = [n.strip().lower() for n in m.group(1).split("+")]
+    who = " and a ".join(names)
+    return f"A {who} {'are' if len(names) > 1 else 'is'} active on the {m.group(2)}-hour chart: the day is held to a range."
+
+
+def directive_sentence(plan: dict) -> str:
+    """The directive without the event prefix the header already carries."""
+    w = qf.wire_line(plan)
+    if _event_title(plan) and w.startswith("Event regime (") and "): " in w:
+        w = w.split("): ", 1)[1]
+        w = w[:1].upper() + w[1:]
+    return w
+
+
+def range_line(plan: dict) -> str:
+    """'Expected range $79,600–$80,800 until 00:00 UTC (05:00 PKT), low near 03:00 UTC (08:00 PKT), high
+    near 14:00 UTC (19:00 PKT). Plan is off below $79,000.' The times only when they are an hour or more
+    apart (5 Nov: 'Low at 13:00 → High at 13:00')."""
+    pl, ph = plan["projected_low"], plan["projected_high"]
+    line = f"Expected range {_money(pl['price'])}–{_money(ph['price'])} until {at_label(plan['end_ms'])}"
+    if abs(int(pl["t_ms"]) - int(ph["t_ms"])) >= HOUR_MS:
+        line += f", low near {at_label(pl['t_ms'])}, high near {at_label(ph['t_ms'])}"
+    label = "Plan B" if plan.get("version") else "Plan"
+    return f"{line}. {label} is off {_inv_text(plan)}."
+
+
+def busiest_line(plan: dict) -> str:
+    """'Busiest hours today: 08:00–09:00 and 12:00–16:00 UTC (13:00–14:00 and 17:00–21:00 PKT).' - the
+    expansion windows, at most two; '' without any."""
+    ws = sorted((w for w in plan.get("windows") or [] if w["phase"] == "expansion"), key=lambda w: w["start_ms"])[:2]
+    if not ws:
+        return ""
+    utc = " and ".join(f"{_clock(w['start_ms'])[0]}–{_clock(w['end_ms'])[0]}" for w in ws)
+    pkt = " and ".join(f"{_clock(w['start_ms'])[1]}–{_clock(w['end_ms'])[1]}" for w in ws)
+    return f"Busiest hours today: {utc} UTC ({pkt} PKT)."
+
+
+def trade_line(plan: dict) -> str:
+    return directive_line(plan).replace(" · TP ", " · targets ")
+
+
+def _span(n: dict) -> str:
+    """'16:00–00:00 UTC, 21:00–05:00 PKT'"""
+    (us, ks), (ue, ke) = _clock(n["start_ms"]), _clock(n["end_ms"])
+    return f"{us}–{ue} UTC, {ks}–{ke} PKT"
+
+
+def _nodes(plan: dict, now_ms: int | None) -> tuple[dict | None, dict | None]:
+    from core.qf_tree import current_and_next, timeline_tree
+    return current_and_next(timeline_tree(plan, plan["created_ms"] if now_ms is None else now_ms))
+
+
+def now_line(plan: dict, now_ms: int) -> str:
+    """'Now: chop, $74,887–$77,170.' (or 'Next: …' before the first window), '' on a locked plan."""
+    active, nxt = _nodes(plan, now_ms)
+    n, word = (active, "Now") if active else (nxt, "Next")
+    return f"{word}: {n['phase']}, {_money(n['low'])}–{_money(n['high'])}." if n else ""
+
+
+def now_next_line(plan: dict, now_ms: int | None = None) -> str:
+    """'Now (00:00–05:00 UTC, 05:00–10:00 PKT): normal, $79,370–$81,579. Next (…): chop, $…–$….'"""
+    active, nxt = _nodes(plan, now_ms)
+    bits = [f"{word} ({_span(n)}): {n['phase']}, {_money(n['low'])}–{_money(n['high'])}."
+            for word, n in (("Now", active), ("Next", nxt)) if n]
+    return " ".join(bits)
+
+
+def _window_clause(plan: dict, t_ms: int) -> str:
+    """' in the chop window (16:00–00:00 UTC, 21:00–05:00 PKT)' or ''."""
+    active, nxt = _nodes(plan, t_ms)
+    n = active or nxt
+    return f" in the {n['phase']} window ({_span(n)})" if n else ""
 
 
 def regime_line(plan: dict, trap: str | None = None, live: dict | None = None) -> str:
@@ -290,79 +399,107 @@ def directive_line(plan: dict) -> str:
             f"stop {_money(d['stop_loss_invalidation'])} · TP {_money(d['tp1'])} / {_money(d['tp2'])} / {_money(d['tp3'])}")
 
 
-def plan_headline(plan: dict, live: dict | None = None, title: str = "QUANT FORECAST",
+def plan_headline(plan: dict, live: dict | None = None, title: str = "DAY PLAN",
                   trap: str | None = None, now_ms: int | None = None) -> str:
-    """The day's plan as the bot sends it: the layman wire plan - regime, the one-sentence directive, the
-    coordinates, the windows, the hard invalidation, the trade figures and the compact timeline (message 6).
-    The record stays on the dashboard's drawer."""
+    """The day's plan as the bot sends it (wording batch 2): the header with the date and the price; the lean,
+    the confidence and the record; a trap holding the day to a range, when one is; the event's note on an
+    event day; the one-sentence directive; the expected range, until when, and where the plan is off; the
+    window now and next; the busiest hours; the trade figures on a directional day. The record's detail,
+    the chop list and the stat line stay on the dashboard's drawer."""
     d = datetime.fromtimestamp(plan["day_ms"] / 1000, timezone.utc)
-    lines = [f"📊 {title} · {d:%a %d %b} · BTC {_money(plan['origin'])}", f"Regime: {regime_line(plan, trap, live)}"]
+    lines = [f"📊 {title} · {d:%a %d %b} · BTC {_money(plan['origin'])}", lean_line(plan, live)]
     if plan["regime"] == "locked":
         lines.append(plan["scenario_a"] + f" Until {at_label(plan['end_ms'])}.")
         if plan.get("day_range"):
-            lines.append(f"Today's range so far: {_money(plan['day_range'][0])} – {_money(plan['day_range'][1])}")
+            lines.append(f"Today's range so far: {_money(plan['day_range'][0])}–{_money(plan['day_range'][1])}.")
         return "\n".join(lines)
+    if trap_sentence(plan, trap):
+        lines.append(trap_sentence(plan, trap))
     if plan.get("event_regime"):
-        lines.append(f"Event: {plan['event_regime'].get('note')}.")
-    lines.append(f"Directive: {qf.wire_line(plan)}")
-    lines.append(coordinates_line(plan))
-    if windows_line(plan):
-        lines.append(windows_line(plan))
-    if directive_line(plan):
-        lines.append(directive_line(plan))
-    if timeline_line(plan, now_ms):
-        lines.append(timeline_line(plan, now_ms))
-    lines.append(f"Whole-day invalidation: {_inv_text(plan)}")
+        lines.append(f"{plan['event_regime'].get('note')}.")
+    lines += [directive_sentence(plan), range_line(plan)]
+    for extra in (now_next_line(plan, now_ms), busiest_line(plan), trade_line(plan)):
+        if extra:
+            lines.append(extra)
     return "\n".join(lines)
 
 
-def caution_headline(plan: dict, c: dict) -> str:
-    """Tier 1, in Hammad's words (message 6), tagged with the active window and carrying the timeline."""
-    what, why = (("Volatility spike", f"a 15-minute candle moved {c['sigmas']}x its usual size "
-                                      f"({_money(c['from'])} → {_money(c['to'])})") if c["why"] == "move" else
-                 ("CVD divergence", f"the last hour's taker flow turned against the plan ({c['delta_btc']:+,.0f} BTC)"))
-    return (f"⚠️ CAUTION [{window_state(plan, c['t_ms'])}]{_event_tag(plan)}: Order flow metrics are moving differently than baseline "
-            f"projection. {what} detected: {why}. Whole-Day Invalidation at {_inv_text(plan)} has NOT been breached. "
-            f"Plan remains active.\n{timeline_line(plan, c['t_ms'])}")
+def caution_headline(plan: dict, c: dict, price: float | None = None) -> str:
+    """Tier 1: what moved, in which window, the plan still stands and where it is off, what to do. The
+    flow variant carries the spot price in its header (its shock has no 'to'; 5 Nov sent None)."""
+    stands = f"The day plan still stands: it is only off {_inv_text(plan)}. Do nothing new; "
+    if c["why"] == "move":
+        return "\n".join(ln for ln in [
+            f"⚠️ SHARP MOVE · BTC {_money(c['to'])}",
+            f"A 15-minute candle moved {c['sigmas']}x its usual size ({_money(c['from'])} → {_money(c['to'])})"
+            f"{_window_clause(plan, c['t_ms'])}{_event_clause(plan)}.",
+            stands + "watch the next 15-minute close.",
+            now_line(plan, c["t_ms"])] if ln)
+    sellers, wc = float(c.get("delta_btc") or 0) < 0, _window_clause(plan, c["t_ms"])
+    return "\n".join(ln for ln in [
+        f"⚠️ {'SELLING' if sellers else 'BUYING'} PRESSURE AGAINST THE PLAN · BTC {_money(price)}",
+        f"In the last hour {'sellers' if sellers else 'buyers'} did {abs(float(c.get('delta_btc') or 0)):,.0f} BTC more than "
+        f"the other side, against the plan's direction{(',' + wc) if wc else ''}{_event_clause(plan)}.",
+        stands + "if it continues, expect a PLAN HELD or DAY PLAN OFF message.",
+        now_line(plan, c["t_ms"])] if ln)
 
 
 def held_headline(plan: dict, h: dict) -> str:
+    """Tier 2B: the move did not break the plan; price stayed on the right side of the line."""
     inv = plan.get("invalidation") or {}
-    where = (f"above whole-day invalidation boundary {_money(inv['below'])}" if list(inv) == ["below"] else
-             f"below whole-day invalidation boundary {_money(inv['above'])}" if list(inv) == ["above"] else
-             f"inside whole-day invalidation boundary {_inv_text(plan)}")
-    return (f"🟢 MODEL HELD{_event_tag(plan)}: Intraday shock to {_money(h['to'])} absorbed successfully {where}. "
-            f"Baseline 1-day forecast path remains active.\n{timeline_line(plan, h['t_ms'])}")
+    where = (f"above {_money(inv['below'])}" if list(inv) == ["below"] else
+             f"below {_money(inv['above'])}" if list(inv) == ["above"] else
+             f"inside {_money(inv.get('below'))}–{_money(inv.get('above'))}")
+    t = _event_title(plan)
+    stands = f"The day plan stands; it is an event day ({t})." if t else "The day plan stands."
+    return "\n".join(ln for ln in [
+        f"🟢 PLAN HELD · BTC {_money(h['to'])}",
+        f"The sharp move to {_money(h['to'])} did not break the plan: price stayed {where}. {stands}",
+        now_line(plan, h["t_ms"])] if ln)
+
+
+def _closed_words(hit: dict) -> str:
+    basis = str(hit.get("basis") or "")
+    if basis == "4-hour close":
+        return "A 4-hour candle closed"
+    if basis.endswith("hourly closes in a row"):
+        return "A second 1-hour candle in a row closed"
+    return f"A {basis} landed" if basis else "Price closed"
 
 
 def invalidated_headline(plan: dict, hit: dict, new: dict | None) -> str:
-    """Tier 3, in Hammad's words (message 6), then Scenario B - the plan that replaces it."""
-    where = (f"{hit['basis']}, {hit['side']} the {_money(hit['level'])} line, {at_label(hit['close_ms'])}")
-    head = (f"🔴 WHOLE-DAY PLAN INVALIDATED{_event_tag(plan)}: Macro structure breached at {_money(hit['close'])} ({where}). "
-            "Original roadmap voided.")
+    """Tier 3: the close that ended the morning plan, then Plan B (the replacement), or the lockout."""
+    close = (f"{_closed_words(hit)} at {_money(hit['close'])}, {hit['side']} the {_money(hit['level'])} line at "
+             f"{at_label(hit['close_ms'])}")
+    event = _event_clause(plan)
     if new is not None and new["regime"] == "locked":
-        return (head + f" Invalidated {_TIMES.get(qf.LOCK_AFTER_INVALIDATIONS, qf.LOCK_AFTER_INVALIDATIONS)} today: "
-                "LOCKOUT MODE: HIGH CHOP / STAND ASIDE for the remainder of the 24-hour cycle.\n"
-                + plan_headline(new, title="LOCKOUT MODE"))
-    head += " Scenario B secondary chart activated with new targets."
+        nth = _TIMES.get(qf.LOCK_AFTER_INVALIDATIONS, f"{qf.LOCK_AFTER_INVALIDATIONS}th")
+        lines = [f"🔴 DAY PLAN OFF AGAIN · BTC {_money(hit['close'])}",
+                 f"{close}{(',' + event) if event else ''}. That is the {nth} time today, so there is no plan for the "
+                 f"rest of the day: stand aside until {at_label(new['end_ms'])}."]
+        if new.get("day_range"):
+            lines.append(f"Today's range so far: {_money(new['day_range'][0])}–{_money(new['day_range'][1])}.")
+        return "\n".join(lines)
+    head = f"🔴 DAY PLAN OFF · BTC {_money(hit['close'])}\n{close}{(',' + event) if event else ''}. The morning plan is over; "
     if new is None:
-        return head + "\nThe new targets follow on the next pass."
-    return head + "\n" + plan_headline(new, title=f"SCENARIO B · FORECAST #{new['version']}", now_ms=new["created_ms"])
+        return head + "the replacement follows on the next pass."
+    return head + "here is the replacement.\n" + plan_headline(new, title="PLAN B", now_ms=new["created_ms"])
 
 
-_TIMES = {2: "twice", 3: "three times"}
+_TIMES = {2: "second", 3: "third"}
 
 
 def _key(plan: dict, *parts) -> str:
     return ":".join(["qf", str(plan["day_ms"]), str(plan["version"]), *map(str, parts)])
 
 
-def audit_events(plan: dict, a: dict, now_ms: int) -> list[Event]:
+def audit_events(plan: dict, a: dict, now_ms: int, price: float | None = None) -> list[Event]:
     """Cautions (one an hour) and holds as alert events; stale ones are dropped, not sent late.
 
     The hour is taken by the caution that is sent, not by a stale one that was not: the ledger's key per
-    hour still keeps a second caution in the same hour from going out. A MODEL HELD goes out only for a
-    shock whose caution went out, else it answers a message nobody got."""
+    hour still keeps a second caution in the same hour from going out. A PLAN HELD goes out only for a
+    shock whose caution went out, else it answers a message nobody got, and only HELD_GAP_MS or more
+    after that caution, else it repeats it (5 Nov: 15 minutes apart, both saying the plan stands)."""
     out, hours_seen, sent_shocks = [], set(), set()
     for c in a["cautions"]:
         bucket = c["t_ms"] // HOUR_MS
@@ -370,10 +507,11 @@ def audit_events(plan: dict, a: dict, now_ms: int) -> list[Event]:
             continue
         hours_seen.add(bucket)
         sent_shocks.add(c["t_ms"])
-        out.append(Event("qf_caution", _key(plan, "caution", bucket), caution_headline(plan, c), c.get("to")))
+        out.append(Event("qf_caution", _key(plan, "caution", bucket), caution_headline(plan, c, price),
+                         c.get("to") if c.get("to") is not None else price))
     for h in a["holds"]:
         if h["shock_ms"] in sent_shocks or _shock_was_sent(a, h, now_ms):
-            if now_ms - h["t_ms"] <= SEND_WITHIN_MS:
+            if now_ms - h["t_ms"] <= SEND_WITHIN_MS and h["t_ms"] - h["shock_ms"] >= HELD_GAP_MS:
                 out.append(Event("qf_held", _key(plan, "held", h["shock_ms"]), held_headline(plan, h), h["to"]))
     return out
 
@@ -500,7 +638,7 @@ def run(store, m, now_ms: int, gamma: dict | None = None, weekly=None, weekly_ga
     if hit is None:
         if qf.magnitude_scale(plan, h1, flow.get("1h"), now_ms):
             store.set_qf_payload(active["id"], plan)      # the target widened once; the chart's badge follows
-        return events + audit_events(plan, a, now_ms)
+        return events + audit_events(plan, a, now_ms, float(price))
     if not store.close_qf_plan(active["id"], "invalidated", json.dumps(hit), now_ms):
         return events                               # another process replaced it first, and sent the alert
     plans = store.qf_plans(day)
