@@ -54,9 +54,9 @@ def test_every_place_a_trap_is_written_carries_the_label():
     cand = type("C", (), {"side": "bull_trap", "timeframe": "15m", "level": 78_400.0, "strength": 2, "evidence": ("a", "b")})()
     assert "15m · short-horizon" in text(panels.trap_watch_html([cand], NOW, NOW))
     e = ma.trap_events([{**row(), "declared_ms": NOW - 60_000}], NOW)
-    assert e[0].headline.startswith("TRAP · Live Recon (1h, short-horizon)\n")
+    assert e[0].headline.startswith("🪤 TRAP CALL · next 4 hours (1h, short-horizon) · BTC $")
     e4 = ma.trap_events([{**row(timeframe="4h"), "declared_ms": NOW - 60_000}], NOW)
-    assert e4[0].headline.startswith("TRAP · Live Recon (4h)\n")
+    assert e4[0].headline.startswith("🪤 TRAP CALL · next 4 hours (4h) · BTC $")
 
 
 def test_a_swing_desk_trade_is_not_warned_off_by_a_short_horizon_trap(tmp_path):

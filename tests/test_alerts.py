@@ -192,7 +192,7 @@ def test_telegram_is_sent_to_the_right_endpoint_with_the_headlines():
     assert "TP1 reached" in seen["body"] and "42" in seen["body"]
 
 
-def test_an_urgent_event_is_marked_in_the_message():
+def test_an_urgent_event_carries_no_siren():
     seen = {}
     d = Dispatcher({"DISCORD_WEBHOOK_URL": "https://example.invalid/hook"},
                    client=httpx.Client(transport=httpx.MockTransport(
@@ -200,8 +200,8 @@ def test_an_urgent_event_is_marked_in_the_message():
     d.send([Event("target", "k1", "TP1 reached"), Event("stop", "k2", "the stop was reached")])
     lines = seen["body"]
     from core.alerts import URGENT_MARK
-    assert URGENT_MARK + "the stop was reached" in lines
-    assert URGENT_MARK + "TP1 reached" not in lines, "only the urgent ones are marked"
+    assert "the stop was reached" in lines and "TP1 reached" in lines
+    assert "🚨" not in lines and URGENT_MARK == "", "wording batch 3: every headline opens with its own emoji"
 
 
 def test_one_channel_failing_does_not_lose_an_event_the_other_took():

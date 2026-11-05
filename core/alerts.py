@@ -94,7 +94,7 @@ class Channel:
 
 
 MAX_CHARS = 1900                # Discord refuses a message over 2,000 characters; Telegram caps at 4,096
-URGENT_MARK = "\U0001F6A8 "   # the siren emoji: a stop, a TRAP call or a control shift
+URGENT_MARK = ""              # wording batch 3 (6 Nov): every headline opens with its own emoji; the siren doubled it
 
 
 class Dispatcher:
@@ -155,7 +155,7 @@ class Dispatcher:
         delivered, problems = [], []
         for batch in _batches(events):
             # a blank line between events: a market alert is three lines, and run together they read as one
-            ok, notes = self._send_text("\n\n".join((URGENT_MARK if e.urgent else "") + e.headline for e in batch))
+            ok, notes = self._send_text("\n\n".join(e.headline for e in batch))
             if ok:
                 delivered += batch
             problems += [n for n in notes if n not in problems]

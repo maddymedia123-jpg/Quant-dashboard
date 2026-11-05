@@ -47,42 +47,59 @@ def test_an_unchanged_state_is_silent():
     assert ma.cascade_event("live", "Live Recon", "A", cascade("A"), NOW) is None
 
 
-def test_a_change_reads_as_desk_then_old_to_new_then_what_it_means():
+def test_a_change_reads_as_what_happened_the_horizon_the_price_then_what_it_means():
+    """Wording batch 3 (6 Nov): emoji, what happened, the desk's horizon in plain words, the price; then
+    the sentence. No desk name, no state letters, no 'old state -> new state'."""
     e = ma.cascade_event("live", "Live Recon", "A", cascade("B"), NOW, price=78_494.0)
     assert e.kind == "cascade" and not e.urgent
     assert e.headline.split("\n") == [
-        "Live Recon (1h) · BTC $78,494",
-        "Strong setup up -> Pause in an uptrend",
-        "Daily trend is still up, but the 1h/15m lost their push. A breather, not a reversal.",
+        "⏸️ UPTREND PAUSING · next 4 hours · BTC $78,494",
+        "The daily trend is still up, but the shorter candles (1h and 15m) lost their push. A breather, not a reversal.",
     ]
     assert e.dedup_key == f"cascade:live:A->B:{NOW}"
 
 
 def test_every_state_has_a_plain_name_and_the_letters_never_show():
-    for prev, new, name in (("B", "A", "Strong setup up"), ("A", "B", "Pause in an uptrend"),
-                            ("B", "C", "Uptrend losing control")):
+    for prev, new, head in (("B", "A", "📈 UP SETUP · next 4 hours"), ("A", "B", "⏸️ UPTREND PAUSING · next 4 hours"),
+                            ("B", "C", "⚠️ UPTREND WEAKENING · next 4 hours")):
         h = ma.cascade_event("live", "Live Recon", prev, cascade(new), NOW).headline
-        assert h.split("\n")[1].endswith(name)
-        assert "cascade" not in h and "-> A" not in h and "-> B" not in h and "vector" not in h and "engine" not in h
-    down = ma.cascade_event("weekly", "Weekly", "B", cascade("A", "bearish"), NOW).headline
-    assert "Pause in a downtrend -> Strong setup down" in down and "Best conditions for downside" in down
+        assert h.split("\n")[0] == head, h
+        for gone in ("cascade", "->", "vector", "engine", "Live Recon", "Strong setup", "losing control", "1h/15m"):
+            assert gone not in h, gone
+    down = ma.cascade_event("weekly", "Weekly", "B", cascade("A", "bearish"), NOW, price=80_180.0).headline
+    assert down.split("\n") == [
+        "📉 DOWN SETUP · this week · BTC $80,180",
+        "The daily trend is down and the shorter candles (1h and 15m) now agree: the best conditions for a move lower this week.",
+        "No trade from this alone: wait for the report's plan or the Pulse.",
+    ]
+    with_level = ma.cascade_event("live", "Live Recon", "B", replace(cascade("A", "bearish"), vwap=80_650.0), NOW, price=80_180.0).headline
+    assert with_level.endswith("wait for the report's plan or the Pulse. The trend's average price is $80,650; a 4-hour candle closing above it ends this.")
 
 
 def test_the_explanation_follows_where_the_desk_came_from():
-    said = {prev: ma.cascade_event("live", "Live Recon", prev, cascade("B"), NOW).headline.split("\n")[2]
+    said = {prev: ma.cascade_event("live", "Live Recon", prev, cascade("B"), NOW).headline.split("\n")[1]
             for prev in ("A", "C", "N")}
     assert "lost their push" in said["A"]
     assert "stopped fighting it" in said["C"]
     assert "picked a direction again" in said["N"]
     c = ma.cascade_event("live", "Live Recon", "B", cascade("C"), NOW).headline
-    assert "have closed 0 times below the daily average price against the daily uptrend" in c
-    assert "Confirmation is the 4h closing below the daily average price; until then this is a warning, not a trade." in c
+    assert c.split("\n")[1:] == [
+        "The shorter candles (1h and 15m) have started to turn against the daily uptrend but have not yet closed below its average price.",
+        "Not a trade yet. It becomes a reversal if a 4-hour candle closes below the daily average price; a REVERSAL CONFIRMED alert will say so.",
+    ]
     assert "vwap" not in c.lower(), "jargon the bot may not say"
     assert "Watch for a reversal" not in c, "fix 5: the level and the confirmation rule, not a vague watch"
-    lvl = ma.cascade_event("live", "Live Recon", "B", replace(cascade("C", "bearish"), vwap=77_512.0, closes_beyond_vwap=2), NOW).headline
-    assert "The 1h/15m have closed 2 times above the daily average price $77,512 against the daily downtrend. Confirmation is the 4h closing above $77,512" in lvl
+    lvl = ma.cascade_event("live", "Live Recon", "B", replace(cascade("C", "bearish"), vwap=77_512.0, closes_beyond_vwap=2), NOW, price=80_317.0).headline
+    assert lvl.split("\n") == [
+        "⚠️ DOWNTREND WEAKENING · next 4 hours · BTC $80,317",
+        "The shorter candles (1h and 15m) have closed above the daily trend's average price $77,512 twice.",
+        "Not a trade yet. It becomes a reversal if a 4-hour candle closes above $77,512; a REVERSAL CONFIRMED alert will say so.",
+    ]
+    three = ma.cascade_event("live", "Live Recon", "B", replace(cascade("C", "bearish"), vwap=77_512.0, closes_beyond_vwap=3), NOW).headline
+    assert "$77,512 three times." in three
+    assert "$77,512 5 times." in ma.cascade_event("live", "Live Recon", "B", replace(cascade("C", "bearish"), vwap=77_512.0, closes_beyond_vwap=5), NOW).headline
     flat = ma.cascade_event("live", "Live Recon", "B", cascade("N", "neutral"), NOW).headline
-    assert "No bigger trend" in flat and "not breakouts" in flat
+    assert flat.startswith("↔️ NO TREND · next 4 hours\n") and "not breakouts" in flat
 
 
 def test_a_control_shift_is_urgent():
@@ -105,19 +122,19 @@ def test_a_trap_declared_today_is_announced_and_an_old_one_is_not():
     events = ma.trap_events([trap(1), trap(2, declared=NOW - 2 * 86_400_000)], NOW)
     assert [e.dedup_key for e in events] == ["trap:1:declared"]
     assert events[0].urgent
-    assert events[0].headline.split("\n") == ["TRAP · Intraday (4h)",
+    assert events[0].headline.split("\n") == ["🪤 TRAP CALL · today (4h) · BTC $80,000",
                                               "The pop above $80,000 should fail and drop.",
-                                              "Target $78,000 · Wrong if price goes past $81,000."]
+                                              "Target $78,000 · wrong if price goes past $81,000."]
 
 
 def test_a_settled_trap_is_announced_with_its_outcome():
     e = ma.trap_events([trap(3, declared=NOW - 3 * 86_400_000, status="invalidated", resolved=NOW - H,
                              side="BEAR_TRAP")], NOW)
     assert [x.dedup_key for x in e] == ["trap:3:invalidated"]
-    assert e[0].headline == ("TRAP failed · Intraday (4h)\nThe dip below $80,000 was a real move, not a trap: "
-                             "price went past $81,000 (now $78,000).")
+    assert e[0].headline == ("❌ TRAP FAILED · today (4h) · BTC $78,000\nThe dip below $80,000 was real: "
+                             "price went past $81,000. The call was wrong.")
     worked = ma.trap_events([trap(4, declared=NOW - 3 * 86_400_000, status="played_out", resolved=NOW - H)], NOW)
-    assert worked[0].headline == "TRAP worked · Intraday (4h)\nThe pop above $80,000 failed as called: price reached $78,000."
+    assert worked[0].headline == "✅ TRAP WORKED · today (4h) · BTC $78,000\nThe pop above $80,000 failed as called: price reached the target $78,000."
 
 
 # ---------- the ledger ----------
@@ -165,7 +182,8 @@ def test_alerts_reach_discord_with_urgent_ones_marked():
     assert len(delivered) == 2 and not problems
     blocks = sent[0]["content"].split("\n\n")
     assert len(blocks) == 2, "a blank line between alerts, so two three-line alerts do not run together"
-    assert blocks[0].startswith(URGENT_MARK + "Weekly (1d)") and blocks[1].startswith("Live Recon (1h)")
+    assert blocks[0].startswith("⚠️ UPTREND WEAKENING · this week\n") and blocks[1].startswith("⏸️ UPTREND PAUSING · next 4 hours\n")
+    assert "🚨" not in sent[0]["content"], "wording batch 3: the headline's own emoji is the mark; no siren in front of it"
 
 
 def test_a_refused_send_is_not_marked_delivered():
@@ -239,7 +257,7 @@ def test_a_strong_setup_waits_until_it_has_held(store):
     t = store.track_cascade("intraday", "A", NOW + 17 * MIN)
     e = ma.important_cascade_event("intraday", "Intraday", t, cascade("A"), NOW + 17 * MIN, 82_909.0)
     assert e is not None and e.dedup_key == f"cascade:intraday:B->A:{NOW + MIN}"
-    assert "Pause in an uptrend -> Strong setup up" in e.headline
+    assert e.headline.startswith("📈 UP SETUP · today · BTC $82,909\n")
 
 
 def test_the_0213_flicker_sends_nothing(store):
@@ -261,7 +279,7 @@ def test_pauses_and_no_trend_stay_quiet_and_a_control_shift_does_not(store):
     t = store.track_cascade("weekly", "C", NOW + MIN)
     assert ma.important_cascade_event("weekly", "Weekly", t, cascade("C"), NOW + 30 * MIN) is None, "weekly holds an hour"
     e = ma.important_cascade_event("weekly", "Weekly", t, cascade("C"), NOW + 62 * MIN)
-    assert e is not None and e.urgent and "Uptrend losing control" in e.headline
+    assert e is not None and e.urgent and e.headline.startswith("⚠️ UPTREND WEAKENING · this week\n")
 
 
 def test_a_return_to_the_same_state_within_hours_is_the_same_episode(store):
@@ -316,16 +334,16 @@ def test_the_fourth_of_november_reversal_is_confirmed_at_0800_six_hours_before_t
     t = store.track_cascade("live", "C", since)
     frames = {"4h": four_hour(FOUR_H[:2]), "1h": pd.DataFrame()}
     warn = ma.important_cascade_event("live", "Live Recon", t, c, since + 5 * MIN, 78_271.0, recent=[])
-    assert warn is not None and "until then this is a warning, not a trade" in warn.headline
+    assert warn is not None and "Not a trade yet." in warn.headline
     # 07:59: the 4h candle is still forming, so nothing confirms yet
     assert ma.reversal_event("live", "Live Recon", t, c, frames, DAY + 7 * H + 59 * MIN, 78_100.0, recent=[]) is None
     r = ma.reversal_event("live", "Live Recon", t, c, frames, DAY + 8 * H + 2 * MIN, 78_140.0, recent=[])
     assert r is not None and r.kind == "reversal" and r.urgent
     assert r.dedup_key == f"cascade:live:C->confirmed:{DAY + 4 * H}"
     assert r.headline.split("\n") == [
-        "Live Recon (1h) · BTC $78,140",
-        "REVERSAL CONFIRMED: the 4h closed above the daily average price $77,512 at $78,140 (08:00 UTC (13:00 PKT)) against the daily downtrend.",
-        "Shorts are off: the daily downtrend has lost control. Expect upside expansion. Wrong only on a 4h close back below $77,512.",
+        "🔄 REVERSAL CONFIRMED · next 4 hours · BTC $78,140",
+        "A 4-hour candle closed at $78,140 (08:00 UTC, 13:00 PKT), above the daily trend's average price $77,512: the daily downtrend has lost control.",
+        "If you are short from the trend, it is over. Expect a move up. Wrong only if a 4-hour candle closes back below $77,512.",
     ]
     sent = [{"ts_ms": DAY + 8 * H + 2 * MIN, "dedup_key": r.dedup_key}]
     # the next 4h close (12:00, 78,477) does not confirm it again, and the C warning is silent for 8 hours after
@@ -366,6 +384,7 @@ def test_a_reversal_needs_a_completed_anchor_close_against_the_trend_and_a_vwap(
     nxt = {"1d": pd.DataFrame({"timestamp": [DAY], "open": [77_454.0], "high": [81_200.0], "low": [75_700.0],
                                "close": [79_400.0], "volume": [100.0]})}
     r = ma.reversal_event("intraday", "Intraday", tu, up, nxt, DAY + 24 * H + MIN, 79_400.0, recent=[])
-    assert r is not None and "the daily closed below the daily average price $80,000 at $79,400" in r.headline and "Longs are off" in r.headline
-    assert "vwap" not in r.headline.lower()
-    assert "Wrong only on a daily close back above $80,000." in r.headline and r.dedup_key == f"cascade:intraday:C->confirmed:{DAY}"
+    assert r is not None and "A daily candle closed at $79,400 (00:00 UTC, 05:00 PKT), below the daily trend's average price $80,000" in r.headline
+    assert "If you are long from the trend, it is over. Expect a move down." in r.headline and "vwap" not in r.headline.lower()
+    assert "Wrong only if a daily candle closes back above $80,000." in r.headline and r.dedup_key == f"cascade:intraday:C->confirmed:{DAY}"
+    assert r.headline.startswith("🔄 REVERSAL CONFIRMED · today · BTC $79,400\n")
