@@ -133,18 +133,33 @@ def call_due(store, key: str, direction: str, prev_direction: str | None, now_ms
     return last is None or now_ms - int(last["ts_ms"]) >= horizon_ms
 
 
+SIGNAL_HEARTBEAT_MS = 60 * 60_000      # a held score is re-recorded once an hour, so the series never looks dead
+
+
+def _record_signal(store, key: str, cur: AnchorContext, now_ms: int, fired: bool) -> None:
+    """One signals row per CHANGE, not per pass. Turso meters every page an embedded replica pulls back
+    (3 GB a month on the free plan): four desks writing a row every minute were 5,800 rows a day and most
+    of the pages the worker synced back (9 Nov). A row is written when the squeeze score changes, when the
+    anchor re-fires, or when the last row is an hour old."""
+    last = store.last_signal(key)
+    if (last is None or fired or last["squeeze_score"] != cur.squeeze_score
+            or now_ms - int(last["ts_ms"]) >= SIGNAL_HEARTBEAT_MS):
+        store.add_signal(now_ms, key, cur.squeeze_score, cur.price)
+
+
 def anchor_step(store, key: str, a: CategoryAnalysis, m: MarketSnapshot, classification: str | None, now_ms: int) -> AnchoredVerdict:
     cur = build_context(a, m, classification, now_ms)
     horizon = horizon_ms_for(key)
-    store.add_signal(now_ms, key, cur.squeeze_score, cur.price)
     prev_row = store.get_anchor(key)
     if prev_row is None:
+        store.add_signal(now_ms, key, cur.squeeze_score, cur.price)
         store.set_anchor(key, asdict(cur), now_ms)
         store.log_anchor_change(now_ms, key, None, cur.direction, cur.price, ["initial"])
         store.add_call(now_ms, key, cur.direction, cur.confidence, cur.price, cur.sigma_pct, horizon)
         return AnchoredVerdict(key, cur, cur, now_ms, ["initial"], True)
     prev = AnchorContext(**prev_row["payload"])
     fired = evaluate_triggers(prev, cur, horizon)
+    _record_signal(store, key, cur, now_ms, bool(fired))
     if fired:
         store.set_anchor(key, asdict(cur), now_ms)
         store.log_anchor_change(now_ms, key, prev.direction, cur.direction, cur.price, fired)

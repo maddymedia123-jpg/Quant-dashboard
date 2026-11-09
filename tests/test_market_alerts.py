@@ -249,6 +249,8 @@ def test_track_keeps_when_a_state_began_and_what_it_replaced(store):
     assert store.track_cascade("live", "A", NOW + MIN)["since_ms"] == NOW + MIN
     held = store.track_cascade("live", "A", NOW + 9 * MIN)
     assert held == {"state": "A", "since_ms": NOW + MIN, "prior_state": "B", "first": False}, "a refresh keeps the start"
+    # an unchanged state is not rewritten: the row still carries the time it last changed (Turso sync budget, 9 Nov)
+    assert store._conn.execute("SELECT ts_ms FROM cascade_states WHERE category='live'").fetchone()[0] == NOW + MIN
 
 
 def test_a_strong_setup_waits_until_it_has_held(store):

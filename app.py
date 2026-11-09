@@ -130,7 +130,7 @@ def _live_store():
         _drop_store(s)
         s = _store(STORE_VERSION)
     try:
-        s.sync()                               # what the worker wrote since the last page load
+        s.sync(min_gap_s=30)                   # what the worker wrote; at most one pull per 30 s (Turso sync budget)
     except Exception as e:  # noqa: BLE001 - a missed sync shows slightly older rows, never a blank page
         st.sidebar.caption(f"Store sync skipped this refresh: {e}")
     return s

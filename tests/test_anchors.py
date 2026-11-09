@@ -77,6 +77,26 @@ def test_anchor_step_initial_then_hold_then_reanchor():
     assert len(s.calls()) == (1 if same_dir else 2), "a re-anchor that keeps the direction is not a new call"
 
 
+def test_a_held_pass_writes_no_signal_row_only_a_change_a_refire_or_an_hour_does():
+    """Turso meters every replica page pulled back (3 GB a month free): four desks writing a signals row every
+    minute were most of that budget (9 Nov)."""
+    from core.anchors import SIGNAL_HEARTBEAT_MS
+    m = fixture_market()
+    a = analyze_category(CATEGORIES["live"], m.spot.frames, m.futures)
+    s = Store(":memory:")
+
+    def rows():
+        return s._conn.execute("SELECT COUNT(*) FROM signals").fetchone()[0]
+    anchor_step(s, "live", a, m, None, now_ms=1_000)
+    anchor_step(s, "live", a, m, None, now_ms=61_000)
+    anchor_step(s, "live", a, m, None, now_ms=121_000)
+    assert rows() == 1, "a held score is not re-recorded every minute"
+    anchor_step(s, "live", a, m, None, now_ms=1_000 + SIGNAL_HEARTBEAT_MS)
+    assert rows() == 2 and s.last_signal("live")["ts_ms"] == 1_000 + SIGNAL_HEARTBEAT_MS, "once an hour the series gets a heartbeat"
+    anchor_step(s, "live", a, m, None, now_ms=2_000 + SIGNAL_HEARTBEAT_MS)
+    assert rows() == 2
+
+
 def test_funding_near_zero_has_no_sign_and_a_held_direction_is_scored_once_per_horizon():
     """29 Oct: funding at +0.002% wobbled through zero; nine funding_flip re-anchors in 33 minutes each
     added a scored call for the same bullish view. The dead band nulls the sign, and a held direction

@@ -10,8 +10,9 @@ import logging
 import os
 import pathlib
 import sqlite3
-from typing import ClassVar
 import threading
+import time
+from typing import ClassVar
 
 # Live Recon anchors were pinned before every category had a war room. They carry over as "live",
 # and re-running this on every open is harmless: both statements skip rows already copied.
@@ -248,6 +249,7 @@ class Store:
             self.turso_note = "TURSO_* is set but the libsql package is not installed"
             turso = None
         self.backend = "sqlite"
+        self._last_sync: float | None = None
         if turso:
             # the replica lives beside the old file, under its own name: the two formats never mix
             replica = str(pathlib.Path(self.path).with_suffix(".turso.db"))
@@ -824,6 +826,10 @@ class Store:
                 since, prior, first = now_ms, row["state"], False
             else:
                 since, prior, first = (row["since_ms"] or now_ms), row["prior_state"], False
+                if row["since_ms"]:
+                    # unchanged: nothing to write. Rewriting ts_ms for four desks every pass was a quarter
+                    # of the replica pages Turso synced back each minute (sync budget, 9 Nov).
+                    return {"state": state, "since_ms": int(since), "prior_state": prior, "first": first}
             self._conn.execute(
                 "INSERT INTO cascade_states (category, state, ts_ms, since_ms, prior_state) VALUES (?,?,?,?,?) "
                 "ON CONFLICT(category) DO UPDATE SET state=excluded.state, ts_ms=excluded.ts_ms, "
@@ -927,11 +933,20 @@ class Store:
                                % ",".join("?" * len(ids)), tuple(ids))
             self._conn.commit()
 
-    def sync(self) -> None:
-        """Pull what the other process wrote (the worker, or the dashboard). A no-op on a local file."""
-        if self.backend == "turso":
-            with self._lock:
-                self._conn.sync()
+    def sync(self, min_gap_s: float = 0.0) -> None:
+        """Pull what the other process wrote (the worker, or the dashboard). A no-op on a local file.
+
+        `min_gap_s` skips the pull when the last one is more recent than that. Turso meters every page an
+        embedded replica pulls (3 GB a month on the free plan, 9 Nov); a dashboard that re-runs on every
+        click would pull the same pages several times a minute. The worker passes no gap."""
+        if self.backend != "turso":
+            return
+        with self._lock:
+            now = time.monotonic()
+            if min_gap_s and self._last_sync is not None and now - self._last_sync < min_gap_s:
+                return
+            self._conn.sync()
+            self._last_sync = now
 
     def release_market_alerts(self, ids: list[int]) -> None:
         """Hand back what a channel refused, so the next pass tries it again."""

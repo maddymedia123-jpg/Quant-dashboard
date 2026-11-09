@@ -1,4 +1,23 @@
+from types import SimpleNamespace as NS
+
 from core.store import Store
+
+
+def test_a_replica_sync_can_be_throttled_but_never_on_the_worker():
+    """Turso meters every page an embedded replica pulls (3 GB a month free, 9 Nov): a dashboard that re-runs on
+    every click must not pull the same pages several times a minute; the worker's once-a-minute pull is unthrottled."""
+    s = Store(":memory:")
+    calls, real = [], s._conn
+    s.backend, s._conn = "turso", NS(sync=lambda: calls.append(1))
+    s.sync(min_gap_s=30)
+    s.sync(min_gap_s=30)
+    assert calls == [1], "a second pull inside the gap is skipped"
+    s.sync()
+    assert calls == [1, 1], "no gap given: always pulls"
+    s.backend, s._conn = "sqlite", real
+    s.sync(min_gap_s=30)
+    assert calls == [1, 1], "a local file never syncs"
+    s.close()
 
 
 def test_anchor_round_trip_and_log(tmp_path):
