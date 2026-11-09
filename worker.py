@@ -32,6 +32,7 @@ from core.indicators.category import analyze_category
 from core.store import Store
 
 PASS_EVERY_S = 60
+BOOK_REPORT_GAP_MS = 5 * 60_000        # the scoop/sweep report is rewritten every five minutes, not every pass (Turso sync budget, 9 Nov)
 SECRET_KEYS = ("DISCORD_WEBHOOK_URL", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID")
 log = logging.getLogger("worker")
 _stop = False
@@ -90,6 +91,9 @@ def book_report(store: Store, now_ms: int, r: pipeline.PassResult) -> None:
         r.problems.append(f"order book report failed: {type(e).__name__}: {e}")
         return
     if rep.get("available"):
+        last = store.book_report()
+        if last and now_ms - int(last["ts_ms"]) < BOOK_REPORT_GAP_MS:
+            return                      # the stored report stands: a rewrite every pass was a page or two of sync a minute
         store.put_book_report(now_ms, rep)
         log.info("order book: report written (%d min of book, %d sweeps, %d scoops, %.1f/%.1f BTC within 25 bps)",
                  rep.get("minutes_in_window", 0), len(rep.get("sweeps") or []), len(rep.get("scoops") or []),

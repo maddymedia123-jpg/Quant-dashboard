@@ -97,6 +97,32 @@ def test_a_held_pass_writes_no_signal_row_only_a_change_a_refire_or_an_hour_does
     assert rows() == 2
 
 
+def test_a_signal_row_needs_a_real_move_a_refire_or_an_hour():
+    """After the first fix the score still flickered 38 / 39 every minute on every desk (9 Nov, 17:30 UTC), so
+    every pass still wrote a row: a move smaller than the dead band is not a change."""
+    from types import SimpleNamespace as NS
+    from core.anchors import SIGNAL_DEAD_BAND, SIGNAL_HEARTBEAT_MS, _record_signal
+    rows = []
+    store = NS(last_signal=lambda key: rows[-1] if rows else None,
+               add_signal=lambda ts, key, score, price: rows.append({"ts_ms": ts, "category": key, "squeeze_score": score, "price": price}))
+
+    def cur(score):
+        return NS(squeeze_score=score, price=1.0)
+    _record_signal(store, "live", cur(38), 0, False)
+    assert len(rows) == 1
+    _record_signal(store, "live", cur(39), 60_000, False)
+    _record_signal(store, "live", cur(38), 120_000, False)
+    assert len(rows) == 1, "38 to 39 and back every minute is flicker, not a change"
+    _record_signal(store, "live", cur(38 + SIGNAL_DEAD_BAND), 180_000, False)
+    assert len(rows) == 2 and rows[-1]["squeeze_score"] == 38 + SIGNAL_DEAD_BAND
+    _record_signal(store, "live", cur(38 + SIGNAL_DEAD_BAND), 240_000, True)
+    assert len(rows) == 3, "a re-anchor always records"
+    _record_signal(store, "live", cur(38 + SIGNAL_DEAD_BAND), 240_000 + SIGNAL_HEARTBEAT_MS, False)
+    assert len(rows) == 4, "and so does the hourly heartbeat"
+    _record_signal(store, "live", cur(None), 300_000 + SIGNAL_HEARTBEAT_MS, False)
+    assert len(rows) == 5, "a score vanishing (or appearing) is a change"
+
+
 def test_funding_near_zero_has_no_sign_and_a_held_direction_is_scored_once_per_horizon():
     """29 Oct: funding at +0.002% wobbled through zero; nine funding_flip re-anchors in 33 minutes each
     added a scored call for the same bullish view. The dead band nulls the sign, and a held direction

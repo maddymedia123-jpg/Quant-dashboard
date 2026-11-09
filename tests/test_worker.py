@@ -23,6 +23,22 @@ class FakeDispatcher:
         return list(events), []
 
 
+def test_the_book_report_is_rewritten_every_five_minutes_not_every_pass(monkeypatch):
+    """The scoop/sweep report was replaced on every pass: one more page or two of Turso sync a minute (9 Nov)."""
+    from core import book_metrics
+    monkeypatch.setattr(book_metrics, "report", lambda now_ms: {"available": True, "minutes_in_window": 60, "sweeps": [], "scoops": [],
+                                                                "depth": {"bid_025": 1.0, "ask_025": 2.0}, "stamp": now_ms})
+    s, r = Store(":memory:"), pipeline.PassResult()
+    worker.book_report(s, 1_000_000, r)
+    assert s.book_report()["ts_ms"] == 1_000_000
+    worker.book_report(s, 1_000_000 + 60_000, r)
+    assert s.book_report()["ts_ms"] == 1_000_000, "a minute later: the stored report stands"
+    worker.book_report(s, 1_000_000 + worker.BOOK_REPORT_GAP_MS, r)
+    assert s.book_report()["ts_ms"] == 1_000_000 + worker.BOOK_REPORT_GAP_MS
+    assert r.problems == []
+    s.close()
+
+
 @pytest.fixture
 def two_stores(tmp_path):
     """Two Store objects on one file: two processes, each with its own connection and its own lock."""
