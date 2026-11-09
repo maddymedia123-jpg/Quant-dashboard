@@ -134,15 +134,22 @@ def call_due(store, key: str, direction: str, prev_direction: str | None, now_ms
 
 
 SIGNAL_HEARTBEAT_MS = 60 * 60_000      # a held score is re-recorded once an hour, so the series never looks dead
+SIGNAL_DEAD_BAND = 3                   # the score flickered 38 / 39 every minute on every desk (9 Nov): not a change
+
+
+def _moved(last_score, score) -> bool:
+    if last_score is None or score is None:
+        return (last_score is None) != (score is None)
+    return abs(int(score) - int(last_score)) >= SIGNAL_DEAD_BAND
 
 
 def _record_signal(store, key: str, cur: AnchorContext, now_ms: int, fired: bool) -> None:
     """One signals row per CHANGE, not per pass. Turso meters every page an embedded replica pulls back
     (3 GB a month on the free plan): four desks writing a row every minute were 5,800 rows a day and most
-    of the pages the worker synced back (9 Nov). A row is written when the squeeze score changes, when the
-    anchor re-fires, or when the last row is an hour old."""
+    of the pages the worker synced back (9 Nov). A row is written when the squeeze score moves by the dead
+    band or more, when the anchor re-fires, or when the last row is an hour old."""
     last = store.last_signal(key)
-    if (last is None or fired or last["squeeze_score"] != cur.squeeze_score
+    if (last is None or fired or _moved(last["squeeze_score"], cur.squeeze_score)
             or now_ms - int(last["ts_ms"]) >= SIGNAL_HEARTBEAT_MS):
         store.add_signal(now_ms, key, cur.squeeze_score, cur.price)
 
