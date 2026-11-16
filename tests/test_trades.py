@@ -79,6 +79,26 @@ def test_a_stop_with_liquidity_just_beyond_it_would_be_hunted():
     assert v.stop == v.proposed and v.stop < 79_150.0, "the corrected stop goes beyond that liquidity"
 
 
+def test_a_liquidation_cluster_just_beyond_the_stop_is_a_hazard_the_stop_must_clear():
+    """Hyperliquid's on-chain positions: $23M of longs liquidate at 78,700. A stop at 78,900 sits 200 above
+    that: the flush that forces those longs out takes the stop with it. Without the cluster the same stop
+    is sound, and a cluster too small to move price (under MIN_CLUSTER_USD) is not a hazard."""
+    clusters = {"available": True, "venue": "Hyperliquid",
+                "longs": [{"price": 78_700.0, "notional_usd": 23_000_000.0, "wallets": 74}],
+                "shorts": [{"price": 81_300.0, "notional_usd": 15_000_000.0, "wallets": 30}]}
+    assert trades.verify_stop(state(), LONG, ENTRY, 78_900.0, "1h", ATR).verdict == "sound"
+    v = trades.verify_stop(state(liquidation_levels=clusters), LONG, ENTRY, 78_900.0, "1h", ATR)
+    assert v.verdict == "would be hunted"
+    assert "Hyperliquid long liquidations ($23M) at 78,700" in " ".join(v.reasons)
+    assert v.stop < 78_700.0, "the corrected stop goes beyond the cluster"
+    small = {**clusters, "longs": [{"price": 78_700.0, "notional_usd": 1_000_000.0, "wallets": 9}]}
+    assert trades.verify_stop(state(liquidation_levels=small), LONG, ENTRY, 78_900.0, "1h", ATR).verdict == "sound"
+    assert trades.MIN_CLUSTER_USD >= 5_000_000
+    short = trades.verify_stop(state(liquidation_levels=clusters), SHORT, ENTRY, 81_100.0, "1h", ATR)
+    assert short.verdict == "would be hunted" and "Hyperliquid short liquidations ($15M) at 81,300" in " ".join(short.reasons)
+    assert trades.verify_stop(state(liquidation_levels={"available": False}), LONG, ENTRY, 78_900.0, "1h", ATR).verdict == "sound"
+
+
 def test_liquidity_far_beyond_the_stop_is_not_a_stop_hunt():
     """A level well past the stop is simply further away. Treating any level beyond the stop as a hunt
     condemned every sane stop and pushed the correction five ATR from entry.

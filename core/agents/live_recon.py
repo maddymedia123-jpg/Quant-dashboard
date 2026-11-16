@@ -237,6 +237,9 @@ def build_state(m, analyses: dict, now_ms: int | None = None, profile: ReconProf
                                             else [], now).to_state()
     except Exception as e:  # noqa: BLE001 - the war room must not wait on the calendar
         state["event_regime"] = {"active": False, "note": f"{type(e).__name__}: {e}"}
+    # resting liquidation clusters (Hyperliquid, on-chain): the stop's hazards and the positioning magnet
+    ll = getattr(m, "liq_levels", None)
+    state["liquidation_levels"] = ll.to_state() if ll is not None and getattr(ll, "available", False) else {"available": False}
     # his Section 5.3: the named anomaly trap on this desk, so the judges and the Head read it by name
     try:
         from core.indicators import anomaly_trap

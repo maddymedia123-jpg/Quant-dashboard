@@ -277,6 +277,7 @@ def domain_payload(domain: str, m: MarketSnapshot, analyses: dict[str, CategoryA
     elif domain == "leverage":
         take("futures", drop=("oi_history",))
         take("hyperliquid")
+        take("liq_levels")
         take("liquidations", drop=("hourly", "biggest", "venues"))
         data["squeeze_by_category"] = {k: category_brief(a)["squeeze"] for k, a in analyses.items()}
     elif domain == "liquidity":
@@ -318,7 +319,8 @@ def derivatives_payload(m: MarketSnapshot) -> tuple[dict, list[str]]:
                      ("options", {"drop": ("expiries",)}),
                      ("liquidations", {"drop": ("hourly", "biggest", "venues")}),
                      ("stablecoins", {}),
-                     ("hyperliquid", {})):
+                     ("hyperliquid", {}),
+                     ("liq_levels", {})):
         snap = getattr(m, name)
         if snap.available:
             data[name] = _dump(snap, **kw)

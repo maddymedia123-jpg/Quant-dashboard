@@ -18,6 +18,7 @@ from core.data.taker_flow import fetch_taker_flow
 from core.data.coinlobster import fetch_coinlobster
 from core.data.deribit_options import fetch_options
 from core.data.hyperliquid import fetch_hyperliquid
+from core.data.hyperperps import fetch_hyperperps
 from core.data.macro import fetch_macro
 from core.data.metals import fetch_gold
 from core.data.news import fetch_news
@@ -30,7 +31,7 @@ from core.data.types import (
     DominanceSnapshot,
     ExchangeFlowSnapshot,
     FxSnapshot,
-    CalendarSnapshot, COTSnapshot, FuturesSnapshot, TakerFlowSnapshot, HyperliquidSnapshot, LiquidationsSnapshot, MacroSnapshot, MarketSnapshot,
+    CalendarSnapshot, COTSnapshot, FuturesSnapshot, TakerFlowSnapshot, HyperliquidSnapshot, LiquidationLevelsSnapshot, LiquidationsSnapshot, MacroSnapshot, MarketSnapshot,
     MetalsSnapshot,
     NewsSnapshot, OptionsSnapshot, PredictionSnapshot, SentimentSnapshot, SpotSnapshot, StablecoinSnapshot,
     WhalesSnapshot,
@@ -72,12 +73,13 @@ async def fetch_spot_only(client: httpx.AsyncClient | None = None) -> SpotSnapsh
 async def fetch_context(client: httpx.AsyncClient | None = None) -> dict:
     if client is None:
         return await _with_client(fetch_context)
-    (fut, opt, sent, hl, cl, stables, cal, news, metals, preds, macro, cot, flow, exflows,
+    (fut, opt, sent, hl, ll, cl, stables, cal, news, metals, preds, macro, cot, flow, exflows,
      dom, fx) = await asyncio.gather(
         _guard(fetch_futures(client), FuturesSnapshot, "binance,bybit"),
         _guard(fetch_options(client), OptionsSnapshot, "deribit"),
         _guard(fetch_sentiment(client), SentimentSnapshot, "alternative.me"),
         _guard(fetch_hyperliquid(client), HyperliquidSnapshot, "hyperliquid"),
+        _guard(fetch_hyperperps(client), LiquidationLevelsSnapshot, "hyperperps"),
         _guard_cl(fetch_coinlobster(client)),
         _guard(fetch_stablecoins(client), StablecoinSnapshot, "defillama"),
         _guard(fetch_calendar(client), CalendarSnapshot, "forexfactory"),
@@ -102,7 +104,7 @@ async def fetch_context(client: httpx.AsyncClient | None = None) -> dict:
             kf = await _guard(fetch_kraken_futures(client), FuturesSnapshot, "kraken-futures")
             if kf.available:
                 fut = kf
-    return {"futures": fut, "options": opt, "sentiment": sent, "hyperliquid": hl,
+    return {"futures": fut, "options": opt, "sentiment": sent, "hyperliquid": hl, "liq_levels": ll,
             "liquidations": liqs, "whales": whales, "stablecoins": stables, "calendar": cal,
             "news": news, "metals": metals, "predictions": preds, "macro": macro, "cot": cot, "taker_flow": flow,
             "exchange_flows": exflows, "dominance": dom, "fx": fx}

@@ -28,6 +28,6 @@ def test_market_lists_unavailable_sources():
         options=OptionsSnapshot(source="deribit"),
         sentiment=SentimentSnapshot.unavailable("alternative.me", "timeout"),
     )
-    assert m.unavailable() == ["futures", "sentiment", "hyperliquid", "liquidations", "whales",
+    assert m.unavailable() == ["futures", "sentiment", "hyperliquid", "liq_levels", "liquidations", "whales",
                                "stablecoins", "calendar", "news", "metals", "predictions", "macro", "cot", "taker_flow",
                              "exchange_flows", "dominance", "fx"]

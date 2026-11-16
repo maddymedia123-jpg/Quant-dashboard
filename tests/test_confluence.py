@@ -65,6 +65,45 @@ def test_the_freshest_print_still_in_force_is_the_one_that_votes():
     assert f.side == cf.SHORT and "CPI" in f.note and "NFP" not in f.note
 
 
+def test_liquidation_clusters_pull_price_toward_the_bigger_side_within_reach_of_the_zone():
+    """His liquidation magnet, the honest version: resting Hyperliquid positions near the zone are the
+    crowd that gets forced out, and price is drawn to where the forced orders sit. $90M of longs within
+    2% below a $80,800 zone against $10M of shorts above: the floor is likely run first, a bearish read."""
+    zone = (80_750.0, 80_850.0)
+    flat = NS(long_account_pct=None, long_short_ratio=None)
+    liq = {"available": True, "venue": "Hyperliquid",
+           "longs": [{"price": 79_900.0, "notional_usd": 60_000_000.0, "wallets": 200},
+                     {"price": 79_400.0, "notional_usd": 30_000_000.0, "wallets": 90}],
+           "shorts": [{"price": 81_600.0, "notional_usd": 10_000_000.0, "wallets": 40}]}
+    fam = cf.positioning(50, flat, None, liq_levels=liq, zone=zone)
+    assert fam.side == cf.SHORT
+    assert "$90M of Hyperliquid longs liquidate within 2% below the zone" in fam.note and "longs are the crowd" in fam.note
+    mirror = cf.positioning(50, flat, None, zone=zone, liq_levels={**liq, "shorts": [{"price": 81_600.0, "notional_usd": 300_000_000.0}]})
+    assert mirror.side == cf.LONG and "$300M of Hyperliquid shorts" in mirror.note
+    balanced = {**liq, "shorts": [{"price": 81_600.0, "notional_usd": 70_000_000.0, "wallets": 40}]}
+    assert cf.positioning(50, flat, None, liq_levels=balanced, zone=zone).side == cf.NONE, "no side dominates: no pull"
+    far = {"available": True, "venue": "Hyperliquid", "longs": [{"price": 76_000.0, "notional_usd": 200_000_000.0}], "shorts": []}
+    assert cf.positioning(50, flat, None, liq_levels=far, zone=zone).side == cf.NONE, "5% away is out of reach"
+    thin = {"available": True, "venue": "Hyperliquid", "longs": [{"price": 79_900.0, "notional_usd": 8_000_000.0}], "shorts": []}
+    assert cf.positioning(50, flat, None, liq_levels=thin, zone=zone).side == cf.NONE, "too little to move price"
+    assert cf.positioning(50, flat, None, liq_levels={"available": False}, zone=zone).side == cf.NONE
+    assert cf.positioning(50, flat, None, liq_levels=liq, zone=None).side == cf.NONE, "no zone, nothing to measure from"
+
+
+def test_the_gate_hands_the_zone_and_the_clusters_to_the_positioning_family():
+    ev = full_evidence()
+    # neutral mood and crowd, flat candle: no anomaly trap is named, so the family is the magnet alone
+    ev = cf.Evidence(**{**ev.__dict__, "fear_greed": 50, "price_change_24h_pct": 0.0,
+                        "futures": NS(long_account_pct=0.50, long_short_ratio=None),
+                        "derivs": {**(ev.derivs or {}), "funding": {"latest_8h_rate": 0.0001}},
+                        "liq_levels": {"available": True, "venue": "Hyperliquid",
+                                       "longs": [{"price": 80_000.0, "notional_usd": 120_000_000.0}], "shorts": []}})
+    g = cf.read(long_zone(), desk("BULLISH", 0.6, 80_000.0), ev, ON)
+    pos = next(f for f in g.families if f.key == "positioning")
+    assert pos.side == cf.SHORT and "$120M of Hyperliquid longs" in pos.note, pos.note
+    assert pos in g.opposing, "the magnet below the floor is the family that points the other way"
+
+
 def test_every_family_reads_its_own_evidence_and_seven_of_seven_opens_the_trade():
     g = cf.read(long_zone(), desk("BULLISH", 0.6, 80_000.0), full_evidence(), ON)
     assert [f.key for f in g.families] == ["pattern", "options", "flow", "positioning", "structure", "macro", "timing"]

@@ -17,6 +17,7 @@ from core.data.exchange_flows import parse_flows
 from core.data.taker_flow import build as build_taker_flow
 from core.data.deribit_options import parse_book_summary
 from core.data.hyperliquid import parse_meta
+from core.data.hyperperps import parse_heatmap
 from core.data.kraken_spot import parse_ohlc, parse_ticker
 from core.data.dominance import parse_global
 from core.data.fx import build as build_fx, dxy_series, parse_rates
@@ -70,6 +71,7 @@ def fixture_context() -> dict:
         "options": _mark(parse_book_summary(_load("deribit_book_summary.json"))),
         "sentiment": _mark(parse_fng(_load("fng.json"))),
         "hyperliquid": _mark(parse_meta(_load("hyperliquid_meta.json"))),
+        "liq_levels": _mark(parse_heatmap(_load("hyperperps_heatmap_btc.json"))),
         "liquidations": liqs,
         "whales": whales,
         "stablecoins": _mark(parse_stablecoins(_load("defillama_stablecoins.json"))),

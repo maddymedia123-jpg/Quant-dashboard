@@ -581,7 +581,8 @@ def _desk_evidence(category: str, data_stamp: str):
                     liquidity=_desk_state(category, data_stamp).get("liquidity"),
                     prints=tuple(_event_reads(data_stamp)),
                     rates=_rates(m),
-                    futures=m.futures if m.futures.available else None)
+                    futures=m.futures if m.futures.available else None,
+                    liq_levels=m.liq_levels.to_state() if m.liq_levels.available else None)
 
 
 def render_protocols(profile) -> None:

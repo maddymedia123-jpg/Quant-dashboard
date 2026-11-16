@@ -39,6 +39,12 @@ HIGHER = {"live": ("weekly", "monthly"), "intraday": ("weekly", "monthly"), "wee
 DOLLAR_WEEK_PCT = 0.25            # the broad dollar index, one-week change, in percent
 YIELD_WEEK_PTS = 0.10             # the US 2-year yield, one-week change, in percentage points
 PKT_MS = 5 * 3_600_000
+# His liquidation magnet, the honest version: resting clusters within MAGNET_PCT of the zone are the crowd
+# that gets forced out, and price is drawn to the bigger side; a side has to carry MAGNET_MIN_USD and beat
+# the other by MAGNET_RATIO before it is a pull at all.
+MAGNET_PCT = 2.0
+MAGNET_MIN_USD = 20_000_000
+MAGNET_RATIO = 1.5
 # A headline's pull on the tape fades as the market absorbs it (his v28 narrative decay): weight e^(-age / NEWS_DECAY_MS),
 # and below NEWS_FLOOR (about 45 hours) the print is absorbed and casts no vote.
 NEWS_DECAY_MS = 24 * 3_600_000
@@ -69,6 +75,7 @@ class Evidence:
     htf_levels: tuple = ()            # (label, price) from the desks above this one, e.g. ("weekly level", 80_910.0)
     price_change_24h_pct: float | None = None   # the candle side of the anomaly trap
     oi_history: tuple = ()            # (ms, BTC) open interest, for "at a 30-day high"
+    liq_levels: dict | None = None    # core.data.types.LiquidationLevelsSnapshot.to_state(): resting clusters, one venue
 
 
 @dataclass(frozen=True)
@@ -160,7 +167,35 @@ def flow(chart_tf: str, liquidity: dict | None) -> Family:
     return Family("flow", LABEL["flow"], word[0], word[1])
 
 
-def positioning(fear_greed: int | None, futures, derivs: dict | None, trap=None) -> Family:
+def _magnet(liq_levels: dict | None, zone: tuple[float, float] | None) -> tuple[str, str] | None:
+    """The vote from resting liquidation clusters within reach of the zone, or None."""
+    if not liq_levels or not liq_levels.get("available") or not zone:
+        return None
+    mid = (zone[0] + zone[1]) / 2
+    reach = mid * MAGNET_PCT / 100
+
+    def total(rows) -> float:
+        t = 0.0
+        for c in rows or ():
+            try:
+                price, notional = float(c["price"]), float(c.get("notional_usd") or 0)
+            except (KeyError, TypeError, ValueError):
+                continue
+            if abs(price - mid) <= reach:
+                t += notional
+        return t
+    below, above = total(liq_levels.get("longs")), total(liq_levels.get("shorts"))
+    big, small = max(below, above), min(below, above)
+    if big < MAGNET_MIN_USD or (small and big / small < MAGNET_RATIO):
+        return None
+    venue = liq_levels.get("venue") or "Hyperliquid"
+    side, who, where, usd = (SHORT, "longs", "below", below) if below > above else (LONG, "shorts", "above", above)
+    return (side, f"${usd / 1e6:,.0f}M of {venue} {who} liquidate within {MAGNET_PCT:g}% {where} the zone: "
+                  "price is drawn to where the forced orders sit")
+
+
+def positioning(fear_greed: int | None, futures, derivs: dict | None, trap=None,
+                liq_levels: dict | None = None, zone: tuple[float, float] | None = None) -> Family:
     """Contrarian by design: the crowded side is the one that gets forced out. A named anomaly trap (his
     Section 5.3) is this family at its strongest and speaks for it."""
     if trap is not None:
@@ -185,6 +220,9 @@ def positioning(fear_greed: int | None, futures, derivs: dict | None, trap=None)
             votes.append((LONG, "shorts are paying to hold"))
         elif rate >= PREMIUM_CROWDED_LONG:
             votes.append((SHORT, "longs are paying a high premium to hold"))
+    pull = _magnet(liq_levels, zone)
+    if pull is not None:
+        votes.append(pull)
     fam = _vote("positioning", votes, "no crowded side to force out", "crowded both ways")
     if fam.side != NONE:
         who = "shorts" if fam.side == LONG else "longs"
@@ -319,7 +357,7 @@ def judge(side: str, zone: tuple[float, float], atr: float, chart_tf: str, ev: E
     return (pattern(ev.harmonics, zone, atr),
             options(ev.derivs, zone, atr),
             flow(chart_tf, ev.liquidity),
-            positioning(ev.fear_greed, ev.futures, ev.derivs, trap),
+            positioning(ev.fear_greed, ev.futures, ev.derivs, trap, liq_levels=ev.liq_levels, zone=zone),
             structure(chart_tf, zone, atr, ev.breaks, ev.liquidity, weekend=is_weekend(now_ms)),
             macro(ev.rates, ev.prints, now_ms),
             timing(side, now_ms))

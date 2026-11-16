@@ -45,6 +45,9 @@ CLUSTER_ATR = 1.0
 # A stop is hunted when liquidity sits this close beyond it: near enough that the wick which takes the
 # liquidity also takes the stop. Anything further beyond is just a level further away.
 HUNT_ATR = 1.0
+# A resting liquidation cluster smaller than this (notional, one venue) is not enough forced flow to move
+# price, so it is not a hazard; above it, the flush that forces those positions out is where price trades to.
+MIN_CLUSTER_USD = 5_000_000
 TARGET_SIGMAS = (1.0, 2.0, 3.0)
 # The plan's layout. TREND is the usual three targets off the volatility bands. MEAN_REVERSION is the
 # conservative plan a counter-trend trade gets (his v28: against the higher desks' bias): what a return
@@ -154,6 +157,19 @@ def _hazards(state: dict, side: str, entry: float, timeframe: str) -> list[tuple
     structure = ((state.get("smc") or {}).get(timeframe) or {}).get("structure") or {}
     add(structure.get("swing_low" if long else "swing_high"), "the last swing")
     add((structure.get("last_event") or {}).get("level"), "the structural level")
+
+    # resting liquidation clusters (Hyperliquid, on-chain positions; state["liquidation_levels"]): a stop
+    # just beyond one is taken by the flush that forces those positions out
+    levels = state.get("liquidation_levels") or {}
+    if levels.get("available"):
+        venue = levels.get("venue") or "Hyperliquid"
+        for c in levels.get("longs" if long else "shorts") or []:
+            try:
+                notional = float(c.get("notional_usd") or 0)
+            except (TypeError, ValueError):
+                continue
+            if notional >= MIN_CLUSTER_USD:
+                add(c.get("price"), f"{venue} {'long' if long else 'short'} liquidations (${notional / 1e6:,.0f}M)")
 
     # nearest to entry first, so the first hazard is the one price meets soonest
     return sorted(out, key=lambda pair: -pair[0] if long else pair[0])
