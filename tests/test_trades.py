@@ -124,6 +124,22 @@ def test_the_proposed_stop_clears_the_whole_cluster_of_levels():
     assert "cluster" in v.protects_kind
 
 
+def test_an_open_event_regime_widens_the_buffer_behind_structure():
+    """v28 macro-event expansion: inside a major print's window (FOMC, an election) the stop sits
+    EVENT_STOP_BUFFER_ATR behind the structure instead of STOP_BUFFER_ATR, for the print's spread and
+    slippage, and the verdict says which event did it."""
+    assert trades.EVENT_STOP_BUFFER_ATR >= 1.5 > trades.STOP_BUFFER_ATR
+    s = state(event_regime={"active": True, "title": "FOMC Statement", "phase": "ahead"})
+    v = trades.verify_stop(s, LONG, ENTRY, None, "1h", ATR)
+    assert v.stop == pytest.approx(79_050.0 - ATR * trades.EVENT_STOP_BUFFER_ATR)
+    assert "FOMC Statement" in " ".join(v.reasons)
+    quiet = trades.verify_stop(state(event_regime={"active": False}), LONG, ENTRY, None, "1h", ATR)
+    assert quiet.stop == pytest.approx(79_050.0 - ATR * trades.STOP_BUFFER_ATR)
+    assert "Event regime" not in " ".join(quiet.reasons)
+    short = trades.verify_stop(s, SHORT, ENTRY, None, "1h", ATR)
+    assert short.stop == pytest.approx(80_950.0 + ATR * trades.EVENT_STOP_BUFFER_ATR), "the mirror widens too"
+
+
 def test_the_proposed_stop_stays_a_tradeable_distance_from_entry():
     """Sitting beyond every level in range put the stop five ATR out, which leaves no trade worth
     taking. The correction has to be beyond the structure but still a risk a trader would accept."""

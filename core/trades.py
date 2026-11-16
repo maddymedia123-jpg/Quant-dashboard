@@ -34,6 +34,9 @@ LONG, SHORT = "LONG", "SHORT"
 # A stop has to sit beyond the structure that protects it, by enough that the wick which takes the
 # structure does not also take the stop. Half an ATR is the same buffer the trap desk invalidates on.
 STOP_BUFFER_ATR = 0.5
+# Inside a major print's window (FOMC, an election: core.indicators.event_regime) the buffer is this instead,
+# for the spread and slippage of the print (his v28 macro-event expansion).
+EVENT_STOP_BUFFER_ATR = 1.5
 # Closer than this to price and the stop is inside the noise: normal bar range alone would trigger it.
 MIN_STOP_ATR = 0.75
 # Levels within this of one another are one cluster, and a stop belongs beyond the whole cluster rather
@@ -180,7 +183,8 @@ def verify_stop(state: dict, side: str, entry: float, given: float | None, timef
     """Is this stop structurally sound, or will it be hunted on the way to the trade working?"""
     long = side == LONG
     hazards = _hazards(state, side, entry, timeframe)
-    buffer = atr * STOP_BUFFER_ATR
+    regime = state.get("event_regime") or {}
+    buffer = atr * (EVENT_STOP_BUFFER_ATR if regime.get("active") else STOP_BUFFER_ATR)
     anchor, protects_kind = _protective(hazards, long, entry, atr)
     if anchor is not None:
         proposed = anchor - buffer if long else anchor + buffer
@@ -191,6 +195,9 @@ def verify_stop(state: dict, side: str, entry: float, given: float | None, timef
     proposed = round(proposed, 2)
 
     reasons: list[str] = []
+    if regime.get("active"):
+        reasons.append(f"Event regime ({regime.get('title') or 'major print'}): the stop sits {EVENT_STOP_BUFFER_ATR:g} "
+                       f"ranges behind the structure instead of {STOP_BUFFER_ATR:g}, for the print's spread and slippage.")
     if anchor is not None:
         reasons.append(f"{protects_kind} sits at {anchor:,.0f}; a stop belongs "
                        f"{'below' if long else 'above'} it, not inside it")

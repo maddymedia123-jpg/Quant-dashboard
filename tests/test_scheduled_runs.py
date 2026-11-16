@@ -43,7 +43,7 @@ def test_a_high_impact_print_wakes_the_agents_once_after_it_has_settled(monkeypa
     assert calls == [("director", PRINT + 16 * MIN), ("war_room", PRINT + 16 * MIN)]
     assert out["key"] == f"run:print:{PRINT}"
     assert out["headline"] == ("🤖 NEW REPORT · BTC $80,000\n"
-                               "Triggered by the US CPI m/m + Core CPI m/m release at 13:30 UTC (18:30 PKT). "
+                               "Triggered by the US CPI m/m + Core CPI m/m release at 13:30 UTC (18:30 PKT - Wed 04 Nov). "
                                "Report TIR1-x: engineered trap, plan sell. Details follow in the Pulse.")
     rows = s.market_alerts_keyed("run:")
     assert len(rows) == 1 and rows[0]["kind"] == "run" and rows[0]["headline"] == out["headline"]
@@ -65,7 +65,7 @@ def test_a_day_plan_invalidation_wakes_them_and_a_stale_one_does_not(monkeypatch
     assert s.close_qf_plan(pid, "invalidated", "4h close above", DAY + 16 * H)
     out = sr.run(s, m, ANALYSES, DAY + 16 * H + MIN, SETTINGS)
     assert out["key"] == f"run:qf_invalid:{pid}" and len(calls) == 2
-    assert "Triggered by the day plan being invalidated at 16:00 UTC (21:00 PKT)." in out["headline"]
+    assert "Triggered by the day plan being invalidated at 16:00 UTC (21:00 PKT - Wed 04 Nov)." in out["headline"]
     assert "forecast #" not in out["headline"]
     # yesterday's invalidation just after midnight is still fresh; one three hours old is not
     s2 = Store(":memory:")
@@ -95,7 +95,7 @@ def test_runs_are_half_an_hour_apart_six_a_day_and_a_throttled_trigger_is_skippe
         full.add_market_alert(PRINT - (i + 1) * H, "run", f"run:print:{PRINT - (i + 1) * H}", "🤖 Agents ran x.")
     out = sr.run(full, market(ev("NFP", PRINT)), ANALYSES, PRINT + 16 * MIN, SETTINGS)
     assert out["headline"] == ("🤖 NO NEW REPORT · BTC $80,000\n"
-                               "Triggered by the US NFP release at 13:30 UTC (18:30 PKT), but 6 automatic runs already ran today. "
+                               "Triggered by the US NFP release at 13:30 UTC (18:30 PKT - Wed 04 Nov), but 6 automatic runs already ran today. "
                                f"The next automatic run is allowed after {fmt_when(PRINT - 6 * H + 24 * H)}.")
     assert full.market_alerts_keyed("run:")[0]["notified"] == 0, "the cap line goes out: the trader learns why nothing new came"
     assert len(calls) == 4
@@ -103,8 +103,8 @@ def test_runs_are_half_an_hour_apart_six_a_day_and_a_throttled_trigger_is_skippe
     # a skipped row is not a run: it neither counts toward the cap nor holds the gap (both the old "skipped …"
     # shape and the cap line since 6 Nov)
     # (a skipped row six minutes ago would hold the gap if it counted as a run: the trigger must still come back)
-    fresh = ({"key": f"run:print:{PRINT}", "at_ms": PRINT, "reason": "after US CPI m/m (High) at 13:30 UTC (18:30 PKT)",
-              "plain": "the US CPI m/m release at 13:30 UTC (18:30 PKT)"}, None)
+    fresh = ({"key": f"run:print:{PRINT}", "at_ms": PRINT, "reason": "after US CPI m/m (High) at 13:30 UTC (18:30 PKT - Wed 04 Nov)",
+              "plain": "the US CPI m/m release at 13:30 UTC (18:30 PKT - Wed 04 Nov)"}, None)
     for skipped in ("skipped x", out["headline"]):
         assert sr.due([{"ts_ms": PRINT + 10 * MIN, "dedup_key": "run:print:1", "headline": skipped}], [ev("CPI m/m", PRINT)], [], PRINT + 16 * MIN) == fresh
     assert sr.due([{"ts_ms": PRINT + 10 * MIN, "dedup_key": "run:print:1", "headline": "🤖 NEW REPORT x"}], [ev("CPI m/m", PRINT)], [], PRINT + 16 * MIN) == (None, "waiting")
@@ -121,7 +121,7 @@ def test_a_stale_print_a_reboot_fixture_data_or_no_key_runs_nothing(monkeypatch)
     assert sr.run(s, fresh, ANALYSES, PRINT + 16 * MIN, SETTINGS, may_run=False) is None, "fixture data"
     r = NS(problems=[])
     assert sr.run(s, fresh, ANALYSES, PRINT + 16 * MIN, None, r) is None and calls == []
-    assert r.problems == ["scheduled run after US CPI m/m (High) at 13:30 UTC (18:30 PKT) skipped: no model key on this machine"]
+    assert r.problems == ["scheduled run after US CPI m/m (High) at 13:30 UTC (18:30 PKT - Wed 04 Nov) skipped: no model key on this machine"]
     assert s.market_alerts_keyed("run:") == [], "no key: nothing claimed, so a machine with one still runs it"
     assert sr.run(s, fresh, {}, PRINT + 16 * MIN, SETTINGS) is None, "no desks, nothing to judge"
     s.close()
@@ -138,9 +138,9 @@ def test_a_failed_half_is_named_and_the_other_half_still_runs(monkeypatch):
     out = sr.run(s, market(ev("CPI m/m", PRINT)), ANALYSES, PRINT + 16 * MIN, SETTINGS, r)
     assert calls == ["war_room"]
     assert out["headline"] == ("🤖 NO NEW REPORT · BTC $80,000\n"
-                               "Triggered by the US CPI m/m release at 13:30 UTC (18:30 PKT), but the model was unavailable. "
+                               "Triggered by the US CPI m/m release at 13:30 UTC (18:30 PKT - Wed 04 Nov), but the model was unavailable. "
                                "No plan is in force. The next automatic run comes with the next release or plan change, "
-                               "not before 14:16 UTC (19:16 PKT).")
+                               "not before 14:16 UTC (19:16 PKT - Wed 04 Nov).")
     assert r.problems == ["scheduled run: Director failed: RuntimeError: quota"], "the error goes to the pass, not the channel"
     assert s.market_alerts_keyed("run:")[0]["notified"] == 0, "a refused run is announced"
     # with a plan being watched, the line says which one still stands

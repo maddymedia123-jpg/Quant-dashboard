@@ -1,6 +1,9 @@
 """His v22 Section 9: a trade needs three of seven independent confluences at the zone; fewer is a WAIT that
 names what is missing, two against it is a WAIT that names the conflict."""
+import math
 from types import SimpleNamespace as NS
+
+import pytest
 
 from core import confluence as cf
 from core.layman_summary import framework
@@ -33,6 +36,33 @@ def full_evidence():
         rates={"available": True, "DTWEXBGS": {"value": 120.0, "change_1w": -0.6},
                "DGS2": {"value": 3.6, "change_1w": -0.15}},
     )
+
+
+def test_a_news_print_fades_after_a_day_and_casts_no_vote_after_two():
+    """v28 narrative decay: a headline's weight falls as e^(-age / 24h). A fresh print votes in full, a
+    day-old one votes but says it is fading, and past the floor (about two days) it is absorbed: no vote,
+    so a stale print cannot be the third confluence that opens a trade."""
+    rates = {"available": True}
+
+    def prints(age_h):
+        return (NS(title="CPI", time_ms=ON - age_h * H, state="sell_the_news", trapped="longs"),)
+    fresh = cf.macro(rates, prints(3), ON)
+    assert fresh.side == cf.SHORT and "fading" not in fresh.note
+    fading = cf.macro(rates, prints(30), ON)
+    assert fading.side == cf.SHORT and "30 hours old, fading" in fading.note
+    gone = cf.macro(rates, prints(50), ON)
+    assert gone.side == cf.NONE, "two days on, the print is absorbed: no vote"
+    assert cf.news_weight(0) == 1.0
+    assert cf.news_weight(cf.NEWS_DECAY_MS) == pytest.approx(math.e ** -1)
+    assert cf.news_weight(48 * H) < cf.NEWS_FLOOR <= cf.news_weight(36 * H)
+
+
+def test_the_freshest_print_still_in_force_is_the_one_that_votes():
+    """Two trapped prints: the older one is last in the list, the newer one is the one that counts."""
+    old = NS(title="NFP", time_ms=ON - 20 * H, state="spike_faded", trapped="shorts")
+    new = NS(title="CPI", time_ms=ON - 2 * H, state="sell_the_news", trapped="longs")
+    f = cf.macro({"available": True}, (new, old), ON)
+    assert f.side == cf.SHORT and "CPI" in f.note and "NFP" not in f.note
 
 
 def test_every_family_reads_its_own_evidence_and_seven_of_seven_opens_the_trade():

@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
 
 log = logging.getLogger(__name__)
 
@@ -39,8 +38,9 @@ KIND = "run"
 
 
 def _utc(ms: int) -> str:
-    d = datetime.fromtimestamp(ms / 1000, timezone.utc)
-    return f"{d:%H:%M} UTC ({datetime.fromtimestamp(ms / 1000 + 5 * 3600, timezone.utc):%H:%M} PKT)"
+    """'13:30 UTC (18:30 PKT - Wed 04 Nov)': every single moment carries its date (his v28 dual-time standard)."""
+    from core.trades import fmt_when
+    return fmt_when(ms)
 
 
 CAP_MARK = "automatic runs already ran today"     # in the cap row's text; due() must not count that row as a run
