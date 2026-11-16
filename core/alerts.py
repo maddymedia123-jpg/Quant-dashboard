@@ -31,7 +31,7 @@ MAX_PER_PASS = 8          # a burst larger than this is a bug or a gap in the le
 
 @dataclass(frozen=True)
 class Event:
-    kind: str            # target | stop | trap | checkpoint
+    kind: str            # target | stop | trap | checkpoint | shift
     dedup_key: str
     headline: str
     price: float | None = None
@@ -42,7 +42,7 @@ class Event:
 
 
 def detect_events(trade: dict, price: float | None, progress=None, traps=(), checkpoints=(),
-                  now_ms: int = 0) -> list[Event]:
+                  now_ms: int = 0, shifts=()) -> list[Event]:
     """Everything that has happened to this position which a trader would want to be told about.
 
     Pure, and stable across calls: the same state produces the same events with the same keys, so the
@@ -72,6 +72,12 @@ def detect_events(trade: dict, price: float | None, progress=None, traps=(), che
         out.append(Event("trap", f"trap:{t.trap_id}:{t.near}",
                          f"🪤 {asset} {side} · a {_trap_word(t.side)} trap call on the {t.timeframe} chart sits "
                          f"${float(t.distance):,.0f} from your {t.near}: expect price to turn there.", price))
+
+    # his Section 6 pre-invalidation alert: the ground under the entry has shifted, the stop has not been hit
+    for s in shifts:
+        out.append(Event("shift", s.key,
+                         f"⚠️ {asset} {side} · pre-invalidation: {s.note}. The stop at "
+                         f"${float(trade.get('stop') or 0):,.0f} has not been touched.", price))
 
     for c in checkpoints:
         if c.at_ms and c.at_ms <= now_ms:

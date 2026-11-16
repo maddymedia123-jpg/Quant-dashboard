@@ -144,17 +144,19 @@ def trade_progress(row: dict, price: float | None):
 
 
 def trade_alerts(store, row: dict, prog, now_ms: int, secrets: dict, may_send: bool,
-                 result: PassResult | None = None) -> PassResult:
-    """What has happened to one pinned trade: detect, log once, then claim and send."""
+                 result: PassResult | None = None, watch: dict | None = None) -> PassResult:
+    """What has happened to one pinned trade: detect, log once, then claim and send. `watch` is the trade's
+    desk as it reads now (core.trades.flow_and_walls); with it, what has shifted under the entry is detected."""
     from core import trades
     r = result or PassResult()
     plan = row.get("plan") or {}
+    shifted = trades.shifts(plan, str(row.get("side") or ""), float(row.get("stop") or 0), watch) if watch else []
     checkpoints = [trades.Checkpoint(c.get("timeframe", ""), int(c.get("at_ms") or 0), str(c.get("reason") or ""))
                    for c in plan.get("schedule") or []]
     traps = [type("T", (), {"trap_id": t.get("trap_id"), "side": t.get("side", ""),
                             "timeframe": t.get("timeframe", ""), "near": t.get("near", ""),
                             "distance": t.get("distance", 0.0)})() for t in plan.get("traps") or []]
-    for e in detect_events(row, prog.price if prog else None, prog, traps, checkpoints, now_ms):
+    for e in detect_events(row, prog.price if prog else None, prog, traps, checkpoints, now_ms, shifts=shifted):
         # the unique index decides what is new: the same target reached is one event, not one per refresh
         store.add_trade_event(row["id"], now_ms, e.kind, e.dedup_key, e.headline, e.price)
     if not may_send:
@@ -173,14 +175,43 @@ def trade_alerts(store, row: dict, prog, now_ms: int, secrets: dict, may_send: b
 
 
 def all_trade_alerts(store, price: float | None, now_ms: int, secrets: dict, may_send: bool,
-                     result: PassResult | None = None) -> PassResult:
-    """Every open trade, as the Active Trade screen does for each pinned card."""
+                     result: PassResult | None = None, watch_for=None) -> PassResult:
+    """Every open trade, as the Active Trade screen does for each pinned card. `watch_for(category)` returns
+    the desk's current read (core.trades.flow_and_walls) for the pre-invalidation check; asked once per
+    category, and a read that fails costs that check only, never the target and stop alerts."""
     r = result or PassResult()
+    watched: dict = {}
     for row in store.trades(status="open", limit=50):
         try:
             prog = trade_progress(row, price)
-            if prog is not None:
-                trade_alerts(store, row, prog, now_ms, secrets, may_send, r)
+            if prog is None:
+                continue
+            watch = None
+            if watch_for is not None:
+                cat = str(row.get("category") or "live")
+                if cat not in watched:
+                    try:
+                        watched[cat] = watch_for(cat)
+                    except Exception as e:  # noqa: BLE001 - the desk read is extra, the stop alert is not
+                        watched[cat] = None
+                        r.problems.append(f"pre-invalidation read for the {cat} desk: {type(e).__name__}: {e}")
+                watch = watched[cat]
+            trade_alerts(store, row, prog, now_ms, secrets, may_send, r, watch=watch)
         except Exception as e:  # noqa: BLE001 - one trade's failure must not silence the others
             r.problems.append(f"trade #{row.get('id')}: {type(e).__name__}: {e}")
     return r
+
+
+def desk_watcher(m, analyses: dict, now_ms: int):
+    """`watch_for` for all_trade_alerts: the desk's state (the very one its judges read) and its gamma walls,
+    reduced to what a pinned trade rests on. Built lazily, once per category asked."""
+    from core.agents.live_recon import build_state
+    from core.agents.recon_profiles import PROFILES
+    from core.indicators import desk_derivs
+    from core.trades import flow_and_walls
+
+    def watch_for(category: str) -> dict:
+        profile = PROFILES[category]
+        state = build_state(m, analyses, now_ms, profile)
+        return flow_and_walls(state, profile.timeframes[1], desk_derivs.gamma_for(category, m))
+    return watch_for

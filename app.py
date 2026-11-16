@@ -959,6 +959,8 @@ def build_trade_plan(asset: str, side: str, entry: float, given_stop: float | No
         "asset": asset, "side": side, "entry": entry, "category": category, "timeframe": mtf,
         "horizon": profile.horizon, "atr": round(atr, 2), "built_ms": run_ms,
         "layout": layout.kind, "layout_note": layout.note,
+        # his Section 6: what the entry rests on, so a later pass can see it shift before the stop is hit
+        "basis": trades.entry_basis(trades.flow_and_walls(state, mtf, desk_derivs.gamma_for(category, m)), side),
         "stop_verdict": stop.verdict, "stop_reasons": list(stop.reasons),
         "protects_at": stop.protects_at, "protects_kind": stop.protects_kind,
         "targets": [{"name": t.name, "price": t.price, "basis": t.basis, "due_ms": t.due_ms,
@@ -1027,9 +1029,20 @@ if m.spot.available:
         st.sidebar.caption(f"Alerts: {st.session_state.pop('market_alert_problem')}")
 
 
+def _trade_watch(category: str) -> dict | None:
+    """The desk's current read for the pre-invalidation check, from the cached desk state."""
+    try:
+        profile = PROFILES[category]
+        return trades.flow_and_walls(_desk_state(category, _data_stamp()), profile.timeframes[1],
+                                     desk_derivs.gamma_for(category, m))
+    except Exception:  # noqa: BLE001 - the check is extra; the stop and target alerts are not
+        return None
+
+
 def trade_alert_pass(row: dict, prog) -> None:
     """Detect what has happened to a pinned trade, log it once, and push whatever a channel accepts."""
-    r = pipeline.trade_alerts(store, row, prog, now_ms, _secrets(), _alerts_may_send())
+    r = pipeline.trade_alerts(store, row, prog, now_ms, _secrets(), _alerts_may_send(),
+                              watch=_trade_watch(str(row.get("category") or "live")))
     for note in r.problems[:1]:
         st.caption(f"Alerts: {note}")
 
@@ -1117,7 +1130,12 @@ if screen == "trade":
             except Exception as e:  # noqa: BLE001
                 st.warning(f"Trade #{row['id']}: live numbers unavailable ({e}).")
         try:
-            panels.render(panels.trade_card_html(row, prog, now_ms, price_now))
+            warnings = [str(e.get("headline") or "") for e in store.trade_events(trade_id=row["id"], limit=50)
+                        if e.get("kind") == "shift"][:3]
+        except Exception:  # noqa: BLE001 - the chips are extra
+            warnings = []
+        try:
+            panels.render(panels.trade_card_html(row, prog, now_ms, price_now, warnings=warnings))
         except Exception as e:  # noqa: BLE001 - one bad card must not remove the others
             st.error(f"Trade #{row['id']} ({row.get('asset')} {row.get('side')}) could not be drawn "
                      f"({type(e).__name__}: {e}). Its levels: entry {row.get('entry')}, "
