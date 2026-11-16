@@ -215,7 +215,7 @@ def test_an_event_regime_leads_the_warning_and_closes_the_directive():
                                    "the event regime runs until 11:00 UTC Thu 24 Sep; expect sharp moves either way, so widen the "
                                    "stop, cut size and take no range trade")
     assert "a high-impact US print, FOMC Statement" not in s["warning"], "named once, as the regime"
-    assert s["directive"].endswith("Event regime (FOMC Statement): wider stop, smaller size, no range trade until 11:00 UTC (16:00 PKT).")
+    assert s["directive"].endswith("Event regime (FOMC Statement): wider stop, smaller size, no range trade until 11:00 UTC (16:00 PKT - Thu 24 Sep).")
     assert s["event_regime"]["phase"] == "ahead"
     after = ls.lines(bull, DERIVS, 18, NOON + 30 * 3_600_000, fomc)
     assert after["warning"].startswith("Watch: EVENT REGIME, FOMC Statement printed 25 hours ago") and after["event_regime"]["phase"] == "reaction"

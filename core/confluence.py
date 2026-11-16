@@ -22,6 +22,7 @@ Everything here is code over the desk's own numbers; nothing comes from a model'
 for the layman summary, so they name no indicator."""
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 
@@ -38,6 +39,10 @@ HIGHER = {"live": ("weekly", "monthly"), "intraday": ("weekly", "monthly"), "wee
 DOLLAR_WEEK_PCT = 0.25            # the broad dollar index, one-week change, in percent
 YIELD_WEEK_PTS = 0.10             # the US 2-year yield, one-week change, in percentage points
 PKT_MS = 5 * 3_600_000
+# A headline's pull on the tape fades as the market absorbs it (his v28 narrative decay): weight e^(-age / NEWS_DECAY_MS),
+# and below NEWS_FLOOR (about 45 hours) the print is absorbed and casts no vote.
+NEWS_DECAY_MS = 24 * 3_600_000
+NEWS_FLOOR = 0.15
 
 FAMILIES = (("pattern", "a pattern completing at the zone"),
             ("options", "an options wall at the zone"),
@@ -231,7 +236,12 @@ def structure(chart_tf: str, zone: tuple[float, float], atr: float, breaks, liqu
                   untrusted or "no failed break, reclaimed sweep or value edge at the zone")
 
 
-def macro(rates: dict | None, prints) -> Family:
+def news_weight(age_ms: int) -> float:
+    """How much of a print's impact is left, age in ms: 1.0 at the print, 1/e a day later."""
+    return math.exp(-max(0, age_ms) / NEWS_DECAY_MS)
+
+
+def macro(rates: dict | None, prints, now_ms: int) -> Family:
     votes = []
     r = rates or {}
     d = r.get("DTWEXBGS") or {}
@@ -247,11 +257,13 @@ def macro(rates: dict | None, prints) -> Family:
             votes.append((LONG, f"the 2-year yield fell {abs(y['change_1w']):.2f} points this week"))
         elif y["change_1w"] >= YIELD_WEEK_PTS:
             votes.append((SHORT, f"the 2-year yield rose {y['change_1w']:.2f} points this week"))
-    trapped = [(p, getattr(p, "trapped", None)) for p in prints or ()
-               if getattr(p, "state", "") in ("sell_the_news", "spike_faded")]
-    for p, who in trapped[-1:]:
-        if who in ("longs", "shorts"):
-            votes.append((SHORT if who == "longs" else LONG, f"the {p.title} print trapped the {who}"))
+    trapped = [p for p in prints or () if getattr(p, "state", "") in ("sell_the_news", "spike_faded")
+               and getattr(p, "trapped", None) in ("longs", "shorts")
+               and news_weight(now_ms - int(p.time_ms)) >= NEWS_FLOOR]
+    for p in sorted(trapped, key=lambda p: int(p.time_ms))[-1:]:
+        age_ms = now_ms - int(p.time_ms)
+        fading = f" ({age_ms / 3_600_000:.0f} hours old, fading)" if age_ms >= NEWS_DECAY_MS else ""
+        votes.append((SHORT if p.trapped == "longs" else LONG, f"the {p.title} print trapped the {p.trapped}{fading}"))
     return _vote("macro", votes, "no dollar, yield or news-print lean this week", "macro is mixed")
 
 
@@ -309,7 +321,7 @@ def judge(side: str, zone: tuple[float, float], atr: float, chart_tf: str, ev: E
             flow(chart_tf, ev.liquidity),
             positioning(ev.fear_greed, ev.futures, ev.derivs, trap),
             structure(chart_tf, zone, atr, ev.breaks, ev.liquidity, weekend=is_weekend(now_ms)),
-            macro(ev.rates, ev.prints),
+            macro(ev.rates, ev.prints, now_ms),
             timing(side, now_ms))
 
 

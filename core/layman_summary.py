@@ -277,8 +277,9 @@ def lines(a, derivs: dict | None, fear_greed: int | None, now_ms: int, evidence=
     regime = _regime(ev, now_ms)
     if regime.active:
         # election-day fix 3: the event is named in every desk's directive while its window is open
+        from core.trades import fmt_when
         directive += (f" Event regime ({regime.title}): wider stop, smaller size, no range trade until "
-                      f"{_utc(regime.until_ms)} UTC ({_pkt(regime.until_ms)} PKT).")
+                      f"{fmt_when(regime.until_ms)}.")
     phase_now = (f"What's happening: BTC is {_money(a.price)}, {lean}"
                  + (f"; the {kind} at {_money(f.level)} is the zone ({score})" if f.zone else "")
                  + f". What to expect: {expect}" + ("" if expect.endswith(".") else "."))
