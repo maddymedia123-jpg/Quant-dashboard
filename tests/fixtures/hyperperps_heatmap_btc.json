@@ -1,0 +1,897 @@
+{
+  "_meta": {
+    "schema": "hyperperps.whale-heatmap.v4",
+    "symbol": "BTC",
+    "tier": "live",
+    "as_of": "2026-11-16T21:18:01.888Z",
+    "age_seconds": 13,
+    "spot_as_of": "2026-11-16T21:18:01.527Z",
+    "spot_age_seconds": 13,
+    "spot_verified_as_of": null,
+    "spot_drift_pct": null,
+    "freshness_source": "spot_timestamp",
+    "stale": false,
+    "source": "vps_marketwide",
+    "definitions": "https://hyperperps.app/api/public/heatmap",
+    "field_names": "Renamed 2026-11-16: longs/shorts -> liquidations.longs/.shorts, stop_clusters -> stop_losses, explicit_tp -> take_profits. Add ?format=legacy for the old names."
+  },
+  "support": {
+    "message": "This data is free for you. If it helped your trades, you can give a little back: sign up to Hyperliquid with our link. You get a fee discount, and it keeps this feed alive — no pressure.",
+    "referral": "https://app.hyperliquid.xyz/join/HYPERPERPSBOT",
+    "donate": {
+      "message": "Made a great trade with this? Consider giving back to keep the heatmap free. Donate any amount to 0x79ce08822E57aa76EfBc2E3Ae813C055A9D1bdC1 — a free USDC transfer on Hyperliquid, or any EVM chain (Arbitrum, Base, Ethereum).",
+      "address": "0x79ce08822E57aa76EfBc2E3Ae813C055A9D1bdC1",
+      "networks": [
+        "Hyperliquid",
+        "Arbitrum",
+        "Base",
+        "Ethereum",
+        "any EVM chain"
+      ]
+    }
+  },
+  "v": 4,
+  "updated_at": 1794863881888,
+  "spot_at_compute": 64940.5,
+  "spot_fetched_at": 1794863881527,
+  "source": "vps_marketwide",
+  "methodology_version": "2026-11-12",
+  "update_kind": "full",
+  "positions_recomputed_at": 1794863881888,
+  "sample_size": 18207,
+  "presumed_liquidated": 0,
+  "touch_coverage_since": 1794858221744,
+  "net_oi_skew": -0.001,
+  "whale_vs_retail": {
+    "whale_bias": -0.111,
+    "retail_bias": 0.108,
+    "whale_notional": 1280767096,
+    "retail_notional": 1275594548,
+    "whale_count": 55,
+    "retail_count": 18152
+  },
+  "whale_entries": {
+    "long_avg_entry": 71192.86,
+    "short_avg_entry": 70937.33,
+    "long_total_notional": 1276390920,
+    "short_total_notional": 1279970723,
+    "long_entry_clusters": [
+      {
+        "price": 64940.5,
+        "total_notional": 153651086,
+        "wallet_count": 1064
+      },
+      {
+        "price": 78253.3,
+        "total_notional": 98754645,
+        "wallet_count": 51
+      },
+      {
+        "price": 72733.36,
+        "total_notional": 75027774,
+        "wallet_count": 61
+      }
+    ],
+    "short_entry_clusters": [
+      {
+        "price": 78415.65,
+        "total_notional": 117848191,
+        "wallet_count": 12
+      },
+      {
+        "price": 64615.8,
+        "total_notional": 96453085,
+        "wallet_count": 339
+      },
+      {
+        "price": 65427.55,
+        "total_notional": 91480026,
+        "wallet_count": 177
+      }
+    ]
+  },
+  "trapped_pct": {
+    "longs_underwater_2pct": 0.64,
+    "longs_underwater_5pct": 0.57,
+    "longs_underwater_10pct": 0.44,
+    "shorts_underwater_2pct": 0.01,
+    "shorts_underwater_5pct": 0,
+    "shorts_underwater_10pct": 0
+  },
+  "forced_liq_proximity": {
+    "longs_near_liq_2pct": 0.05,
+    "longs_near_liq_5pct": 0.08,
+    "shorts_near_liq_2pct": 0.03,
+    "shorts_near_liq_5pct": 0.07
+  },
+  "crowd_leverage": {
+    "long_avg": 20.7,
+    "short_avg": 24.6
+  },
+  "scale_out_pressure": {
+    "long": 0.122,
+    "short": 0.662,
+    "tau_long": 0.005072185239285672,
+    "tau_short": 0.020794827057156785
+  },
+  "fresh_money": {
+    "net_bias_1h": -0.274,
+    "net_bias_4h": 0.342,
+    "net_bias_24h": -0.352
+  },
+  "cascade_mass": {
+    "long": {
+      "within_1pct": 1126916,
+      "within_2pct": 61304676,
+      "within_5pct": 99310776
+    },
+    "short": {
+      "within_1pct": 7312123,
+      "within_2pct": 41568926,
+      "within_5pct": 84430959
+    }
+  },
+  "stop_data_oldest_at": 1794863151734,
+  "stop_data_median_at": 1794863756265,
+  "stop_tp_coverage": {
+    "scope": "Only stop_clusters and explicit_tp (resting stop-loss and take-profit orders). Liquidation walls (longs/shorts) come from position reads, refreshed by position size and on trades or price crossings; see positions_recomputed_at.",
+    "min_position_usd": 5000,
+    "holders": 8040,
+    "read_this_cycle": 680,
+    "read_within_30m": 8040,
+    "never_read": 0,
+    "read_within_tier": 3465,
+    "pct_within_30m": 100
+  },
+  "orderbook": {
+    "src": "hl_l2book",
+    "fetched_at": 1794863881879,
+    "mid": 64935,
+    "spread_bps": 1.54,
+    "bands": {
+      "1": {
+        "bid_usd": 112227653,
+        "ask_usd": 96271596,
+        "bid_share": 0.5383
+      },
+      "2": {
+        "bid_usd": 159390329,
+        "ask_usd": 148944353,
+        "bid_share": 0.5169
+      },
+      "0.1": {
+        "bid_usd": 20110559,
+        "ask_usd": 16060092,
+        "bid_share": 0.556
+      },
+      "0.25": {
+        "bid_usd": 45156696,
+        "ask_usd": 42454611,
+        "bid_share": 0.5154
+      },
+      "0.5": {
+        "bid_usd": 62663599,
+        "ask_usd": 59444874,
+        "bid_share": 0.5132
+      }
+    }
+  },
+  "liquidations": {
+    "longs": [
+      {
+        "price": 63966.39,
+        "notional_usd": 23113326,
+        "wallet_count": 74,
+        "distance_pct": -1.5,
+        "top_wallet_share": 0.721,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 63641.69,
+        "notional_usd": 16971944,
+        "wallet_count": 197,
+        "distance_pct": -2,
+        "top_wallet_share": 0.739,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 64291.09,
+        "notional_usd": 11085966,
+        "wallet_count": 158,
+        "distance_pct": -1,
+        "top_wallet_share": 0.753,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 61693.48,
+        "notional_usd": 10424230,
+        "wallet_count": 58,
+        "distance_pct": -5,
+        "top_wallet_share": 0.916,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 63804.04,
+        "notional_usd": 8449125,
+        "wallet_count": 187,
+        "distance_pct": -1.75,
+        "top_wallet_share": 0.498,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 61855.83,
+        "notional_usd": 6831968,
+        "wallet_count": 112,
+        "distance_pct": -4.75,
+        "top_wallet_share": 0.316,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 62018.18,
+        "notional_usd": 5332855,
+        "wallet_count": 94,
+        "distance_pct": -4.5,
+        "top_wallet_share": 0.715,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 64128.74,
+        "notional_usd": 4100606,
+        "wallet_count": 200,
+        "distance_pct": -1.25,
+        "top_wallet_share": 0.328,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 63479.34,
+        "notional_usd": 2101238,
+        "wallet_count": 140,
+        "distance_pct": -2.25,
+        "top_wallet_share": 0.17,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 63154.64,
+        "notional_usd": 2037015,
+        "wallet_count": 85,
+        "distance_pct": -2.75,
+        "top_wallet_share": 0.239,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      }
+    ],
+    "shorts": [
+      {
+        "price": 65589.91,
+        "notional_usd": 14542126,
+        "wallet_count": 272,
+        "distance_pct": 1,
+        "top_wallet_share": 0.311,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 65752.26,
+        "notional_usd": 11893430,
+        "wallet_count": 546,
+        "distance_pct": 1.25,
+        "top_wallet_share": 0.517,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 67375.77,
+        "notional_usd": 7227946,
+        "wallet_count": 77,
+        "distance_pct": 3.75,
+        "top_wallet_share": 0.777,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 66726.36,
+        "notional_usd": 6263800,
+        "wallet_count": 87,
+        "distance_pct": 2.75,
+        "top_wallet_share": 0.368,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 67213.42,
+        "notional_usd": 6035805,
+        "wallet_count": 70,
+        "distance_pct": 3.5,
+        "top_wallet_share": 0.331,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 65914.61,
+        "notional_usd": 4801729,
+        "wallet_count": 279,
+        "distance_pct": 1.5,
+        "top_wallet_share": 0.167,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 65265.2,
+        "notional_usd": 4158969,
+        "wallet_count": 58,
+        "distance_pct": 0.5,
+        "top_wallet_share": 0.744,
+        "touched_at": 1794860905000,
+        "touched_recently": false,
+        "touched_in_last_hour": true,
+        "refresh_pending": false
+      },
+      {
+        "price": 67051.07,
+        "notional_usd": 4023544,
+        "wallet_count": 70,
+        "distance_pct": 3.25,
+        "top_wallet_share": 0.389,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 66888.72,
+        "notional_usd": 3489739,
+        "wallet_count": 60,
+        "distance_pct": 3,
+        "top_wallet_share": 0.75,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 66239.31,
+        "notional_usd": 3345175,
+        "wallet_count": 116,
+        "distance_pct": 2,
+        "top_wallet_share": 0.348,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      }
+    ]
+  },
+  "stop_losses": {
+    "longs": [
+      {
+        "price": 64291.09,
+        "notional_usd": 10960336,
+        "wallet_count": 11,
+        "distance_pct": -1,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 63641.69,
+        "notional_usd": 6877660,
+        "wallet_count": 23,
+        "distance_pct": -2,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 64128.74,
+        "notional_usd": 3950294,
+        "wallet_count": 6,
+        "distance_pct": -1.25,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 63966.39,
+        "notional_usd": 2878125,
+        "wallet_count": 15,
+        "distance_pct": -1.5,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 64453.45,
+        "notional_usd": 2364172,
+        "wallet_count": 10,
+        "distance_pct": -0.75,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 63479.34,
+        "notional_usd": 2143862,
+        "wallet_count": 23,
+        "distance_pct": -2.25,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 63804.04,
+        "notional_usd": 1517510,
+        "wallet_count": 19,
+        "distance_pct": -1.75,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 64615.8,
+        "notional_usd": 1397177,
+        "wallet_count": 8,
+        "distance_pct": -0.5,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 62018.18,
+        "notional_usd": 649760,
+        "wallet_count": 24,
+        "distance_pct": -4.5,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 61855.83,
+        "notional_usd": 589110,
+        "wallet_count": 26,
+        "distance_pct": -4.75,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 64940.5,
+        "notional_usd": 499768,
+        "wallet_count": 1,
+        "distance_pct": 0,
+        "touched_at": 1794863885000,
+        "touched_recently": true,
+        "touched_in_last_hour": true,
+        "refresh_pending": true
+      },
+      {
+        "price": 62505.23,
+        "notional_usd": 451718,
+        "wallet_count": 6,
+        "distance_pct": -3.75,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      }
+    ],
+    "shorts": [
+      {
+        "price": 65427.55,
+        "notional_usd": 6409598,
+        "wallet_count": 17,
+        "distance_pct": 0.75,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 66564.01,
+        "notional_usd": 2108966,
+        "wallet_count": 8,
+        "distance_pct": 2.5,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 67538.12,
+        "notional_usd": 1645693,
+        "wallet_count": 10,
+        "distance_pct": 4,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 65752.26,
+        "notional_usd": 1398037,
+        "wallet_count": 26,
+        "distance_pct": 1.25,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 66239.31,
+        "notional_usd": 1007137,
+        "wallet_count": 20,
+        "distance_pct": 2,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 66076.96,
+        "notional_usd": 572187,
+        "wallet_count": 11,
+        "distance_pct": 1.75,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 66726.36,
+        "notional_usd": 442529,
+        "wallet_count": 16,
+        "distance_pct": 2.75,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 65265.2,
+        "notional_usd": 389621,
+        "wallet_count": 12,
+        "distance_pct": 0.5,
+        "touched_at": 1794860905000,
+        "touched_recently": false,
+        "touched_in_last_hour": true,
+        "refresh_pending": false
+      },
+      {
+        "price": 67051.07,
+        "notional_usd": 299294,
+        "wallet_count": 7,
+        "distance_pct": 3.25,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 65589.91,
+        "notional_usd": 168636,
+        "wallet_count": 2,
+        "distance_pct": 1,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 66401.66,
+        "notional_usd": 157615,
+        "wallet_count": 5,
+        "distance_pct": 2.25,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 67700.47,
+        "notional_usd": 103094,
+        "wallet_count": 7,
+        "distance_pct": 4.25,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      }
+    ]
+  },
+  "take_profits": {
+    "longs": [
+      {
+        "price": 67862.82,
+        "notional_usd": 6996918,
+        "wallet_count": 26,
+        "distance_pct": 4.5,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 65752.26,
+        "notional_usd": 3690277,
+        "wallet_count": 19,
+        "distance_pct": 1.25,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 66076.96,
+        "notional_usd": 1772658,
+        "wallet_count": 34,
+        "distance_pct": 1.75,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 67051.07,
+        "notional_usd": 1124628,
+        "wallet_count": 33,
+        "distance_pct": 3.25,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 67213.42,
+        "notional_usd": 999316,
+        "wallet_count": 23,
+        "distance_pct": 3.5,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 68025.17,
+        "notional_usd": 949119,
+        "wallet_count": 31,
+        "distance_pct": 4.75,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 67538.12,
+        "notional_usd": 914835,
+        "wallet_count": 27,
+        "distance_pct": 4,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 67375.77,
+        "notional_usd": 541886,
+        "wallet_count": 30,
+        "distance_pct": 3.75,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 66564.01,
+        "notional_usd": 449897,
+        "wallet_count": 23,
+        "distance_pct": 2.5,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 67700.47,
+        "notional_usd": 340037,
+        "wallet_count": 27,
+        "distance_pct": 4.25,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 66726.36,
+        "notional_usd": 319832,
+        "wallet_count": 29,
+        "distance_pct": 2.75,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 64453.45,
+        "notional_usd": 294419,
+        "wallet_count": 4,
+        "distance_pct": -0.75,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      }
+    ],
+    "shorts": [
+      {
+        "price": 62505.23,
+        "notional_usd": 1715396,
+        "wallet_count": 24,
+        "distance_pct": -3.75,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 62018.18,
+        "notional_usd": 1541015,
+        "wallet_count": 41,
+        "distance_pct": -4.5,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 64778.15,
+        "notional_usd": 1409539,
+        "wallet_count": 9,
+        "distance_pct": -0.25,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 64128.74,
+        "notional_usd": 1253655,
+        "wallet_count": 10,
+        "distance_pct": -1.25,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 64940.5,
+        "notional_usd": 919997,
+        "wallet_count": 1,
+        "distance_pct": 0,
+        "touched_at": 1794863885000,
+        "touched_recently": true,
+        "touched_in_last_hour": true,
+        "refresh_pending": true
+      },
+      {
+        "price": 63804.04,
+        "notional_usd": 689456,
+        "wallet_count": 18,
+        "distance_pct": -1.75,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 64453.45,
+        "notional_usd": 609189,
+        "wallet_count": 10,
+        "distance_pct": -0.75,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 63641.69,
+        "notional_usd": 599578,
+        "wallet_count": 14,
+        "distance_pct": -2,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 62180.53,
+        "notional_usd": 451611,
+        "wallet_count": 20,
+        "distance_pct": -4.25,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 62342.88,
+        "notional_usd": 382881,
+        "wallet_count": 18,
+        "distance_pct": -4,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 64615.8,
+        "notional_usd": 328258,
+        "wallet_count": 5,
+        "distance_pct": -0.5,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      },
+      {
+        "price": 63479.34,
+        "notional_usd": 323737,
+        "wallet_count": 20,
+        "distance_pct": -2.25,
+        "touched_at": null,
+        "touched_recently": false,
+        "touched_in_last_hour": false,
+        "refresh_pending": false
+      }
+    ]
+  }
+}

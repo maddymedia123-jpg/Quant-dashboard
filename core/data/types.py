@@ -73,6 +73,31 @@ class HyperliquidSnapshot(Availability):
     oracle_price: Optional[float] = None
 
 
+class LiquidationCluster(BaseModel):
+    price: float
+    notional_usd: float
+    wallets: int = 0
+    distance_pct: Optional[float] = None
+
+
+class LiquidationLevelsSnapshot(Availability):
+    """Resting liquidation clusters on one venue (core.data.hyperperps): longs liquidate below the price,
+    shorts above it; each list is nearest to the price first."""
+    venue: str = "Hyperliquid"
+    spot: Optional[float] = None
+    as_of_ms: Optional[int] = None
+    sample_size: Optional[int] = None
+    longs: list[LiquidationCluster] = Field(default_factory=list)
+    shorts: list[LiquidationCluster] = Field(default_factory=list)
+
+    def to_state(self) -> dict:
+        """Plain JSON for the desk state: what the stop's hazards and the magnet read consume."""
+        if not self.available:
+            return {"available": False}
+        return {"available": True, "venue": self.venue, "spot": self.spot, "as_of_ms": self.as_of_ms,
+                "longs": [c.model_dump() for c in self.longs], "shorts": [c.model_dump() for c in self.shorts]}
+
+
 class LiquidationsSnapshot(Availability):
     window: str = "24h"
     total_usd: Optional[float] = None
@@ -273,13 +298,14 @@ class TakerFlowSnapshot(Availability):
 class MarketSnapshot(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    SOURCES: ClassVar[tuple[str, ...]] = ("spot", "futures", "options", "sentiment", "hyperliquid", "liquidations", "whales", "stablecoins", "calendar", "news", "metals", "predictions", "macro", "cot", "taker_flow", "exchange_flows", "dominance", "fx")
+    SOURCES: ClassVar[tuple[str, ...]] = ("spot", "futures", "options", "sentiment", "hyperliquid", "liq_levels", "liquidations", "whales", "stablecoins", "calendar", "news", "metals", "predictions", "macro", "cot", "taker_flow", "exchange_flows", "dominance", "fx")
 
     spot: SpotSnapshot
     futures: FuturesSnapshot
     options: OptionsSnapshot
     sentiment: SentimentSnapshot
     hyperliquid: HyperliquidSnapshot = Field(default_factory=lambda: HyperliquidSnapshot.unavailable("hyperliquid", "not fetched"))
+    liq_levels: LiquidationLevelsSnapshot = Field(default_factory=lambda: LiquidationLevelsSnapshot.unavailable("hyperperps", "not fetched"))
     liquidations: LiquidationsSnapshot = Field(default_factory=lambda: LiquidationsSnapshot.unavailable("coinlobster", "not fetched"))
     whales: WhalesSnapshot = Field(default_factory=lambda: WhalesSnapshot.unavailable("coinlobster", "not fetched"))
     stablecoins: StablecoinSnapshot = Field(default_factory=lambda: StablecoinSnapshot.unavailable("defillama", "not fetched"))
