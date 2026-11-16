@@ -38,6 +38,20 @@ def full_evidence():
     )
 
 
+def test_a_quiet_tape_is_a_backdrop_on_the_flow_family_not_a_vote():
+    """v28 part B: taker-flow variance compression (arXiv 2607.27070's population-level precursor) is named
+    on the flow family as a condition; the side comes from the delta read alone."""
+    quiet = {"available": True, "state": "compressed", "ratio": 0.38, "short_bars": 20, "long_bars": 100}
+    f = cf.flow("1h", {"1h": {"cumulative_delta": {"state": "bullish absorption"}, "taker_variance": quiet}})
+    assert f.side == cf.LONG and f.note.startswith("price was pushed down but buyers took everything offered")
+    assert "quiet" in f.note and "38%" in f.note and "not a signal" in f.note, f.note
+    f = cf.flow("1h", {"1h": {"cumulative_delta": {"state": "flat"}, "taker_variance": quiet}})
+    assert f.side == cf.NONE and "quiet" in f.note
+    f = cf.flow("1h", {"1h": {"cumulative_delta": {"state": "flat"}, "taker_variance": {**quiet, "state": "normal", "ratio": 1.0}}})
+    assert "quiet" not in f.note
+    assert "quiet" not in cf.flow("1h", {"1h": {"cumulative_delta": {"state": "flat"}}}).note
+
+
 def test_a_news_print_fades_after_a_day_and_casts_no_vote_after_two():
     """v28 narrative decay: a headline's weight falls as e^(-age / 24h). A fresh print votes in full, a
     day-old one votes but says it is fading, and past the floor (about two days) it is absorbed: no vote,

@@ -169,6 +169,50 @@ def test_the_order_flow_agent_says_which_delta_it_read():
     assert "real taker volume" in flow_agent.note
 
 
+# ---------- variance compression (v28 part B) ----------
+def test_quiet_taker_swings_against_the_longer_norm_read_as_compressed():
+    """The one precursor arXiv 2607.27070 supported, and only at population level: taker order-flow
+    variance compressing before the recorded cascades. Read as a backdrop, never as a vote."""
+    rng = np.random.default_rng(7)
+    ts = [i * H for i in range(200)]
+    loud, quiet = rng.normal(0, 100.0, 179), rng.normal(0, 25.0, 20)
+    r = lq.flow_variance(_flow(ts, [*loud, *quiet, 5000.0]))        # the forming bar must not count
+    assert r["available"] and r["units"] == "BTC" and (r["short_bars"], r["long_bars"]) == (20, 100)
+    assert r["state"] == "compressed" and 0.15 <= r["ratio"] <= 0.45, r
+
+
+def test_taker_swings_at_their_norm_are_normal_and_a_short_series_says_so():
+    rng = np.random.default_rng(3)
+    ts = [i * H for i in range(200)]
+    r = lq.flow_variance(_flow(ts, rng.normal(0, 100.0, 200)))
+    assert r["state"] == "normal" and 0.7 <= r["ratio"] <= 1.4, r
+    wild = lq.flow_variance(_flow(ts, [*rng.normal(0, 20.0, 179), *rng.normal(0, 200.0, 20), 0.0]))
+    assert wild["state"] == "expanded" and wild["ratio"] >= 1.5, wild
+    assert lq.flow_variance(_flow(ts[:60], rng.normal(0, 100.0, 60))) == {"available": False}
+    assert lq.flow_variance(None) == {"available": False}
+
+
+def test_the_liquidity_summary_carries_the_taker_variance_read():
+    rng = np.random.default_rng(1)
+    ts = [i * H for i in range(200)]
+    px = _price(ts, range(100, 300))
+    out = lq.summarise(px, oi_history=[], now_ms=ts[-1], flow=_flow(ts, rng.normal(0, 50.0, 200)))
+    assert out["taker_variance"]["available"] and out["taker_variance"]["state"] in ("compressed", "normal", "expanded")
+    assert lq.summarise(px, oi_history=[], now_ms=ts[-1])["taker_variance"] == {"available": False}
+
+
+def test_the_liquidity_panel_notes_a_quiet_tape_in_the_delta_cell():
+    from ui import panels
+    cvd = {"available": True, "state": "flat", "units": "BTC", "velocity_per_bar": 1.0, "acceleration": 0.0}
+    row = lambda v: {"pools": {}, "cumulative_delta": cvd, "volume_profile": {"available": False},  # noqa: E731
+                     "open_interest": {}, "taker_variance": v}
+    quiet = {"available": True, "state": "compressed", "ratio": 0.38, "short_bars": 20, "long_bars": 100, "units": "BTC"}
+    h = panels.liquidity_html({"1h": row(quiet)})
+    assert "quiet tape: taker swings 38% of the 100-bar norm" in h and "a condition, not a signal" in h
+    assert "quiet tape: taker swings" not in panels.liquidity_html({"1h": row({**quiet, "state": "normal", "ratio": 1.02})})
+    assert "quiet tape: taker swings" not in panels.liquidity_html({"1h": row({"available": False})})
+
+
 # ---------- fetching ----------
 class _Transport(httpx.AsyncBaseTransport):
     def __init__(self, contract_status=200, size=None):

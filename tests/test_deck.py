@@ -47,6 +47,7 @@ def test_every_reading_comes_from_the_state_and_is_filled_on_live_data(market_an
     assert delta["Delta read"] in ("confirming up", "confirming down", "bearish absorption",
                                    "bullish absorption", "flat")
     assert delta["Taker buy/sell"] is not None
+    assert delta["Taker swings vs norm"] in ("compressed", "normal", "expanded"), "the fixture has 120 bars of real flow"
 
     ict = dict((label, value) for label, value, _ in by_key["ict"].rows)
     assert ict["Structure"] in ("bullish", "bearish", "unclear")

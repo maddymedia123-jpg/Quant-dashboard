@@ -49,6 +49,8 @@ class Pool:
 PROXY_METHOD = "candle close-position proxy (no tick data)"
 TAKER_METHOD = "taker volume, Gate.io BTC_USDT perpetual"
 VELOCITY_BARS = 5
+VARIANCE_SHORT_BARS, VARIANCE_LONG_BARS = 20, 100   # completed bars: the recent taker swings against their norm
+COMPRESSED_RATIO, EXPANDED_RATIO = 0.5, 1.5
 
 
 @dataclass
@@ -188,6 +190,26 @@ def taker_delta(price: pd.DataFrame, flow: pd.DataFrame | None, lookback: int = 
                      state=_delta_state(d_change, p_change, scale), method=TAKER_METHOD,
                      series=[float(x) for x in cvd], velocity=velocity,
                      acceleration=None if velocity is None or prior is None else velocity - prior, units="BTC")
+
+
+def flow_variance(flow: pd.DataFrame | None, short: int = VARIANCE_SHORT_BARS,
+                  long: int = VARIANCE_LONG_BARS) -> dict:
+    """How wide the taker swings are now against their own norm: the standard deviation of the real taker
+    delta over the last `short` completed bars divided by that over the last `long`.
+
+    arXiv 2607.27070 found no event-level early warning for liquidation cascades, only this at population
+    level: taker order-flow variance compresses before them. So it is read as a backdrop (compressed,
+    normal, expanded) and never as a vote. The forming bar is left out: its delta is partial."""
+    if flow is None or flow.empty or "delta" not in flow or len(flow) < long + 1:
+        return {"available": False}
+    delta = flow["delta"].to_numpy(dtype=float)[:-1]
+    recent, norm = float(np.std(delta[-short:])), float(np.std(delta[-long:]))
+    if not norm:
+        return {"available": False}
+    ratio = recent / norm
+    state = "compressed" if ratio <= COMPRESSED_RATIO else "expanded" if ratio >= EXPANDED_RATIO else "normal"
+    return {"available": True, "state": state, "ratio": round(ratio, 2), "short_bars": short, "long_bars": long,
+            "units": "BTC"}
 
 
 def _profile_bins(window: pd.DataFrame, bins: int) -> tuple[np.ndarray, np.ndarray] | None:
@@ -384,6 +406,7 @@ def summarise(df: pd.DataFrame, oi_history: list[tuple[int, float]], now_ms: int
                              "price_change_over_20_bars": round(cvd.price_change, 2),
                              "velocity_per_bar": None if cvd.velocity is None else round(cvd.velocity, 3),
                              "acceleration": None if cvd.acceleration is None else round(cvd.acceleration, 3)},
+        "taker_variance": flow_variance(flow),
         "volume_profile": ({"available": False} if not vp.available else
                            {"available": True, "point_of_control": round(vp.poc, 2),
                             "value_area_high": round(vp.value_area_high, 2),
