@@ -78,6 +78,73 @@ def _local(ms: int) -> datetime:
     return _utc(ms + LOCAL_OFFSET_MS)
 
 
+# ---------- pre-invalidation (his Section 6): what the entry rests on, and when it shifts ----------
+FLOW_AGAINST = {LONG: ("bearish absorption", "confirming down"), SHORT: ("bullish absorption", "confirming up")}
+FLOW_WORD = {"bearish absorption": "sellers met every bid as price rose",
+             "confirming down": "sellers are winning at market as price falls",
+             "bullish absorption": "buyers took everything offered as price fell",
+             "confirming up": "buyers are winning at market as price rises"}
+WALL_FOR = {LONG: ("put_wall", "put wall"), SHORT: ("call_wall", "call wall")}
+
+
+@dataclass(frozen=True)
+class Shift:
+    kind: str     # flow | wall
+    key: str      # the dedup key: one alert per distinct shift, not one per pass
+    note: str
+
+
+def flow_and_walls(state: dict, timeframe: str, gamma: dict | None) -> dict:
+    """The desk's read of what a position rests on, side-free: the order-flow state on the trade's chart and
+    both dealers' walls. Built the same way at open and on every later pass, so the two can be compared."""
+    cd = (((state or {}).get("liquidity") or {}).get(timeframe) or {}).get("cumulative_delta") or {}
+    g = gamma or {}
+    return {"timeframe": timeframe, "flow_state": cd.get("state") or None,
+            "put_wall": g.get("put_wall"), "call_wall": g.get("call_wall")}
+
+
+def entry_basis(ctx: dict, side: str) -> dict:
+    """What this side's entry rests on, recorded in the plan: the flow read and the wall on its side."""
+    key, name = WALL_FOR.get(side, WALL_FOR[LONG])
+    return {"timeframe": ctx.get("timeframe"), "flow_state": ctx.get("flow_state"), "wall": ctx.get(key),
+            "wall_kind": name}
+
+
+def shifts(plan: dict, side: str, stop: float, now: dict) -> list[Shift]:
+    """What has turned against an open position before its stop is touched.
+
+    flow: the order flow on the trade's chart now reads against the side when it did not at entry.
+    wall: the dealers' wall the entry rested on is gone, or has moved beyond the stop, so the floor (or
+    ceiling) the stop was placed under is no longer there. A card opened before the basis was recorded
+    warns of nothing: there is nothing to compare."""
+    basis = (plan or {}).get("basis") or {}
+    out: list[Shift] = []
+    if not basis:
+        return out
+    against = FLOW_AGAINST.get(side, ())
+    fs = now.get("flow_state")
+    if fs in against and basis.get("flow_state") not in against:
+        tf = now.get("timeframe") or basis.get("timeframe") or "trade"
+        was = f" (at entry: {basis['flow_state']})" if basis.get("flow_state") else ""
+        out.append(Shift("flow", f"shift:flow:{fs}",
+                         f"the order flow on the {tf} chart has turned against the position: {FLOW_WORD[fs]}{was}"))
+    then = basis.get("wall")
+    if then is not None:
+        key, name = WALL_FOR.get(side, WALL_FOR[LONG])
+        name = basis.get("wall_kind") or name
+        wall_now = now.get(key)
+        where, edge = ("under", "floor") if side == LONG else ("over", "ceiling")
+        if wall_now is None:
+            out.append(Shift("wall", "shift:wall:gone",
+                             f"the {name} that stood {where} the entry at ${float(then):,.0f} is no longer there: "
+                             f"the dealers' {edge} is gone"))
+        elif (side == LONG and float(wall_now) < float(stop)) or (side == SHORT and float(wall_now) > float(stop)):
+            out.append(Shift("wall", f"shift:wall:{int(float(wall_now))}",
+                             f"the {name} has moved from ${float(then):,.0f} to ${float(wall_now):,.0f}, beyond your "
+                             f"stop at ${float(stop):,.0f}: the dealers' {edge} is no longer yours"))
+    return out
+
+
 def fmt_when(ms: int | None, seconds: bool = False) -> str:
     """A time a trader can set an alarm by: UTC first, PKT after it in brackets, with the date.
 

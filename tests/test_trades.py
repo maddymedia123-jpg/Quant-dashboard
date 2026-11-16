@@ -50,6 +50,53 @@ def candles(n=400, start=80_000.0, seed=7, drift=0.0, bar=200.0) -> pd.DataFrame
                          "close": closes, "volume": rng.uniform(10, 100, n)})
 
 
+# ---------- pre-invalidation: what the entry rests on, and when it shifts (his Section 6) ----------
+def test_the_entry_basis_records_the_flow_read_and_the_wall_on_the_trades_side():
+    st = state(**{"liquidity.1h.cumulative_delta": {"state": "bullish absorption"}})
+    ctx = trades.flow_and_walls(st, "1h", {"put_wall": 79_500.0, "call_wall": 82_000.0})
+    assert ctx == {"timeframe": "1h", "flow_state": "bullish absorption", "put_wall": 79_500.0, "call_wall": 82_000.0}
+    assert trades.entry_basis(ctx, trades.LONG) == {"timeframe": "1h", "flow_state": "bullish absorption",
+                                                    "wall": 79_500.0, "wall_kind": "put wall"}
+    assert trades.entry_basis(ctx, trades.SHORT)["wall_kind"] == "call wall"
+    assert trades.entry_basis(ctx, trades.SHORT)["wall"] == 82_000.0
+    bare = trades.flow_and_walls(state(), "1h", None)
+    assert bare["flow_state"] is None and bare["put_wall"] is None
+
+
+def test_the_flow_turning_against_the_position_is_one_shift_named_by_what_the_tape_did():
+    plan = {"basis": {"timeframe": "1h", "flow_state": "bullish absorption", "wall": None, "wall_kind": "put wall"}}
+    now = lambda fs: {"timeframe": "1h", "flow_state": fs, "put_wall": None, "call_wall": None}  # noqa: E731
+    s = trades.shifts(plan, trades.LONG, 79_000.0, now("bearish absorption"))
+    assert [(x.kind, x.key) for x in s] == [("flow", "shift:flow:bearish absorption")]
+    assert "turned against the position" in s[0].note and "sellers met every bid" in s[0].note
+    assert "at entry: bullish absorption" in s[0].note
+    assert trades.shifts(plan, trades.LONG, 79_000.0, now("confirming up")) == []
+    assert trades.shifts(plan, trades.LONG, 79_000.0, now("flat")) == []
+    assert trades.shifts(plan, trades.LONG, 79_000.0, now(None)) == []
+    already = {"basis": {**plan["basis"], "flow_state": "confirming down"}}
+    assert trades.shifts(already, trades.LONG, 79_000.0, now("bearish absorption")) == [], "against us at entry: no shift"
+    short = trades.shifts({"basis": {**plan["basis"], "flow_state": "bearish absorption"}}, trades.SHORT, 81_000.0, now("confirming up"))
+    assert len(short) == 1 and "buyers are winning at market" in short[0].note
+
+
+def test_the_supporting_wall_moving_beyond_the_stop_or_vanishing_is_a_shift():
+    plan = {"basis": {"timeframe": "1h", "flow_state": None, "wall": 79_500.0, "wall_kind": "put wall"}}
+    now = lambda pw: {"timeframe": "1h", "flow_state": None, "put_wall": pw, "call_wall": 83_000.0}  # noqa: E731
+    moved = trades.shifts(plan, trades.LONG, 79_000.0, now(78_500.0))
+    assert [(x.kind, x.key) for x in moved] == [("wall", "shift:wall:78500")]
+    assert "put wall" in moved[0].note and "$79,500" in moved[0].note and "$78,500" in moved[0].note
+    assert "beyond your stop at $79,000" in moved[0].note
+    gone = trades.shifts(plan, trades.LONG, 79_000.0, now(None))
+    assert [(x.kind, x.key) for x in gone] == [("wall", "shift:wall:gone")] and "no longer there" in gone[0].note
+    assert trades.shifts(plan, trades.LONG, 79_000.0, now(79_400.0)) == [], "still between the entry and the stop"
+    assert trades.shifts({"basis": {"wall": None}}, trades.LONG, 79_000.0, now(None)) == [], "no wall at entry"
+    assert trades.shifts({}, trades.LONG, 79_000.0, now(None)) == [], "an older card without a basis warns of nothing"
+    short_plan = {"basis": {"timeframe": "1h", "flow_state": None, "wall": 81_500.0, "wall_kind": "call wall"}}
+    s = trades.shifts(short_plan, trades.SHORT, 82_000.0, {"timeframe": "1h", "flow_state": None,
+                                                            "put_wall": 78_000.0, "call_wall": 82_400.0})
+    assert len(s) == 1 and "call wall" in s[0].note and "beyond your stop at $82,000" in s[0].note
+
+
 # ---------- the constants the app reaches for ----------
 def test_the_atr_fallback_constant_is_reachable_from_this_module():
     """app.py computes `entry * trades.DEFAULT_ATR_PCT` whenever the volatility matrix has no ATR for a

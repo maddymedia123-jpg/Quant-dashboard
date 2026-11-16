@@ -1308,8 +1308,10 @@ def _ladder_html(points: list[tuple[str, float, str]], risk: tuple[float, float]
     return out + "</div>"
 
 
-def trade_card_html(trade: dict, prog=None, now_ms: int = 0, price_now: float | None = None) -> str:
-    """One pinned position: the plan as it was written, and where it stands now.
+def trade_card_html(trade: dict, prog=None, now_ms: int = 0, price_now: float | None = None,
+                    warnings: list[str] | tuple[str, ...] = ()) -> str:
+    """One pinned position: the plan as it was written, and where it stands now. `warnings` are the
+    pre-invalidation events logged for it (newest first), shown as chips above the targets.
 
     `price_now` lets the card tell "no price this refresh" apart from "there is a price but this
     position's arithmetic failed" - it used to blame the feed for both."""
@@ -1396,6 +1398,11 @@ def trade_card_html(trade: dict, prog=None, now_ms: int = 0, price_now: float | 
     if given is not None and verdict not in ("sound", "supplied"):
         right += "<p class='muted'>The stop you gave is corrected here; the desk trades the one above.</p>"
     body += f"<div class='ti-two'><div>{left}</div><div>{right}</div></div>"
+
+    # --- his Section 6: what has shifted under the entry before the stop ---
+    for w in warnings:
+        text = str(w).split("pre-invalidation:", 1)[-1].strip() or str(w)
+        body += f"<p><span class='ti-chip warn'>pre-invalidation</span> {html.escape(text)}</p>"
 
     # --- the timed targets ---
     if str(plan.get("layout") or "") == "mean-reversion":

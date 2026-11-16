@@ -108,6 +108,17 @@ def test_a_burst_larger_than_a_pass_is_capped():
     assert len(events) == alerts.MAX_PER_PASS
 
 
+def test_a_shift_is_an_urgent_pre_invalidation_warning_that_says_the_stop_still_stands():
+    from core.trades import Shift
+    s = Shift("flow", "shift:flow:bearish absorption",
+              "the order flow on the 1h chart has turned against the position: sellers met every bid")
+    ev = detect_events(trade(), 80_200.0, None, shifts=[s])
+    assert [(e.kind, e.dedup_key, e.urgent) for e in ev] == [("shift", "shift:flow:bearish absorption", True)]
+    assert "pre-invalidation" in ev[0].headline and "sellers met every bid" in ev[0].headline
+    assert "stop at $79,000" in ev[0].headline and "not been touched" in ev[0].headline
+    assert ev[0].price == 80_200.0
+
+
 # ---------- the store makes it fire once ----------
 @pytest.fixture
 def store():
@@ -129,6 +140,34 @@ def test_the_same_event_is_logged_once_however_often_it_is_detected(store):
                 logged.append(row)
     assert len(logged) == 1, "one alert, not five"
     assert len(store.trade_events(tid)) == 1
+
+
+def test_the_pass_reads_each_trades_desk_for_shifts_and_a_failing_read_costs_no_other_alert(store):
+    """all_trade_alerts asks for the trade's desk context (flow read, walls) once per category; a shift
+    is logged like any event, and a context that cannot be built leaves the target and stop alerts intact."""
+    from core import pipeline
+    plan = {"targets": [{"name": "TP1", "price": 80_600.0}],
+            "basis": {"timeframe": "1h", "flow_state": "bullish absorption", "wall": 79_500.0, "wall_kind": "put wall"}}
+    tid = store.open_trade(opened_ms=NOW, asset="BTC/USDT", side=LONG, entry=ENTRY, stop=79_000.0,
+                           given_stop=None, stop_verdict="supplied", category="live", plan=plan)
+    asked = []
+
+    def watch_for(category):
+        asked.append(category)
+        return {"timeframe": "1h", "flow_state": "bearish absorption", "put_wall": 78_000.0, "call_wall": None}
+    pipeline.all_trade_alerts(store, 80_650.0, NOW, {}, False, watch_for=watch_for)
+    kinds = sorted(e["kind"] for e in store.trade_events(tid))
+    assert kinds == ["shift", "shift", "target"] and asked == ["live"]
+
+    def broken(category):
+        raise RuntimeError("desk state unavailable")
+    tid2 = store.open_trade(opened_ms=NOW, asset="BTC/USDT", side=LONG, entry=ENTRY, stop=79_000.0,
+                            given_stop=None, stop_verdict="supplied", category="live", plan=plan)
+    r = pipeline.all_trade_alerts(store, 80_650.0, NOW, {}, False, watch_for=broken)
+    assert [e["kind"] for e in store.trade_events(tid2)] == ["target"]
+    assert any("desk state unavailable" in p for p in r.problems)
+    plain = pipeline.all_trade_alerts(store, 80_650.0, NOW, {}, False)
+    assert not plain.problems, "no watcher given: the pass is the old pass"
 
 
 def test_only_what_a_channel_accepted_is_marked_as_notified(store):

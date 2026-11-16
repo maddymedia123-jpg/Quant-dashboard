@@ -26,6 +26,15 @@ def target(name="TP1", price=78_600.0, reward=1.5, due_ms=NOW + HOUR, due_from="
             "basis": basis}
 
 
+def test_the_card_shows_its_pre_invalidation_warnings_as_chips():
+    row = {"id": 3, "asset": "BTC/USDT", "side": LONG, "entry": 80_000.0, "stop": 79_000.0, "status": "open",
+           "plan": plan()}
+    h = panels.trade_card_html(row, None, NOW, 80_100.0,
+                               warnings=["BTC/USDT LONG - pre-invalidation: the put wall has moved to $78,500"])
+    assert "pre-invalidation" in h and "the put wall has moved to $78,500" in h and "ti-chip warn" in h
+    assert "pre-invalidation" not in panels.trade_card_html(row, None, NOW, 80_100.0)
+
+
 def plan(**over) -> dict:
     base = {
         "asset": "BTC/USDT", "side": LONG, "entry": 78_000.0, "category": "live", "timeframe": "1h",

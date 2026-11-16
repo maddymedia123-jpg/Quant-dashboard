@@ -70,7 +70,8 @@ def one_pass(store: Store, now_ms: int | None = None, market=None) -> pipeline.P
     may_send = not _offline()        # fixture data is not the market: never sent anywhere
     r = pipeline.ledger(store, m, analyses, now, classification)
     pipeline.market_alerts(store, m, analyses, now, _secrets(), may_send, r)
-    pipeline.all_trade_alerts(store, m.spot.last, now, _secrets(), may_send, r)
+    pipeline.all_trade_alerts(store, m.spot.last, now, _secrets(), may_send, r,
+                              watch_for=pipeline.desk_watcher(m, analyses, now))
     book_report(store, now, r)
     # election-day fix 6: the agents run on their own after a print settles or a day plan fails
     from core import scheduled_runs
