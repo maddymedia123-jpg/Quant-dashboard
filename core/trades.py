@@ -46,6 +46,11 @@ CLUSTER_ATR = 1.0
 # liquidity also takes the stop. Anything further beyond is just a level further away.
 HUNT_ATR = 1.0
 TARGET_SIGMAS = (1.0, 2.0, 3.0)
+# The plan's layout. TREND is the usual three targets off the volatility bands. MEAN_REVERSION is the
+# conservative plan a counter-trend trade gets (his v28: against the higher desks' bias): what a return
+# to value gives - the point of control, then the far edge of value - and no third target reaching for
+# expansion against the higher timeframes.
+TREND, MEAN_REVERSION = "trend", "mean-reversion"
 # Percentiles of the measured adverse excursion: the first is an ordinary pullback, the second is the
 # edge of ordinary, and past the third the move that was expected is not happening.
 PULLBACK_PCTILES = (50, 80, 95)
@@ -249,32 +254,63 @@ class TimedTarget:
         return self.due_from.startswith("Fibonacci")
 
 
-def timed_targets(state: dict, side: str, entry: float, stop: float, timeframe: str, atr: float,
-                  fib=None, now_ms: int | None = None) -> list[TimedTarget]:
-    """Three targets: the price from the volatility bands, the time from the Fibonacci time zones.
+def _band_target(bands: dict, sigma: float, entry: float, long: bool, atr: float, timeframe: str) -> tuple[float, str]:
+    """The sigma band ahead of the entry, or a multiple of range that says the band was behind it."""
+    band = bands.get(f"sigma{int(sigma)}_{'up' if long else 'dn'}")
+    try:
+        if band is not None and ((float(band) > entry) if long else (float(band) < entry)):
+            return float(band), f"the {int(sigma)} sigma band on the {timeframe}"
+    except (TypeError, ValueError):
+        pass
+    return (entry + sigma * atr if long else entry - sigma * atr,
+            f"{sigma:g} x the {timeframe} range (the {int(sigma)} sigma band is behind the entry)")
 
-    A band that sits behind the entry is no target at all, so it falls back to a multiple of range; the
-    fallback says so in its basis rather than pretending the band produced it."""
+
+def _value_targets(state: dict, bands: dict, entry: float, long: bool, atr: float, timeframe: str) -> list[tuple[float, str]]:
+    """The mean-reversion pair: the point of control if it is ahead of the entry (else the 1-sigma band,
+    saying why), then the far edge of value if it is beyond the first target (else the 2-sigma band)."""
+    vp = ((state.get("liquidity") or {}).get(timeframe) or {}).get("volume_profile") or {}
+    vp = vp if vp.get("available", True) else {}
+
+    def ahead(level, beyond):
+        try:
+            v = float(level)
+        except (TypeError, ValueError):
+            return None
+        return v if ((v > beyond) if long else (v < beyond)) else None
+
+    poc = ahead(vp.get("point_of_control"), entry)
+    if poc is not None:
+        first = (poc, f"the point of control on the {timeframe} (value mid)")
+    else:
+        price, basis = _band_target(bands, TARGET_SIGMAS[0], entry, long, atr, timeframe)
+        first = (price, basis + ("; the value mid is behind the entry" if vp else ""))
+    edge = ahead(vp.get("value_area_high" if long else "value_area_low"), first[0])
+    second = ((edge, f"the {'top' if long else 'bottom'} of value on the {timeframe}") if edge is not None
+              else _band_target(bands, TARGET_SIGMAS[1], entry, long, atr, timeframe))
+    return [first, second]
+
+
+def timed_targets(state: dict, side: str, entry: float, stop: float, timeframe: str, atr: float,
+                  fib=None, now_ms: int | None = None, layout: str = TREND) -> list[TimedTarget]:
+    """The targets: the time from the Fibonacci time zones, the price from the layout.
+
+    TREND: three targets off the volatility bands. A band that sits behind the entry is no target at all,
+    so it falls back to a multiple of range; the fallback says so in its basis rather than pretending the
+    band produced it. MEAN_REVERSION: two targets off value (see _value_targets), no third."""
     long = side == LONG
     bands = ((state.get("volatility") or {}).get(timeframe) or {}).get("bands") or {}
     risk = abs(entry - stop) or atr
     # only windows still ahead of us: a target dated in the past is worse than an undated one
     zones = [z for z in (list(getattr(fib, "upcoming", []) or []) if fib is not None else [])
              if now_ms is None or z.timestamp_ms > now_ms]
+    if layout == MEAN_REVERSION:
+        prices = _value_targets(state, bands, entry, long, atr, timeframe)
+    else:
+        prices = [_band_target(bands, sigma, entry, long, atr, timeframe) for sigma in TARGET_SIGMAS]
 
     out: list[TimedTarget] = []
-    for i, sigma in enumerate(TARGET_SIGMAS):
-        key = f"sigma{int(sigma)}_{'up' if long else 'dn'}"
-        band = bands.get(key)
-        price, basis = None, ""
-        try:
-            if band is not None and ((float(band) > entry) if long else (float(band) < entry)):
-                price, basis = float(band), f"the {int(sigma)} sigma band on the {timeframe}"
-        except (TypeError, ValueError):
-            price = None
-        if price is None:
-            price = entry + sigma * atr if long else entry - sigma * atr
-            basis = f"{sigma:g} x the {timeframe} range (the {int(sigma)} sigma band is behind the entry)"
+    for i, (price, basis) in enumerate(prices):
         if i < len(zones):
             due, due_from = zones[i].timestamp_ms, "Fibonacci time window"
         elif now_ms is not None:

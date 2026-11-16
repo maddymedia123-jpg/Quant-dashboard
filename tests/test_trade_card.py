@@ -127,6 +127,16 @@ def test_an_unmeasurable_guardrail_says_why_rather_than_printing_zeros():
     assert "is ordinary" not in h
 
 
+def test_a_mean_reversion_layout_is_named_on_the_card_and_a_trend_plan_is_not():
+    note = "Counter-trend against the Weekly (BEAR) desk: a conservative mean-reversion plan, targets at value, no TP3."
+    h = panels.trade_card_html(row(plan=plan(layout="mean-reversion", layout_note=note,
+                                             targets=[target(), target("TP2", 79_200.0, 3.0)])), None, NOW)
+    t = text(h)
+    assert "Mean-reversion plan" in t and "Counter-trend against the Weekly (BEAR) desk" in t
+    plain = text(panels.trade_card_html(row(), None, NOW))
+    assert "Mean-reversion plan" not in plain and "Counter-trend" not in plain
+
+
 def test_the_schedule_and_both_consultations_are_on_the_card():
     h = panels.trade_card_html(row(plan=plan(
         alignment=[{"category": "live", "label": "Live Recon", "bias": "BULL", "verdict": "supports",

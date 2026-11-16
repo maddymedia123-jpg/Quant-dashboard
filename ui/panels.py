@@ -1392,6 +1392,9 @@ def trade_card_html(trade: dict, prog=None, now_ms: int = 0, price_now: float | 
     body += f"<div class='ti-two'><div>{left}</div><div>{right}</div></div>"
 
     # --- the timed targets ---
+    if str(plan.get("layout") or "") == "mean-reversion":
+        body += ("<p><span class='ti-chip neutral'>Mean-reversion plan</span> "
+                 f"{html.escape(str(plan.get('layout_note') or 'Counter-trend: targets at value, no TP3.'))}</p>")
     if targets:
         rows = "".join(
             f"<tr><td><strong>{html.escape(str(t.get('name')))}</strong></td>"
