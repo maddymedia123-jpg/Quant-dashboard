@@ -23,7 +23,7 @@ from core.agents.judge import Judge
 from core.agents.recon_profiles import PROFILES, ReconProfile
 from core.agents.rubric import BEARISH, BULLISH, DOMAIN_BY_KEY, RubricItem
 from core.traps import visible_to
-from core.trades import LONG, StopVerdict, TimedTarget
+from core.trades import LONG, MEAN_REVERSION, TREND, StopVerdict, TimedTarget
 
 log = logging.getLogger(__name__)
 
@@ -230,6 +230,34 @@ def category_alignment(store, side: str, now_ms: int) -> tuple[DeskAlignment, ..
                                  anchor.get("confidence"), stale,
                                  "its candle has closed, so this verdict is not current" if stale else ""))
     return tuple(out)
+
+
+@dataclass(frozen=True)
+class Layout:
+    kind: str                # core.trades.TREND | core.trades.MEAN_REVERSION
+    note: str
+
+
+def plan_layout(alignment: tuple[DeskAlignment, ...], category: str) -> Layout:
+    """His v28 conviction rule, the half the cross-desk handshake does not do. The handshake already scales
+    conviction (+10% per higher desk agreeing, -20% per higher desk opposing); this decides the plan's SHAPE.
+    A trade whose side opposes every higher desk with a current verdict is counter-trend and gets the
+    conservative mean-reversion layout: targets at value, no TP3. Higher desks that disagree with each
+    other, a lower desk opposing, or no verdict at all leave the trend layout and say so."""
+    order = list(PROFILES)
+    higher = [a for a in alignment if a.category in order and order.index(a.category) > order.index(category)]
+    against = [a for a in higher if a.verdict == "opposes"]
+    with_ = [a for a in higher if a.verdict == "supports"]
+    names = ", ".join(f"{a.label} ({a.bias})" for a in against)
+    if against and not with_:
+        return Layout(MEAN_REVERSION, f"Counter-trend against the {names} desk{'s' if len(against) > 1 else ''}: "
+                                      "a conservative mean-reversion plan, targets at value, no TP3.")
+    if against and with_:
+        return Layout(TREND, f"The higher desks disagree ({names} against; "
+                             f"{', '.join(f'{a.label} ({a.bias})' for a in with_)} with), so the plan keeps its trend layout.")
+    if with_:
+        return Layout(TREND, f"With the higher desk{'s' if len(with_) > 1 else ''}: trend layout.")
+    return Layout(TREND, "No current verdict from a higher desk: trend layout.")
 
 
 def trap_proximity(store, side: str, entry: float, stop: float, targets: list[TimedTarget],

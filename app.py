@@ -50,7 +50,7 @@ from core.agents.settings import load_settings
 from core.agents.judge import Judge
 from core.agents.deck import sub_agent_deck
 from core.agents.trap_desk import judge_candidate, record
-from core.agents.trade_desk import judge_trade
+from core.agents.trade_desk import category_alignment, judge_trade, plan_layout
 from core.alerts import Dispatcher
 from core.indicators.fib_time import fib_time_zones
 from core import trades
@@ -944,13 +944,20 @@ def build_trade_plan(asset: str, side: str, entry: float, given_stop: float | No
 
     stop = trades.verify_stop(state, side, entry, given_stop, mtf, atr)
     fib = fib_time_zones(frame, atr_value=atr) if frame is not None and not frame.empty else None
-    targets = trades.timed_targets(state, side, entry, stop.stop, htf, atr, fib, run_ms)
+    # his v28 counter-trend rule: the layout is decided from the desks' anchored verdicts (ledger, no model)
+    try:
+        layout = plan_layout(category_alignment(store, side, run_ms), category)
+    except Exception as e:  # noqa: BLE001 - an unreadable ledger leaves the trend layout
+        layout = plan_layout((), category)
+        layout = replace(layout, note=f"{layout.note} (desks unreadable: {e})")
+    targets = trades.timed_targets(state, side, entry, stop.stop, htf, atr, fib, run_ms, layout=layout.kind)
     pullback = trades.pullback_band(frame, side, timeframe=mtf)
     schedule = trades.monitoring_schedule(run_ms, profile.timeframes, targets)
 
     plan = {
         "asset": asset, "side": side, "entry": entry, "category": category, "timeframe": mtf,
         "horizon": profile.horizon, "atr": round(atr, 2), "built_ms": run_ms,
+        "layout": layout.kind, "layout_note": layout.note,
         "stop_verdict": stop.verdict, "stop_reasons": list(stop.reasons),
         "protects_at": stop.protects_at, "protects_kind": stop.protects_kind,
         "targets": [{"name": t.name, "price": t.price, "basis": t.basis, "due_ms": t.due_ms,

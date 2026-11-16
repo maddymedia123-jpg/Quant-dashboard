@@ -298,6 +298,40 @@ def test_the_alignment_summary_reads_in_plain_english(store):
     assert any("against this trade" in n for n in v2.notes)
 
 
+def _al(category, verdict, bias=""):
+    return td.DeskAlignment(category, PROFILES[category].label, bias or ("BULL" if verdict == "supports" else "BEAR"), verdict)
+
+
+def test_a_trade_against_the_higher_desks_gets_the_mean_reversion_layout():
+    """His v28 conviction rule, the half the handshake did not have: a lower-timeframe trade that opposes
+    the higher desks' anchored bias is laid out as a conservative mean-reversion plan, not a trend plan."""
+    lay = td.plan_layout((_al("live", "supports"), _al("intraday", "opposes"), _al("weekly", "opposes"),
+                          _al("monthly", "silent")), "live")
+    assert lay.kind == td.MEAN_REVERSION
+    assert "Counter-trend" in lay.note and "Intraday" in lay.note and "Weekly" in lay.note
+    assert "Monthly" not in lay.note, "a silent desk is not an opposing one"
+
+
+def test_with_the_higher_desks_or_without_a_verdict_the_plan_keeps_its_trend_layout():
+    with_ = td.plan_layout((_al("live", "supports"), _al("intraday", "supports"), _al("weekly", "silent"),
+                            _al("monthly", "neutral")), "live")
+    assert with_.kind == td.TREND and "with the higher desk" in with_.note.lower()
+    silent = td.plan_layout(tuple(_al(c, "silent") for c in PROFILES), "live")
+    assert silent.kind == td.TREND and "no current verdict" in silent.note.lower()
+    lower_only = td.plan_layout((_al("live", "opposes"), _al("intraday", "supports"), _al("weekly", "silent"),
+                                 _al("monthly", "silent")), "intraday")
+    assert lower_only.kind == td.TREND, "a lower desk opposing is an early warning, not a layout change"
+    top = td.plan_layout((_al("live", "opposes"), _al("intraday", "opposes"), _al("weekly", "opposes"),
+                          _al("monthly", "supports")), "monthly")
+    assert top.kind == td.TREND, "the Monthly desk has no higher desk to be counter to"
+
+
+def test_higher_desks_that_disagree_with_each_other_leave_the_trend_layout_and_say_so():
+    lay = td.plan_layout((_al("live", "supports"), _al("intraday", "supports"), _al("weekly", "opposes"),
+                          _al("monthly", "silent")), "live")
+    assert lay.kind == td.TREND and "disagree" in lay.note
+
+
 def test_an_unreadable_ledger_leaves_the_desks_silent_rather_than_raising():
     class Broken:
         def get_live_anchor(self, category="live"):

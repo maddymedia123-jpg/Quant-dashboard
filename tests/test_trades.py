@@ -194,6 +194,36 @@ def test_targets_come_from_the_volatility_bands_and_are_dated_by_the_fib_windows
     assert "sigma band" in ts[0].basis
 
 
+def test_the_mean_reversion_layout_targets_the_value_mid_then_the_far_edge_and_has_no_third():
+    """Counter-trend (his v28): a conservative plan takes what a return to value gives. Buying the bottom of
+    value at 79,500: TP1 is the point of control (80,000), TP2 the top of value (80,600), and there is no
+    TP3 reaching for expansion against the higher timeframes."""
+    fib = Fib(NOW + 3_600_000, NOW + 7_200_000, NOW + 10_800_000)
+    ts = trades.timed_targets(state(), LONG, 79_500.0, 79_000.0, "1h", ATR, fib, NOW, layout=trades.MEAN_REVERSION)
+    assert [t.name for t in ts] == ["TP1", "TP2"]
+    assert [t.price for t in ts] == [80_000.0, 80_600.0]
+    assert "value" in ts[0].basis and "value" in ts[1].basis
+    assert all(t.dated_by_fib for t in ts) and [t.due_ms for t in ts] == [NOW + 3_600_000, NOW + 7_200_000]
+    assert [t.reward_r for t in ts] == [1.0, 2.2]
+
+
+def test_the_short_mean_reversion_mirror_reads_value_below_entry():
+    ts = trades.timed_targets(state(), SHORT, 80_500.0, 81_000.0, "1h", ATR, None, NOW, layout=trades.MEAN_REVERSION)
+    assert [t.price for t in ts] == [80_000.0, 79_400.0], "the point of control, then the bottom of value"
+    assert all(t.due_ms and t.due_ms > NOW for t in ts)
+
+
+def test_value_behind_the_entry_falls_back_to_the_bands_and_says_so():
+    """Long from 80,100, above the point of control: value cannot give a first target, so the 1-sigma band
+    does; the top of value (80,600) is not beyond that band, so TP2 is the 2-sigma band."""
+    ts = trades.timed_targets(state(), LONG, 80_100.0, 79_600.0, "1h", ATR, None, NOW, layout=trades.MEAN_REVERSION)
+    assert [t.price for t in ts] == [80_600.0, 81_200.0]
+    assert "value mid is behind the entry" in ts[0].basis and "sigma band" in ts[1].basis
+    assert len(ts) == 2
+    none = trades.timed_targets({"volatility": {}}, LONG, ENTRY, 79_000.0, "1h", ATR, None, NOW, layout=trades.MEAN_REVERSION)
+    assert [t.price for t in none] == [80_400.0, 80_800.0], "no value profile, no bands: two range multiples"
+
+
 def test_the_short_targets_use_the_bands_below_entry():
     ts = trades.timed_targets(state(), SHORT, ENTRY, 81_000.0, "1h", ATR, None, NOW)
     assert [t.price for t in ts] == [79_400.0, 78_800.0, 78_200.0]
