@@ -155,16 +155,28 @@ def options(derivs: dict | None, zone: tuple[float, float], atr: float) -> Famil
     return _vote("options", votes, "no options wall at the zone", "walls on both sides of the zone")
 
 
+def _quiet_tape(chart_tf: str, liquidity: dict | None) -> str:
+    """The backdrop clause when taker swings have compressed against their norm (core.indicators.liquidity
+    .flow_variance): the one population-level precursor the cascade research supported. Never a vote."""
+    tv = ((liquidity or {}).get(chart_tf) or {}).get("taker_variance") or {}
+    if not tv.get("available") or tv.get("state") != "compressed":
+        return ""
+    return (f"; the tape has gone quiet: taker swings over the last {tv.get('short_bars', 20)} bars are "
+            f"{float(tv.get('ratio') or 0) * 100:.0f}% of the {tv.get('long_bars', 100)}-bar norm, the backdrop "
+            "the recorded cascades shared, a condition and not a signal")
+
+
 def flow(chart_tf: str, liquidity: dict | None) -> Family:
     state = ((liquidity or {}).get(chart_tf) or {}).get("cumulative_delta", {}).get("state")
+    quiet = _quiet_tape(chart_tf, liquidity)
     word = {"bullish absorption": (LONG, "price was pushed down but buyers took everything offered"),
             "bearish absorption": (SHORT, "price was pushed up but sellers met every bid"),
             "confirming up": (LONG, "buyers are winning at market as price rises"),
             "confirming down": (SHORT, "sellers are winning at market as price falls")}.get(state)
     if word is None:
-        return Family("flow", LABEL["flow"], NONE, "no turn in the order flow yet" if state else
-                      "order flow not readable on this chart")
-    return Family("flow", LABEL["flow"], word[0], word[1])
+        return Family("flow", LABEL["flow"], NONE, ("no turn in the order flow yet" if state else
+                                                    "order flow not readable on this chart") + quiet)
+    return Family("flow", LABEL["flow"], word[0], word[1] + quiet)
 
 
 def _magnet(liq_levels: dict | None, zone: tuple[float, float] | None) -> tuple[str, str] | None:

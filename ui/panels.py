@@ -896,6 +896,7 @@ def liquidity_html(by_tf: dict) -> str:
     for tf, d in by_tf.items():
         pools = (d or {}).get("pools") or {}
         cvd = (d or {}).get("cumulative_delta") or {}
+        tv = (d or {}).get("taker_variance") or {}
         vp = (d or {}).get("volume_profile") or {}
         if not cvd.get("available"):
             rows += f"<tr><td>{html.escape(tf)}</td><td colspan='4' class='muted'>— not enough candles</td></tr>"
@@ -919,6 +920,9 @@ def liquidity_html(by_tf: dict) -> str:
                     + (f", {'accelerating' if (cvd.get('acceleration') or 0) * cvd['velocity_per_bar'] > 0 else 'slowing'}"
                        if cvd.get("acceleration") is not None and cvd['velocity_per_bar'] else "")
                     + "</span>" if cvd.get("velocity_per_bar") is not None else "")
+                 + (f"<br><span class='muted'>quiet tape: taker swings {float(tv.get('ratio') or 0) * 100:.0f}% of the "
+                    f"{tv.get('long_bars', 100)}-bar norm</span>"
+                    if tv.get("available") and tv.get("state") == "compressed" else "")
                  + ("" if cvd.get("units") == "BTC" else " <span class='muted'>(proxy)</span>") + "</td>"
                  f"<td>{'—' if not vp.get('available') else _dash(vp.get('point_of_control'), 0, '$')}</td>"
                  f"<td>{oi_cell}</td></tr>")
@@ -929,6 +933,8 @@ def liquidity_html(by_tf: dict) -> str:
     body += ("<p class='muted'>"
              + ("Delta is real taker volume - market buys minus market sells - on the Gate.io BTC_USDT perpetual, "
                 "with its velocity: the average per bar over the last five, and whether that is speeding up. "
+                "A quiet tape is taker swings at half their 100-bar norm or less, the backdrop the recorded "
+                "liquidation cascades shared: a condition, not a signal. "
                 if real else "")
              + ("Rows marked proxy have no taker data for that timeframe and use the candle close-position "
                 "proxy, a lean rather than a measurement. " if methods - {"BTC"} else "")
