@@ -121,6 +121,14 @@ def _rows(cur) -> list[dict]:
     return [dict(r) for r in cur.fetchall()]
 
 
+def _lower_row(cur, values) -> dict:
+    """sqlite3's row factory, a dict with lower-cased column names. A Turso-created table names its `plan`
+    column `PLAN` (see _TursoCursor); sqlite3.Row answered row["plan"] case-insensitively but dict(row) kept
+    `PLAN`, so the MCP server, which reads the replica file through sqlite3, served every pinned trade with
+    an empty plan (17 Nov). Every column in SCHEMA is lowercase, so this restores the names exactly."""
+    return {str(d[0]).lower(): v for d, v in zip(cur.description, values)}
+
+
 log = logging.getLogger(__name__)
 
 try:                                # Turso's client; absent on a machine that only ever uses a local file
@@ -266,7 +274,7 @@ class Store:
                                              check_same_thread=False)
             else:
                 self._conn = sqlite3.connect(self.path, check_same_thread=False)
-            self._conn.row_factory = sqlite3.Row
+            self._conn.row_factory = _lower_row
             self.backend = "sqlite"
         self._lock = threading.Lock()
         if self.readonly:

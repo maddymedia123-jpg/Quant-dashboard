@@ -327,7 +327,9 @@ def traps(store, status: str | None = None, limit: int = 50, now_ms: int | None 
 def trade_journal(store, status: str | None = None, limit: int = 20, now_ms: int | None = None) -> dict:
     """The pinned trades: side, entry, the stop the desk set and the one the trader gave with the desk's
     verdict on it, the plan written at open (never rewritten), status and close, and every event logged
-    on the trade. `status` is open or closed; empty is all."""
+    on the trade (kinds target, stop, trap, checkpoint, shift = a pre-invalidation warning, master = the
+    desk-owned swing card opening or closing; plan.master, plan.desk and plan.gate mark that card).
+    `status` is open or closed; empty is all."""
     now = _now(now_ms)
     rows = store.trades(status=status or None, limit=_limit(limit, 100))
     trades = []
@@ -342,7 +344,8 @@ def trade_journal(store, status: str | None = None, limit: int = 20, now_ms: int
                        "plan": r.get("plan") or {}, "events": events})
     return _clean({"as_of_utc": _iso(now), "status": status, "trades": trades,
                    "how_to_read": "the plan is the thesis at open and does not change; read the events for what has "
-                                  "happened since; an empty list means no trade is pinned"})
+                                  "happened since (shift = pre-invalidation warning, stop untouched; master = the "
+                                  "desk-owned swing card, plan.master true); an empty list means no trade is pinned"})
 
 
 def order_book(store, now_ms: int | None = None) -> dict:

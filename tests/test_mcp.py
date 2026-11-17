@@ -226,3 +226,28 @@ def test_the_access_log_never_keeps_a_path_token():
                             ("1.2.3.4:0", "POST", "/k/0123456789abcdef0123/mcp", "1.1", 200), None)
     assert mcp_server.RedactKey().filter(rec) is True
     assert "0123456789abcdef0123" not in rec.getMessage() and "/k/REDACTED/mcp" in rec.getMessage()
+
+
+def test_readonly_store_reads_turso_cased_columns(tmp_path):
+    """Turso rewrites a column named after an SQL keyword: `plan` is stored as `PLAN` (27 Oct). The worker's
+    libsql cursor lower-cases names, but the MCP server reads the replica file through sqlite3 read-only,
+    where dict(sqlite3.Row) kept `PLAN`, so trade_journal served every trade with `plan: {}` (17 Nov)."""
+    import sqlite3
+    p = tmp_path / "cased.sqlite"
+    c = sqlite3.connect(p)
+    c.execute("CREATE TABLE trades (id INTEGER PRIMARY KEY AUTOINCREMENT, opened_ms INTEGER NOT NULL, asset TEXT NOT NULL, "
+              "side TEXT NOT NULL, entry REAL NOT NULL, stop REAL NOT NULL, given_stop REAL, stop_verdict TEXT NOT NULL, "
+              "category TEXT NOT NULL, PLAN TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open', closed_ms INTEGER, "
+              "closed_reason TEXT, closed_price REAL, refreshed_ms INTEGER)")
+    c.commit()
+    c.close()
+    store = Store(p)
+    tid = store.open_trade(opened_ms=NOW - 4 * H, asset="BTC/USDT", side="SHORT", entry=64_127.0, stop=66_291.0,
+                           given_stop=66_291.0, stop_verdict="hard invalidation", category="weekly",
+                           plan={"master": True, "desk": "weekly", "targets": [{"name": "TP1", "price": 62_713.0}]})
+    assert store.trade(tid)["plan"]["desk"] == "weekly", "the writer's own read"
+    ro = Store(p, readonly=True)
+    row = ro.trade(tid)
+    assert row["plan"]["desk"] == "weekly" and "PLAN" not in row, "names come back lowercase, once"
+    tj = mcp_tools.trade_journal(ro, now_ms=NOW)["trades"]
+    assert tj[0]["plan"]["master"] is True and tj[0]["plan"]["targets"][0]["price"] == 62_713.0

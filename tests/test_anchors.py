@@ -86,7 +86,7 @@ def test_a_held_pass_writes_no_signal_row_only_a_change_a_refire_or_an_hour_does
     s = Store(":memory:")
 
     def rows():
-        return s._conn.execute("SELECT COUNT(*) FROM signals").fetchone()[0]
+        return s._conn.execute("SELECT COUNT(*) AS n FROM signals").fetchone()["n"]
     anchor_step(s, "live", a, m, None, now_ms=1_000)
     anchor_step(s, "live", a, m, None, now_ms=61_000)
     anchor_step(s, "live", a, m, None, now_ms=121_000)
