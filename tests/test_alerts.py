@@ -304,3 +304,24 @@ def test_a_quiet_position_is_unaffected_by_the_ordering():
     p = progress(LONG, ENTRY, 79_000.0, targets(), 80_650.0)
     events = detect_events(trade(), 80_650.0, p, now_ms=NOW)
     assert [e.dedup_key for e in events] == ["target:TP1"]
+
+
+def test_a_closed_trades_waiting_events_are_still_sent_once(store, monkeypatch):
+    """The master card closes itself and logs the close as an event; the open-trades walk never reaches a
+    closed row, so that event sat unsent (card #1, 17 Nov 00:18 UTC). A separate sweep sends what closed
+    trades still owe, once, and only when sending is allowed."""
+    from core import pipeline
+    tid = store.open_trade(opened_ms=NOW, asset="BTC/USDT", side=LONG, entry=ENTRY, stop=79_000.0,
+                           given_stop=None, stop_verdict="hard invalidation", category="weekly", plan={"master": True})
+    store.add_trade_event(tid, NOW, "master", f"master:closed:{tid}", "🧭 Master swing LONG closed · superseded", 80_000.0)
+    store.close_trade(tid, "superseded", 80_000.0, NOW)
+    sent = []
+    monkeypatch.setattr(alerts.Dispatcher, "send", lambda self, events: (sent.extend(events), [])[1:] and (list(events), []))
+    pipeline.all_trade_alerts(store, 80_000.0, NOW, {}, True)
+    assert sent == [], "the open-trades walk cannot see a closed row"
+    held = pipeline.closed_trade_alerts(store, NOW, {}, False)
+    assert sent == [] and held.sent == 0 and len(store.trade_events(tid, unnotified_only=True)) == 1, "fixtures never send"
+    r = pipeline.closed_trade_alerts(store, NOW, {}, True)
+    assert [e.dedup_key for e in sent] == [f"master:closed:{tid}"] and r.sent == 1
+    assert store.trade_events(tid, unnotified_only=True) == []
+    assert pipeline.closed_trade_alerts(store, NOW, {}, True).sent == 0 and len(sent) == 1, "once"
