@@ -50,10 +50,10 @@ from core.agents.settings import load_settings
 from core.agents.judge import Judge
 from core.agents.deck import sub_agent_deck
 from core.agents.trap_desk import judge_candidate, record
-from core.agents.trade_desk import category_alignment, judge_trade, plan_layout
+from core.agents.trade_desk import judge_trade
 from core.alerts import Dispatcher
-from core.indicators.fib_time import fib_time_zones
 from core import trades
+from core.trade_plan import deterministic_plan
 from core.traps import desk_timeframes, find_candidates, tf_label
 from core.agents.live_recon import build_state, run_live_recon
 from core.agents import handshake
@@ -938,40 +938,11 @@ def build_trade_plan(asset: str, side: str, entry: float, given_stop: float | No
     profile = PROFILES[category]
     ltf, mtf, htf = profile.timeframes
     state = _desk_state(category, _data_stamp())
-    frame = m.spot.frames.get(mtf)
-    atr_value = (state.get("volatility", {}).get(mtf) or {}).get("atr")
-    atr = float(atr_value) if atr_value else entry * trades.DEFAULT_ATR_PCT
     run_ms = int(time.time() * 1000)
-
-    stop = trades.verify_stop(state, side, entry, given_stop, mtf, atr)
-    fib = fib_time_zones(frame, atr_value=atr) if frame is not None and not frame.empty else None
-    # his v28 counter-trend rule: the layout is decided from the desks' anchored verdicts (ledger, no model)
-    try:
-        layout = plan_layout(category_alignment(store, side, run_ms), category)
-    except Exception as e:  # noqa: BLE001 - an unreadable ledger leaves the trend layout
-        layout = plan_layout((), category)
-        layout = replace(layout, note=f"{layout.note} (desks unreadable: {e})")
-    targets = trades.timed_targets(state, side, entry, stop.stop, htf, atr, fib, run_ms, layout=layout.kind)
-    pullback = trades.pullback_band(frame, side, timeframe=mtf)
-    schedule = trades.monitoring_schedule(run_ms, profile.timeframes, targets)
-
-    plan = {
-        "asset": asset, "side": side, "entry": entry, "category": category, "timeframe": mtf,
-        "horizon": profile.horizon, "atr": round(atr, 2), "built_ms": run_ms,
-        "layout": layout.kind, "layout_note": layout.note,
-        # his Section 6: what the entry rests on, so a later pass can see it shift before the stop is hit
-        "basis": trades.entry_basis(trades.flow_and_walls(state, mtf, desk_derivs.gamma_for(category, m)), side),
-        "stop_verdict": stop.verdict, "stop_reasons": list(stop.reasons),
-        "protects_at": stop.protects_at, "protects_kind": stop.protects_kind,
-        "targets": [{"name": t.name, "price": t.price, "basis": t.basis, "due_ms": t.due_ms,
-                     "due_from": t.due_from, "reward_r": t.reward_r} for t in targets],
-        "pullback": {"available": pullback.available, "note": pullback.note,
-                     "ordinary": pullback.ordinary, "edge": pullback.edge, "breaking": pullback.breaking,
-                     "horizon_bars": pullback.horizon_bars, "timeframe": pullback.timeframe,
-                     "levels": pullback.levels(side, entry) if pullback.available else {}},
-        "schedule": [{"timeframe": c.timeframe, "at_ms": c.at_ms, "reason": c.reason} for c in schedule],
-        "ok": False, "notes": [],
-    }
+    # the deterministic half lives in core.trade_plan, shared with the worker's master swing card
+    plan, stop, targets = deterministic_plan(store, state, m.spot.frames.get(mtf), side, entry, given_stop,
+                                             category, run_ms, gamma=desk_derivs.gamma_for(category, m), asset=asset)
+    atr = float(plan["atr"])
 
     if settings is None:
         plan["notes"] = ["No model provider is configured, so the ten sub-agents were not run. The levels "
@@ -1106,6 +1077,8 @@ if screen == "trade":
 
     try:
         open_trades = store.trades(status="open", limit=10)
+        # his Section 6: the desk-owned master swing card, when there is one, sits above the trader's own
+        open_trades.sort(key=lambda t: not (t.get("plan") or {}).get("master"))
         closed_trades = store.trades(status="closed", limit=3)
     except Exception as e:  # noqa: BLE001
         open_trades, closed_trades = [], []

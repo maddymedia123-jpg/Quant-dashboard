@@ -1,0 +1,204 @@
+"""Hammad's Section 6: ONE desk-owned Master Swing Trade card.
+
+The trader's own positions stay theirs (the Active Trade screen, up to ten cards, KILL). Beside them the
+worker holds at most one card that no one typed in: opened when the monthly or the weekly desk's
+confluence gate says TRADE while price is inside the zone, from the same deterministic plan builder the
+screen uses, and closed when its last target is reached, its hard invalidation is hit, or the desk that
+opened it now trades the other way. The monthly desk outranks the weekly. No agents are consulted: the
+gate's three-of-seven families are the conviction, and the plan stands on its levels.
+
+The desks are read through a reader object (DeskReader for the real market; tests hand in fakes), so the
+rules here are testable without candles."""
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass, field
+
+from core import trades
+from core.trade_plan import deterministic_plan
+from core.trades import LONG, SHORT
+
+log = logging.getLogger(__name__)
+
+SWING_DESKS = ("monthly", "weekly")     # in rank order: the higher desk opens the card when both would
+ASSET = "BTC/USDT"
+REACH_ATR = 1.0                         # price within this many ranges of the zone's edge is "in the zone"
+EVENT = "master"
+
+
+@dataclass
+class MasterResult:
+    opened: int = 0
+    closed: list = field(default_factory=list)
+    problems: list = field(default_factory=list)
+
+
+class DeskReader:
+    """The real desks, for the worker: the price, and per desk its state (the very one its judges read),
+    its chart, its gamma walls and its confluence gate. Each state is built once per pass."""
+
+    def __init__(self, m, analyses: dict, now_ms: int):
+        self.m, self.analyses, self.now_ms = m, analyses, now_ms
+        self.price = getattr(m.spot, "last", None)
+        self._state: dict = {}
+
+    def state(self, category: str) -> dict:
+        if category not in self._state:
+            from core.agents.live_recon import build_state
+            from core.agents.recon_profiles import PROFILES
+            self._state[category] = build_state(self.m, self.analyses, self.now_ms, PROFILES[category])
+        return self._state[category]
+
+    def frame(self, category: str):
+        from core.agents.recon_profiles import PROFILES
+        return self.m.spot.frames.get(PROFILES[category].timeframes[1])
+
+    def gamma(self, category: str) -> dict | None:
+        from core.indicators import desk_derivs
+        return desk_derivs.gamma_for(category, self.m)
+
+    def gate(self, category: str):
+        """(framework, gate) for the desk, as the summary computes them."""
+        from core import confluence
+        from core.layman_summary import framework
+        a = self.analyses.get(category)
+        if a is None:
+            raise ValueError(f"no analysis for the {category} desk")
+        f = framework(a)
+        ev = evidence_for(category, self.m, self.analyses, self.state(category), self.now_ms)
+        return f, confluence.read(f, a, ev, self.now_ms)
+
+
+def evidence_for(category: str, m, analyses: dict, state: dict, now_ms: int):
+    """The gate's evidence for a desk, built from core alone the way the page builds it (app._desk_evidence):
+    the desk's harmonics, its break reads, its liquidity, this week's prints, the dollar and yields, the
+    crowd and the resting liquidation clusters."""
+    from core.agents.context import _rates
+    from core.agents.recon_profiles import PROFILES
+    from core.confluence import HIGHER, Evidence
+    from core.indicators import desk_derivs
+    from core.indicators.event_trap import read_all as event_reads
+    from core.indicators.harmonics import find_all
+    from core.indicators.vwap_break import read_all as break_reads
+    tfs = PROFILES[category].timeframes
+    # the higher-timeframe bar reads the levels of the desks above this one, never its own
+    htf = tuple((f"{k} level", float(lv.price)) for k in HIGHER.get(category, ()) if analyses.get(k) is not None
+                for lv in analyses[k].levels)
+    try:
+        own = desk_derivs.read(category, m, now_ms)
+    except Exception:  # noqa: BLE001 - the gate then reads no derivatives, a family that says nothing
+        own = None
+    desk = analyses.get(category)
+    return Evidence(
+        harmonics=tuple(h for found in find_all(m.spot.frames, tfs, desk_derivs.gamma_for(category, m)).values()
+                        for h in found),
+        htf_levels=htf, derivs=own,
+        fear_greed=m.sentiment.fear_greed if m.sentiment.available else None,
+        price_change_24h_pct=desk.price_change_24h_pct if desk is not None else None,
+        oi_history=tuple(desk_derivs.oi_history(m)),
+        breaks=tuple(break_reads(m.spot.frames, tfs).values()),
+        liquidity=(state or {}).get("liquidity"),
+        prints=tuple(event_reads(m.spot.frames.get("1h"), m.calendar.events if m.calendar.available else [], now_ms)),
+        rates=_rates(m),
+        futures=m.futures if m.futures.available else None,
+        liq_levels=m.liq_levels.to_state() if m.liq_levels.available else None)
+
+
+def current_master(store) -> dict | None:
+    for t in store.trades(status="open", limit=50):
+        if (t.get("plan") or {}).get("master"):
+            return t
+    return None
+
+
+def _in_zone(price: float, zone: tuple[float, float], atr: float) -> bool:
+    return zone[0] - REACH_ATR * atr <= price <= zone[1] + REACH_ATR * atr
+
+
+def _desk_atr(state: dict, category: str, price: float) -> float:
+    from core.agents.recon_profiles import PROFILES
+    mtf = PROFILES[category].timeframes[1]
+    atr = ((state.get("volatility") or {}).get(mtf) or {}).get("atr")
+    return float(atr) if atr else float(price) * trades.DEFAULT_ATR_PCT
+
+
+def open_master(store, desks, now_ms: int) -> int | None:
+    """Open the master card if a swing desk's gate says TRADE with price in its zone and none is open."""
+    price = desks.price
+    if current_master(store) is not None or not price:
+        return None
+    for cat in SWING_DESKS:
+        f, g = desks.gate(cat)
+        if g.verdict != "TRADE" or f.zone is None or f.side not in (LONG, SHORT):
+            continue
+        st = desks.state(cat)
+        if not _in_zone(float(price), f.zone, _desk_atr(st, cat, float(price))):
+            continue
+        entry = round((f.zone[0] + f.zone[1]) / 2, 2)
+        plan, stop, targets = deterministic_plan(store, st, desks.frame(cat), f.side, entry, f.invalidation, cat,
+                                                 now_ms, gamma=desks.gamma(cat), asset=ASSET)
+        plan.update({"master": True, "desk": cat,
+                     "gate": {"verdict": g.verdict, "reason": g.reason, "zone": [f.zone[0], f.zone[1]],
+                              "invalidation": f.invalidation}})
+        plan["notes"] = [f"Master swing card: opened by the {cat} desk's confluence gate ({g.reason}) with price "
+                         "inside the zone. Held until its targets, its hard invalidation, or the desk turning. The "
+                         "deterministic plan; no agents were consulted."] + list(plan.get("notes") or [])
+        tid = store.open_trade(opened_ms=now_ms, asset=ASSET, side=f.side, entry=entry, stop=stop.stop,
+                               given_stop=f.invalidation, stop_verdict=stop.verdict, category=cat, plan=plan)
+        tp = ", ".join(f"{t.name} ${t.price:,.0f}" for t in targets)
+        store.add_trade_event(tid, now_ms, EVENT, f"master:opened:{tid}",
+                              f"🧭 Master swing {f.side} opened by the {cat} desk · entry ${entry:,.0f} · "
+                              f"stop ${stop.stop:,.0f} · {tp}. {g.reason}", price)
+        log.info("master card #%s opened: %s %s by the %s desk", tid, f.side, entry, cat)
+        return tid
+    return None
+
+
+def review_masters(store, desks, now_ms: int) -> list[int]:
+    """Close the master card(s) whose hard invalidation or last target has been reached, or whose desk now
+    trades the other way. The trader's own cards are never touched."""
+    closed: list[int] = []
+    price = desks.price
+    for row in store.trades(status="open", limit=50):
+        plan = row.get("plan") or {}
+        if not plan.get("master"):
+            continue
+        reason = None
+        if price:
+            targets = [trades.TimedTarget(t.get("name", ""), float(t.get("price") or 0.0), str(t.get("basis") or ""),
+                                          t.get("due_ms"), float(t.get("reward_r") or 0.0), str(t.get("due_from") or ""))
+                       for t in plan.get("targets") or []]
+            prog = trades.progress(row["side"], float(row["entry"]), float(row["stop"]), targets, float(price))
+            if prog.stopped:
+                reason = f"hard invalidation: price reached the stop at ${float(row['stop']):,.0f}"
+            elif targets and len(prog.hit) == len(targets):
+                reason = f"all targets reached ({', '.join(prog.hit)})"
+        if reason is None:
+            cat = str(plan.get("desk") or row.get("category") or "")
+            f, g = desks.gate(cat)
+            if g.verdict == "TRADE" and f.side in (LONG, SHORT) and f.side != row["side"]:
+                reason = f"the {cat} desk now trades the other way ({f.side}): {g.reason}"
+        if reason:
+            store.close_trade(row["id"], reason, price, now_ms)
+            store.add_trade_event(row["id"], now_ms, EVENT, f"master:closed:{row['id']}",
+                                  f"🧭 Master swing {row['side']} closed · {reason}", price)
+            log.info("master card #%s closed: %s", row["id"], reason)
+            closed.append(row["id"])
+    return closed
+
+
+def master_pass(store, desks, now_ms: int, result: MasterResult | None = None) -> MasterResult:
+    """One worker pass: review what is open, then open if a desk calls for it. A desk that cannot be read is
+    a problem on the pass, never a crash; a card closed this pass leaves the next pass to open anew."""
+    r = result or MasterResult()
+    try:
+        r.closed = review_masters(store, desks, now_ms)
+    except Exception as e:  # noqa: BLE001
+        r.problems.append(f"master review: {type(e).__name__}: {e}")
+    if not r.closed:
+        try:
+            if open_master(store, desks, now_ms) is not None:
+                r.opened += 1
+        except Exception as e:  # noqa: BLE001
+            r.problems.append(f"master open: {type(e).__name__}: {e}")
+    return r

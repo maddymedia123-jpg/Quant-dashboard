@@ -70,6 +70,12 @@ def one_pass(store: Store, now_ms: int | None = None, market=None) -> pipeline.P
     may_send = not _offline()        # fixture data is not the market: never sent anywhere
     r = pipeline.ledger(store, m, analyses, now, classification)
     pipeline.market_alerts(store, m, analyses, now, _secrets(), may_send, r)
+    if may_send:
+        # his Section 6: the one desk-owned master swing card, opened and closed by the swing desks' gates
+        # (never on fixture data: a fixture gate would pin an invented position in the real ledger)
+        from core import master_card
+        mr = master_card.master_pass(store, master_card.DeskReader(m, analyses, now), now)
+        r.problems.extend(mr.problems)
     pipeline.all_trade_alerts(store, m.spot.last, now, _secrets(), may_send, r,
                               watch_for=pipeline.desk_watcher(m, analyses, now))
     book_report(store, now, r)
