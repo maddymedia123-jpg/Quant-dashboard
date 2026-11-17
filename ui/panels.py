@@ -1325,8 +1325,15 @@ def trade_card_html(trade: dict, prog=None, now_ms: int = 0, price_now: float | 
 
     head = (f"<div class='ti-trade-head'><span class='ti-chip {'up' if side == 'LONG' else 'down'}'>{html.escape(side)}</span>"
             f"<span class='ti-h3'>{html.escape(asset)} from {fmt_num(entry, 0, '$')}</span>"
-            f"<span class='muted'>opened {_when(trade.get('opened_ms'), now_ms, future=False)}</span></div>")
+            + (f"<span class='ti-chip warn'>Master swing · {html.escape(str(plan.get('desk') or '').capitalize())} desk</span>"
+               if plan.get("master") else "")
+            + f"<span class='muted'>opened {_when(trade.get('opened_ms'), now_ms, future=False)}</span></div>")
     body = head
+    if plan.get("master"):
+        g = plan.get("gate") or {}
+        body += (f"<p class='muted'>Opened by the {html.escape(str(plan.get('desk') or '').capitalize())} desk's "
+                 f"confluence gate, no one typed it in: {html.escape(str(g.get('reason') or ''))} It closes on its "
+                 "last target, its hard invalidation, or that desk trading the other way. KILL still works.</p>")
 
     # --- live block: the only part a Refresh changes ---
     if closed:
