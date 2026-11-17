@@ -78,6 +78,7 @@ def one_pass(store: Store, now_ms: int | None = None, market=None) -> pipeline.P
         r.problems.extend(mr.problems)
     pipeline.all_trade_alerts(store, m.spot.last, now, _secrets(), may_send, r,
                               watch_for=pipeline.desk_watcher(m, analyses, now))
+    pipeline.closed_trade_alerts(store, now, _secrets(), may_send, r)    # a master card's own close, for one
     book_report(store, now, r)
     # election-day fix 6: the agents run on their own after a print settles or a day plan fails
     from core import scheduled_runs

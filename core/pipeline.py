@@ -161,7 +161,12 @@ def trade_alerts(store, row: dict, prog, now_ms: int, secrets: dict, may_send: b
         store.add_trade_event(row["id"], now_ms, e.kind, e.dedup_key, e.headline, e.price)
     if not may_send:
         return r
-    pending = store.claim_trade_events(row["id"], now_ms)
+    return _send_pending(store, int(row["id"]), now_ms, secrets, r)
+
+
+def _send_pending(store, trade_id: int, now_ms: int, secrets: dict, r: PassResult) -> PassResult:
+    """Claim a trade's waiting events in one statement, send them, and mark only what a channel accepted."""
+    pending = store.claim_trade_events(trade_id, now_ms)
     if not pending:
         return r
     delivered, problems = Dispatcher(secrets).send(
@@ -171,6 +176,29 @@ def trade_alerts(store, row: dict, prog, now_ms: int, secrets: dict, may_send: b
     store.release_trade_events([p["id"] for p in pending if p["dedup_key"] not in keys])
     r.sent += len(keys)
     r.problems += problems[:1]
+    return r
+
+
+def closed_trade_alerts(store, now_ms: int, secrets: dict, may_send: bool,
+                        result: PassResult | None = None) -> PassResult:
+    """What closed trades still owe the channel. The master card closes itself and logs the close as an
+    event in the same pass; the open-trades walk never reaches a closed row, so that event sat unsent
+    (card #1, 17 Nov). Each such trade's waiting events are claimed and sent the same way, once."""
+    r = result or PassResult()
+    if not may_send:
+        return r
+    try:
+        owed = {int(e["trade_id"]) for e in store.trade_events(unnotified_only=True, limit=200)}
+    except Exception as e:  # noqa: BLE001
+        r.problems.append(f"closed-trade sweep: {type(e).__name__}: {e}")
+        return r
+    for tid in sorted(owed):
+        try:
+            row = store.trade(tid)
+            if row is not None and row.get("status") != "open":
+                _send_pending(store, tid, now_ms, secrets, r)
+        except Exception as e:  # noqa: BLE001 - one trade's failure must not silence the others
+            r.problems.append(f"closed trade #{tid}: {type(e).__name__}: {e}")
     return r
 
 
