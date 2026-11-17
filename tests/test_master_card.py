@@ -82,13 +82,17 @@ def test_a_higher_desk_gate_saying_trade_with_price_in_the_zone_opens_the_one_ma
     desks = FakeDesks(gates={"weekly": (framework(), gate())})
     tid = mc.open_master(store, desks, NOW)
     row = store.trade(tid)
-    assert row["category"] == "weekly" and row["side"] == LONG and row["entry"] == 80_000.0, "the zone's middle"
-    assert row["given_stop"] == 79_000.0, "the desk's invalidation is the hard stop handed to the verifier"
+    assert row["category"] == "weekly" and row["side"] == LONG and row["entry"] == 80_050.0, "the live price, in the zone"
+    assert row["given_stop"] == 79_000.0 and row["stop"] == 79_000.0, "the desk's invalidation IS the hard stop"
+    assert row["stop_verdict"] == "hard invalidation"
     plan = row["plan"]
-    assert plan["master"] is True and plan["desk"] == "weekly"
+    assert plan["master"] is True and plan["desk"] == "weekly" and plan["master_rules"] == mc.RULES
+    assert [t["price"] for t in plan["targets"]] == [81_000.0, 82_000.0, 83_000.0], "the desk's own targets"
+    assert plan["targets"][0]["name"] == "TP1" and "weekly desk" in plan["targets"][0]["basis"]
+    assert plan["targets"][0]["reward_r"] == round(950 / 1050, 2)
+    assert any("verifier" in r for r in plan["stop_reasons"]), "the verifier's opinion is kept as information"
     assert plan["gate"] == {"verdict": "TRADE", "reason": "TRADE: pattern, options and flow agree with the floor.",
                             "zone": [79_900.0, 80_100.0], "invalidation": 79_000.0}
-    assert plan["targets"], "the plan builder's timed targets, not the framework's bare levels"
     assert any("Master swing" in n for n in plan["notes"])
     ev = store.trade_events(tid)
     assert [e["kind"] for e in ev] == ["master"] and "opened" in ev[0]["headline"] and "weekly desk" in ev[0]["headline"]
@@ -97,10 +101,20 @@ def test_a_higher_desk_gate_saying_trade_with_price_in_the_zone_opens_the_one_ma
 
 
 def test_nothing_opens_when_the_gate_waits_or_price_is_away_from_the_zone(store):
+    """The zone is a quarter range either side of the level; price may be one zone-width beyond it, no more.
+    The first card ever opened sat five thousand dollars from price because the reach was the monthly desk's
+    range: never again."""
     assert mc.open_master(store, FakeDesks(gates={"weekly": (framework(), gate(verdict="WAIT"))}), NOW) is None
     assert mc.open_master(store, FakeDesks(price=83_000.0, gates={"weekly": (framework(), gate())}), NOW) is None
+    assert mc.open_master(store, FakeDesks(price=80_400.0, gates={"weekly": (framework(), gate())}), NOW) is None
+    behind = framework(targets=(80_000.0, 82_000.0))          # TP1 already behind the price: not a trade to open
+    assert mc.open_master(store, FakeDesks(price=80_050.0, gates={"weekly": (behind, gate())}), NOW) is None
+    wrong = framework(invalidation=80_500.0)                  # the invalidation above a long's entry
+    assert mc.open_master(store, FakeDesks(price=80_050.0, gates={"weekly": (wrong, gate())}), NOW) is None
     assert mc.open_master(store, FakeDesks(gates={"live": (framework(), gate())}), NOW) is None, "only the swing desks"
     assert store.trades(status="open") == []
+    tid = mc.open_master(store, FakeDesks(price=80_190.0, gates={"weekly": (framework(), gate())}), NOW)
+    assert tid is not None and store.trade(tid)["entry"] == 80_190.0, "just outside the zone, within its width"
 
 
 def test_the_monthly_desk_outranks_the_weekly_when_both_trade(store):
@@ -154,6 +168,17 @@ def test_the_master_closes_when_its_desk_turns_the_other_way(store):
     tid2 = _opened(store)
     mc.review_masters(store, still, NOW + 2)
     assert store.trade(tid2)["status"] == "open", "the desk waiting is not the desk turning: the card holds"
+
+
+def test_a_card_opened_under_older_rules_is_closed_as_superseded_and_the_channel_told(store):
+    old = store.open_trade(opened_ms=NOW, asset="BTC/USDT", side=SHORT, entry=70_122.75, stop=96_972.88,
+                           given_stop=73_320.37, stop_verdict="inside the noise", category="monthly",
+                           plan={"master": True, "desk": "monthly", "targets": [{"name": "TP1", "price": 68_103.0}]})
+    r = mc.master_pass(store, FakeDesks(price=64_800.0, gates={"monthly": (framework(), gate())}), NOW + 1)
+    row = store.trade(old)
+    assert r.closed == [old] and row["status"] == "closed" and "superseded" in row["closed_reason"]
+    assert any(e["kind"] == "master" and "superseded" in e["headline"] for e in store.trade_events(old))
+    assert r.opened == 0, "closed this pass; the desk reopens on the next if its gate still calls for it"
 
 
 def test_one_pass_opens_then_holds_then_closes(store):

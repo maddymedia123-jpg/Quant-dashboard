@@ -22,8 +22,12 @@ log = logging.getLogger(__name__)
 
 SWING_DESKS = ("monthly", "weekly")     # in rank order: the higher desk opens the card when both would
 ASSET = "BTC/USDT"
-REACH_ATR = 1.0                         # price within this many ranges of the zone's edge is "in the zone"
 EVENT = "master"
+# Bumped whenever what opens or closes the card changes: a card opened under older rules is closed as
+# superseded on the next pass, and the channel is told. Rules 1 (17 Nov 00:03 UTC) opened at the zone's
+# middle with reach of one desk range, so the first card sat five thousand dollars from price with the
+# verifier's stop; rules 2 open at the live price inside the zone with the desk's invalidation as the stop.
+RULES = 2
 
 
 @dataclass
@@ -111,44 +115,66 @@ def current_master(store) -> dict | None:
     return None
 
 
-def _in_zone(price: float, zone: tuple[float, float], atr: float) -> bool:
-    return zone[0] - REACH_ATR * atr <= price <= zone[1] + REACH_ATR * atr
+def _in_zone(price: float, zone: tuple[float, float]) -> bool:
+    """Inside the zone, or within one zone-width beyond either edge. The zone is a quarter range either side
+    of the level (core.layman_summary.ZONE_ATR), so the reach is the gate's own "at the zone" pad and never
+    the desk's whole range."""
+    half = (zone[1] - zone[0]) / 2
+    return zone[0] - half <= price <= zone[1] + half
 
 
-def _desk_atr(state: dict, category: str, price: float) -> float:
-    from core.agents.recon_profiles import PROFILES
-    mtf = PROFILES[category].timeframes[1]
-    atr = ((state.get("volatility") or {}).get(mtf) or {}).get("atr")
-    return float(atr) if atr else float(price) * trades.DEFAULT_ATR_PCT
+def _tradeable(side: str, price: float, invalidation: float | None, targets: list[float]) -> bool:
+    """A card to open at market: the invalidation on the far side of the entry and every target ahead of it."""
+    if invalidation is None or not targets:
+        return False
+    if side == LONG:
+        return invalidation < price and min(targets) > price
+    return invalidation > price and max(targets) < price
 
 
 def open_master(store, desks, now_ms: int) -> int | None:
-    """Open the master card if a swing desk's gate says TRADE with price in its zone and none is open."""
-    price = desks.price
-    if current_master(store) is not None or not price:
+    """Open the master card if a swing desk's gate says TRADE with price in its zone and none is open: entry
+    the live price, the desk's invalidation the hard stop, the desk's own targets."""
+    from core.agents.recon_profiles import PROFILES
+    if current_master(store) is not None or not desks.price:
         return None
+    price = float(desks.price)
     for cat in SWING_DESKS:
         f, g = desks.gate(cat)
-        if g.verdict != "TRADE" or f.zone is None or f.side not in (LONG, SHORT):
+        if g.verdict != "TRADE" or f.zone is None or f.side not in (LONG, SHORT) or not _in_zone(price, f.zone):
             continue
+        tps = [float(t) for t in (f.targets[0], f.targets[1], f.target3) if t is not None]
+        if not _tradeable(f.side, price, f.invalidation, tps):
+            continue
+        entry, inv = round(price, 2), float(f.invalidation)
         st = desks.state(cat)
-        if not _in_zone(float(price), f.zone, _desk_atr(st, cat, float(price))):
-            continue
-        entry = round((f.zone[0] + f.zone[1]) / 2, 2)
-        plan, stop, targets = deterministic_plan(store, st, desks.frame(cat), f.side, entry, f.invalidation, cat,
-                                                 now_ms, gamma=desks.gamma(cat), asset=ASSET)
-        plan.update({"master": True, "desk": cat,
-                     "gate": {"verdict": g.verdict, "reason": g.reason, "zone": [f.zone[0], f.zone[1]],
-                              "invalidation": f.invalidation}})
+        plan, verdict, _ = deterministic_plan(store, st, desks.frame(cat), f.side, entry, inv, cat, now_ms,
+                                              gamma=desks.gamma(cat), asset=ASSET)
+        risk = abs(entry - inv)
+        targets = [trades.TimedTarget(f"TP{i}", t, f"the {cat} desk's target", None,
+                                      round(abs(t - entry) / risk, 2) if risk else 0.0)
+                   for i, t in enumerate(tps, start=1)]
+        schedule = trades.monitoring_schedule(now_ms, PROFILES[cat].timeframes, targets)
+        plan.update({
+            "master": True, "desk": cat, "master_rules": RULES,
+            "gate": {"verdict": g.verdict, "reason": g.reason, "zone": [f.zone[0], f.zone[1]], "invalidation": inv},
+            "targets": [{"name": t.name, "price": t.price, "basis": t.basis, "due_ms": t.due_ms,
+                         "due_from": t.due_from, "reward_r": t.reward_r} for t in targets],
+            "schedule": [{"timeframe": c.timeframe, "at_ms": c.at_ms, "reason": c.reason} for c in schedule],
+            "stop_verdict": "hard invalidation",
+            "stop_reasons": [f"The {cat} desk's invalidation at ${inv:,.0f} is the hard stop, as his Section 6 asks. "
+                             f"The verifier read it as '{verdict.verdict}'"
+                             + (f": {'; '.join(str(r) for r in verdict.reasons)}" if verdict.reasons else ".")],
+        })
         plan["notes"] = [f"Master swing card: opened by the {cat} desk's confluence gate ({g.reason}) with price "
-                         "inside the zone. Held until its targets, its hard invalidation, or the desk turning. The "
-                         "deterministic plan; no agents were consulted."] + list(plan.get("notes") or [])
-        tid = store.open_trade(opened_ms=now_ms, asset=ASSET, side=f.side, entry=entry, stop=stop.stop,
-                               given_stop=f.invalidation, stop_verdict=stop.verdict, category=cat, plan=plan)
+                         "inside the zone. Held until its targets, its hard invalidation, or the desk turning. "
+                         "No agents were consulted."] + list(plan.get("notes") or [])
+        tid = store.open_trade(opened_ms=now_ms, asset=ASSET, side=f.side, entry=entry, stop=inv, given_stop=inv,
+                               stop_verdict="hard invalidation", category=cat, plan=plan)
         tp = ", ".join(f"{t.name} ${t.price:,.0f}" for t in targets)
         store.add_trade_event(tid, now_ms, EVENT, f"master:opened:{tid}",
                               f"🧭 Master swing {f.side} opened by the {cat} desk · entry ${entry:,.0f} · "
-                              f"stop ${stop.stop:,.0f} · {tp}. {g.reason}", price)
+                              f"hard stop ${inv:,.0f} · {tp}. {g.reason}", price)
         log.info("master card #%s opened: %s %s by the %s desk", tid, f.side, entry, cat)
         return tid
     return None
@@ -164,7 +190,10 @@ def review_masters(store, desks, now_ms: int) -> list[int]:
         if not plan.get("master"):
             continue
         reason = None
-        if price:
+        if plan.get("master_rules") != RULES:
+            reason = ("superseded: opened under the previous master-card rules; the desk reopens it on the next "
+                      "pass if its gate still calls for it")
+        elif price:
             targets = [trades.TimedTarget(t.get("name", ""), float(t.get("price") or 0.0), str(t.get("basis") or ""),
                                           t.get("due_ms"), float(t.get("reward_r") or 0.0), str(t.get("due_from") or ""))
                        for t in plan.get("targets") or []]
