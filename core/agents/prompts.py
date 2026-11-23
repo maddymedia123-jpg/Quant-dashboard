@@ -152,6 +152,24 @@ def _role_block(agent_id: str) -> tuple[str, type]:
     raise KeyError(agent_id)
 
 
+
+def _memory_block() -> str:
+    try:
+        from core.qf_selfaudit import load_memory
+        mem = load_memory() or {}
+    except Exception:
+        mem = {}
+    rules = mem.get("rules") or []
+    audits = (mem.get("audit_entries") or [])[-3:]
+    lines = ["PERSISTENT TRADER MEMORY:"]
+    for r in rules:
+        lines.append(f"- [{r.get('id', 'MEM')}] {r.get('lesson', '')}")
+    if audits:
+        lines.append("RECENT SELF-AUDIT LESSONS:")
+        for a in audits:
+            lines.append(f"- {a.get('summary', '')}")
+    return "\n".join(lines)
+
 def schema_for(agent_id: str):
     return _role_block(agent_id)[1]
 

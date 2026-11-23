@@ -336,6 +336,7 @@ def _invalidation_prices(inv) -> list[float]:
 
 
 def qf_chart_payload(plan: dict, h1, dark: bool = True, signal: bool = True, now_ms: int | None = None) -> dict:
+<<<<<<< HEAD
     """The pure-forecasting chart (Hammad, 28 Oct, revised in message 8): dark, hourly candles up to a
     vertical "now" line, then the forecast as solid green and red 1-hour candles with a faint 68% envelope,
     chop windows as faint background bands, and the invalidation, predicted high, predicted low and air
@@ -405,3 +406,8 @@ def build_qf_chart_html(plan: dict, h1, dark: bool = True, height: int = 520, si
 def render_qf_chart(plan: dict, h1, dark: bool = True, height: int = 520, signal: bool = True,
                     now_ms: int | None = None) -> None:
     components.html(build_qf_chart_html(plan, h1, dark, height, signal, now_ms), height=height + 6, scrolling=False)
+=======
+    """The pure
+
+"""
+>>>>>>> 2f214db (Fix ui/charts.py docstring and sync war room/alert updates)
