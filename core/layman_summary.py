@@ -222,9 +222,6 @@ def lines(a, derivs: dict | None, fear_greed: int | None, now_ms: int, evidence=
              "BEARISH": f"Sellers have the edge for {horizon}: BTC is {_money(a.price)}, {lean}.",
              }.get(d.direction, f"No side has the edge for {horizon}: BTC is {_money(a.price)}, moving sideways.")
     tfw = TF_WORDS.get(rule_tf(a.chart_tf), a.chart_tf)
-    # A sideways desk names the same floor and ceiling as the plain-English read above it; the setup's
-    # stop is a separate line further out. Naming the stop as "where it turns down" gave the reader two
-    # different down-levels on one screen.
     level = (f.zone[0] + f.zone[1]) / 2 if f.zone else None
     if f.breakout is not None and f.side == "LONG":
         flip = (f"It tilts lower on a {tfw} close below the {_money(level)} floor and higher above the "
@@ -242,7 +239,6 @@ def lines(a, derivs: dict | None, fear_greed: int | None, now_ms: int, evidence=
     from core.indicators.weekend import read as weekend_read
     wk = weekend_read(now_ms)
 
-    # the gate: the desk's own derivatives and mood are part of the evidence even when the caller passes none
     ev = evidence or confluence.Evidence()
     if (ev.derivs is None and derivs is not None) or (ev.fear_greed is None and fear_greed is not None):
         ev = confluence.Evidence(**{**ev.__dict__, "derivs": ev.derivs if ev.derivs is not None else derivs,
@@ -262,7 +258,6 @@ def lines(a, derivs: dict | None, fear_greed: int | None, now_ms: int, evidence=
         directive = (f"{'BUY' if long else 'SELL'} {entry}. Targets {', '.join(_money(t) for t in targets)}. "
                      f"Out on a {tfw} close {beyond} {_money(f.invalidation)}.")
         if wk.active:
-            # his weekend modifier: the language shifts from continuation to sweep and rejection at the edges
             expect = (f"weekend playbook: a sweep through the zone and a rejection back inside the range rather than a "
                       f"clean {'bounce' if long else 'rejection'}; the first target {_money(targets[0]) if targets else ''} "
                       f"is the realistic one until weekday volume returns; the trade is off on a {tfw} close {beyond} "
@@ -276,7 +271,6 @@ def lines(a, derivs: dict | None, fear_greed: int | None, now_ms: int, evidence=
         directive = "NO SETUP. No level to trade from on this desk."
     regime = _regime(ev, now_ms)
     if regime.active:
-        # election-day fix 3: the event is named in every desk's directive while its window is open
         from core.trades import fmt_when
         directive += (f" Event regime ({regime.title}): wider stop, smaller size, no range trade until "
                       f"{fmt_when(regime.until_ms)}.")
@@ -327,7 +321,7 @@ def _kill_zones(now_ms: int) -> str:
 
     on = {w.zone.key: w.active for w in next_zones(now_ms)}
     edge, none = [], []
-    for z in ZONES:                                   # the day's order, not soonest-first: it reads the same each time
+    for z in ZONES:
         w = NS(active=on.get(z.key, False))
         pkt = z.hours_label.split("(")[1].rstrip(")")
         if z.near_chance:
@@ -338,6 +332,5 @@ def _kill_zones(now_ms: int) -> str:
     text = "; ".join(edge)
     if none:
         text += (". " if text else "") + " and ".join(none) + ": no better than chance, not turning times"
-    # two windows on one screen invite "which one?": they are the same afternoon, one hour apart
     return text + (". Window 1 (12:00-16:00 UTC) is the strongest four hours; the New York session "
                    "(13:00-17:00 UTC) overlaps it by three, so they are one afternoon, not two.")
