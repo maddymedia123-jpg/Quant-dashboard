@@ -124,7 +124,8 @@ def test_a_trap_declared_today_is_announced_and_an_old_one_is_not():
     assert events[0].urgent
     assert events[0].headline.split("\n") == ["🪤 TRAP CALL · today (4h) · BTC $80,000",
                                               "The pop above $80,000 should fail and drop.",
-                                              "Target $78,000 · wrong if price goes past $81,000."]
+                                              "Target $78,000 · wrong if price goes past $81,000. "
+                                              "Avoid chasing a spike into resistance without acceptance."]
 
 
 def test_a_settled_trap_is_announced_with_its_outcome():

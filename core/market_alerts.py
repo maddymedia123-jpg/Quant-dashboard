@@ -163,7 +163,7 @@ def trap_events(traps: list[dict], now_ms: int) -> list[Event]:
             caution = (
                 "Avoid chasing a spike into resistance without acceptance."
                 if bull
-                else "Do not panic-sell a dip/sweep; wait for confirmation rather than reacting to the first wick."
+                else "Do not panic-sell the dip; wait for confirmation rather than reacting to the first wick."  # no banned words (Section 8)
             )
             out.append(Event("trap", f"trap:{t['id']}:declared",
                              f"{_header('🪤 TRAP CALL', where, level)}\n"

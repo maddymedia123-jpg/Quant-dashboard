@@ -37,6 +37,27 @@ SWING_PARTNER_RULES = """SWING PARTNER & PUZZLE SYNTHESIS RULES:
 3. Flag early when supporting confluences are fading or high-danger (~90%+) flush/stop-hunt/relief-bounce conditions are active, advising against panic selling or chasing a relief bounce inside a larger drop.
 4. Keep focus on multi-day swing structure and single cross-aligned Master Swing Trade discipline, updating/closing finished TP/SL/invalidation states immediately without letting completed trades linger."""
 
+
+def _memory_block(limit: int = 12) -> str:
+    """The trader memory as prompt text, for the 1-agent Director: the standing lessons (MEM-01..), then
+    the clue scores the closed master cards have built up (core.qf_selfaudit.record_audit_lesson). The
+    file lives outside the repo (data/trader_memory.json) and starts from the default rules when absent,
+    so this never raises: a prompt without memory beats a Director that cannot start."""
+    try:
+        mem = load_memory()
+    except Exception:  # noqa: BLE001 - the memory file is advisory
+        return ""
+    lines = ["TRADER MEMORY (standing lessons from past calls; apply them, never quote them as data):"]
+    for r in (mem.get("rules") or [])[:limit]:
+        if isinstance(r, dict) and r.get("lesson"):
+            lines.append(f"- {r.get('id', 'MEM')}: {r['lesson']}")
+    scores = {k: v for k, v in (mem.get("clue_scores") or {}).items() if isinstance(v, (int, float)) and v}
+    if scores:
+        ranked = sorted(scores.items(), key=lambda kv: -kv[1])
+        lines.append("Clue record (net hits minus misses on closed master cards): "
+                     + ", ".join(f"{k} {v:+d}" for k, v in ranked[:limit]))
+    return chr(10).join(lines) if len(lines) > 1 else ""
+
 _DOMAINS = {
     "options": {
         "title": "OPTIONS & GAMMA SPECIALIST",

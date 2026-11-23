@@ -416,3 +416,25 @@ def test_the_fourth_of_november_short_is_cancelled_not_open():
     row = {"report_id": "TIR1-20261104-000548", "ts_ms": T0, "plan": json.dumps(plan), "plan_outcome": "cancelled"}
     assert pulse.plan_live(row, T0 + 9 * H) is False, "the Pulse must stop speaking from it the same minute"
     assert "cancelled" in accuracy.PLAN_OUTCOMES
+
+
+def test_memory_block_renders_the_standing_lessons_and_scores(tmp_path, monkeypatch):
+    """Hammad's one_agent (23 Nov) imports _memory_block from prompts; the function itself was lost with
+    the cut-off commit acddc83 and the app failed at import. It renders data/trader_memory.json."""
+    import json
+    from core import qf_selfaudit
+    from core.agents import prompts
+    p = tmp_path / "trader_memory.json"
+    p.write_text(json.dumps({"rules": [{"id": "MEM-01", "lesson": "Sweeps come before reversals."}],
+                             "audit_entries": [], "clue_scores": {"desk:weekly": 2, "confluence_gate": -1, "zero": 0}}),
+                 encoding="utf-8")
+    monkeypatch.setattr(qf_selfaudit, "_default_memory_path", lambda: p)
+    text = prompts._memory_block()
+    assert text.startswith("TRADER MEMORY")
+    assert "- MEM-01: Sweeps come before reversals." in text
+    assert "desk:weekly +2" in text and "confluence_gate -1" in text and "zero" not in text
+    # no file: the default rules still render, and the 1-agent system prompt carries them
+    monkeypatch.setattr(qf_selfaudit, "_default_memory_path", lambda: tmp_path / "missing.json")
+    assert "MEM-08" in prompts._memory_block()
+    from core.agents import one_agent
+    assert "TRADER MEMORY" in one_agent.system_prompt()
