@@ -160,15 +160,10 @@ def trap_events(traps: list[dict], now_ms: int) -> list[Event]:
         move = f"pop above ${level:,.0f}" if bull else f"dip below ${level:,.0f}"
         declared = int(t.get("declared_ms") or 0)
         if now_ms - declared <= ANNOUNCE_WINDOW_MS:
-            caution = (
-                "Avoid chasing a spike into resistance without acceptance."
-                if bull
-                else "Do not panic-sell a dip/sweep; wait for confirmation rather than reacting to the first wick."
-            )
             out.append(Event("trap", f"trap:{t['id']}:declared",
                              f"{_header('🪤 TRAP CALL', where, level)}\n"
                              f"The {move} should fail and {'drop' if bull else 'bounce'}.\n"
-                             f"Target ${target:,.0f} · wrong if price goes past ${invalid:,.0f}. {caution}", t.get("level")))
+                             f"Target ${target:,.0f} · wrong if price goes past ${invalid:,.0f}.", t.get("level")))
         status, resolved = str(t.get("status") or ""), t.get("resolved_ms")
         if status in ("played_out", "invalidated") and resolved and now_ms - int(resolved) <= ANNOUNCE_WINDOW_MS:
             at = float(t.get("resolved_price") or 0)

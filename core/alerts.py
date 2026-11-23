@@ -69,16 +69,9 @@ def detect_events(trade: dict, price: float | None, progress=None, traps=(), che
                              f"({progress.pnl_r:+.1f}R)", price))
 
     for t in traps:
-        trap_word = _trap_word(t.side)
-        guidance = (
-            " Do not panic-sell a sweep into support; wait for follow-through."
-            if trap_word == "bear"
-            else " Avoid chasing a spike into resistance; watch for rejection."
-        )
         out.append(Event("trap", f"trap:{t.trap_id}:{t.near}",
-                         f"🪤 {asset} {side} · a {trap_word} trap call on the {t.timeframe} chart sits "
-                         f"${float(t.distance):,.0f} from your {t.near}: expect price to turn there."
-                         + guidance, price))
+                         f"🪤 {asset} {side} · a {_trap_word(t.side)} trap call on the {t.timeframe} chart sits "
+                         f"${float(t.distance):,.0f} from your {t.near}: expect price to turn there.", price))
 
     # his Section 6 pre-invalidation alert: the ground under the entry has shifted, the stop has not been hit
     for s in shifts:
