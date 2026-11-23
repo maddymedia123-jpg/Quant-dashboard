@@ -16,18 +16,18 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from core.agents.context import category_brief, common_payload, derivatives_payload
-from core.indicators import desk_derivs
-from core.agents.recon_profiles import LIVE, ReconProfile
-from core.indicators import liquidity as lq
-from core.indicators import harmonics as hm
-from core.indicators import vwap_break as vb
-from core.indicators import volatility as vol
-from core.indicators import smc
 from core.agents.judge import ChoiceResult, Judge, JudgeResult
+from core.agents.recon_profiles import LIVE, ReconProfile
 from core.agents.rubric import (
     BEARISH, BULLISH, DOMAINS, MAX_TEAM_POINTS, Domain,
     domain_score, missing_items, team_score, verdict,
 )
+from core.indicators import desk_derivs
+from core.indicators import harmonics as hm
+from core.indicators import liquidity as lq
+from core.indicators import smc
+from core.indicators import volatility as vol
+from core.indicators import vwap_break as vb
 
 log = logging.getLogger(__name__)
 
@@ -47,6 +47,8 @@ TRAP_OPTIONS: dict[str, str] = {
                     "rather than a liquidity raid.",
     "NO_TRAP": "There is no trap and no decisive move: the market is ranging or waiting on a catalyst.",
 }
+
+
 def trap_instructions(profile: ReconProfile | None = None) -> str:
     p = profile or LIVE
     return ("Both a bullish and a bearish team have argued their case on this BTC market state. Judge what "
@@ -240,6 +242,20 @@ def build_state(m, analyses: dict, now_ms: int | None = None, profile: ReconProf
     # resting liquidation clusters (Hyperliquid, on-chain): the stop's hazards and the positioning magnet
     ll = getattr(m, "liq_levels", None)
     state["liquidation_levels"] = ll.to_state() if ll is not None and getattr(ll, "available", False) else {"available": False}
+    # deterministic early warnings (forming traps, squeezes, reversal windows, fading confluences)
+    try:
+        from core.indicators.early_warning import early_warnings
+        if desk is not None and getattr(m, "futures", None) is not None:
+            last_sq = getattr(getattr(desk, "squeeze", None), "score", None)
+            ews = early_warnings(desk, m.futures, last_sq)
+            state["early_warnings"] = [
+                {"kind": w.kind, "level": w.level, "drivers": w.drivers, "anti_panic": w.anti_panic}
+                for w in ews
+            ]
+        else:
+            state["early_warnings"] = []
+    except Exception as e:  # noqa: BLE001 - early warnings must not take the state down
+        state["early_warnings"] = [{"kind": "ERROR", "level": "forming", "drivers": [f"{type(e).__name__}: {e}"], "anti_panic": ""}]
     # his Section 5.3: the named anomaly trap on this desk, so the judges and the Head read it by name
     try:
         from core.indicators import anomaly_trap
@@ -302,8 +318,10 @@ def resolve(bull: TeamScore, bear: TeamScore, trap: ChoiceResult) -> tuple[str, 
 
     if base == "BULL" and bull_trap >= TRAP_OVERRIDE_P:
         bias, override = "BULL TRAP RISK", f"bull trap probability {bull_trap:.0%} overrides the long bias"
+        notes.append("High-danger bull-trap warning: avoid chasing upside spikes into resistance; watch for rejection or a relief bounce inside a broader drop.")
     elif base == "BEAR" and bear_trap >= TRAP_OVERRIDE_P:
         bias, override = "BEAR TRAP RISK", f"bear trap probability {bear_trap:.0%} overrides the short bias"
+        notes.append("High-danger bear-trap / sweep warning: do not panic-sell into support or sweeps; wait for confirmed breakdown vs. rebound.")
     elif base == "BALANCED" and trap.ok and trap.choice in ("BULL_TRAP", "BEAR_TRAP"):
         notes.append(f"No decisive team score; trap agent reads the setup as {trap.choice.replace('_', ' ').lower()}.")
 
