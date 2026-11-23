@@ -102,11 +102,21 @@ def chart_payload(a: CategoryAnalysis, dark: bool, signal: bool = False) -> dict
                             "color": color, "shape": "circle", "text": ("~" if d.status == "forming" else "") + d.kind[0].upper() + "D"})
     markers.sort(key=lambda m: m["time"])
 
+    rw = getattr(a, "reversal", None)
+    reversal_zone = None
+    if rw is not None and getattr(rw, "status", None) in ("ACTIVE", "UPCOMING") and getattr(rw, "zone_ms", None):
+        reversal_zone = {
+            "time": int(rw.zone_ms) // 1000,
+            "label": f"Rev F{rw.zone_k} ({rw.status.lower()})",
+            "bias": getattr(rw, "bias", "none"),
+        }
+
     return {
         "theme": {k: p[k] for k in ("panel", "border", "grid", "text", "muted", "accent", "up", "down", "fib", "fibFuture", "now")},
         "title": f"{a.label} · {a.chart_tf}" + (f" view · call on {cat.chart_tf}" if a.chart_tf != cat.chart_tf else ""),
         "candles": candles, "whitespace": whitespace, "emas": emas, "levels": levels,
         "trendlines": trendlines, "fibs": fibs, "now": last_t,
+        "reversalZone": reversal_zone,
         "retracements": retracements, "patterns": patterns,
         "rsi": {"data": rsi_data, "markers": markers},
         "visibleBars": 140,
@@ -195,6 +205,10 @@ class VLine {
   paneViews() { return this._views; }
 }
 P.fibs.forEach(f => candles.attachPrimitive(new VLine(chart, f.time, f.future ? T.fibFuture : T.fib, true, f.label)));
+if (P.reversalZone && P.reversalZone.time) {
+  const rzColor = P.reversalZone.bias === 'bullish' ? T.up : P.reversalZone.bias === 'bearish' ? T.down : T.accent;
+  candles.attachPrimitive(new VLine(chart, P.reversalZone.time, rzColor, true, P.reversalZone.label));
+}
 candles.attachPrimitive(new VLine(chart, P.now, T.now, false, 'now'));
 
 const total = P.candles.length + P.whitespace.length;
@@ -304,6 +318,23 @@ def render_forecast_chart(a: CategoryAnalysis, f, dark: bool, height: int = 360,
 QF_CONTEXT_HOURS = 36        # real hours shown before the plan was made
 
 
+def _invalidation_prices(inv) -> list[float]:
+    if inv is None:
+        return []
+    if isinstance(inv, dict):
+        vals = inv.values()
+    elif isinstance(inv, (list, tuple, set)):
+        vals = inv
+    else:
+        vals = [inv]
+    out: list[float] = []
+    for v in vals:
+        fv = _f(v)
+        if fv is not None:
+            out.append(fv)
+    return out
+
+
 def qf_chart_payload(plan: dict, h1, dark: bool = True, signal: bool = True, now_ms: int | None = None) -> dict:
     """The pure-forecasting chart (Hammad, 28 Oct, revised in message 8): dark, hourly candles up to a
     vertical "now" line, then the forecast as solid green and red 1-hour candles with a faint 68% envelope,
@@ -348,7 +379,7 @@ def qf_chart_payload(plan: dict, h1, dark: bool = True, signal: bool = True, now
         lines += [{"price": hi, "kind": "range", "color": p["muted"], "style": "dotted"},
                   {"price": lo, "kind": "range", "color": p["muted"], "style": "dotted"}]
     lines += [{"price": v, "kind": "invalidation", "color": p["down"], "style": "solid"}
-              for v in (plan.get("invalidation") or {}).values()]
+              for v in _invalidation_prices(plan.get("invalidation"))]
     last_real = candles[-1]["time"] if candles else 0
     future = [h["t_ms"] // 1000 for h in hours] or list(range(plan["created_ms"] // 1000 + 3600,
                                                               plan["end_ms"] // 1000 + 1, 3600))

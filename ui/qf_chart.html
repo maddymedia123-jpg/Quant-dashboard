@@ -89,7 +89,9 @@ class VLineRenderer {
       const x = Math.round(this._x * hr);
       ctx.save(); ctx.strokeStyle = this._color; ctx.lineWidth = Math.max(1, Math.floor(hr)); ctx.setLineDash([3 * hr, 3 * hr]);
       ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, s.bitmapSize.height); ctx.stroke();
-      ctx.setLineDash([]); ctx.fillStyle = this._color; ctx.font = (10 * vr) + 'px Barlow, sans-serif'; ctx.fillText(this._label, x + 4 * hr, 11 * vr);
+      if (this._label) {
+        ctx.setLineDash([]); ctx.fillStyle = this._color; ctx.font = (10 * vr) + 'px Barlow, sans-serif'; ctx.fillText(this._label, x + 4 * hr, 11 * vr);
+      }
       ctx.restore();
     });
   }
