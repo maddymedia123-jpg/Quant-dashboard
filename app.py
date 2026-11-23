@@ -347,6 +347,14 @@ if not isinstance(st.session_state.get("director_reports"), dict):
 _director_mode = "1-agent" if run_clicked else st.session_state.pop("director_pending", None)
 
 
+def _director_failed(label: str, status) -> None:
+    """The run block ends in st.rerun(), which wipes the status widget and its error with it: a failed run
+    looked like nothing happened (23 Nov). The message is kept and shown on the Director screen until the
+    next run succeeds."""
+    status.update(label=label, state="error")
+    st.session_state["director_error"] = f"{label} ({fmt_when(now_ms)})"
+
+
 def _keep_report(rep) -> None:
     st.session_state["director_reports"][rep.mode] = rep
     st.session_state["trap_report"] = rep
@@ -366,13 +374,14 @@ if _director_mode and settings is not None and analyses:
                     rep = run_one_agent_sync(one_agent_client(settings), m, analyses, settings.director_model,
                                              panels.raw_metrics_rows(m), snapshot_id)
                     if rep.director is None:
-                        status.update(label=f"1-agent Director failed: {rep.runs[0].error}", state="error")
+                        _director_failed(f"1-agent Director failed: {rep.runs[0].error}", status)
                     else:
                         _keep_report(rep)
+                        st.session_state.pop("director_error", None)
                         status.update(label=f"1-agent report {rep.report_id} ready in {rep.wall_time_s:.0f}s "
                                             f"on {rep.runs[0].model}", state="complete")
                 except Exception as e:  # noqa: BLE001 - never crash the page on an LLM failure
-                    status.update(label=f"1-agent Director failed: {e}", state="error")
+                    _director_failed(f"1-agent Director failed: {type(e).__name__}: {e}", status)
             continue
         with st.status("Running the 15-agent pipeline...", expanded=True) as status:
             lines = st.empty()
@@ -392,10 +401,11 @@ if _director_mode and settings is not None and analyses:
                                         raw_metrics=panels.raw_metrics_rows(m), progress=_progress)
                 rep.snapshot_id = snapshot_id
                 _keep_report(rep)
+                st.session_state.pop("director_error", None)
                 status.update(label=f"15-agent report {rep.report_id} ready in {rep.wall_time_s:.0f}s",
                               state="complete", expanded=False)
             except Exception as e:  # noqa: BLE001 - never crash the page on an LLM failure
-                status.update(label=f"15-agent pipeline failed: {e}", state="error")
+                _director_failed(f"15-agent pipeline failed: {type(e).__name__}: {e}", status)
     st.rerun()
 
 # ---------- war rooms ----------
@@ -1227,6 +1237,8 @@ if screen == "director":
         7, "Director report",
         "Two ways to write the same report: one model reading the whole state (1-agent), or the classic chain "
         "of fifteen. Run both on one snapshot to compare them, and the scorecard below keeps the score."))
+    if st.session_state.get("director_error"):
+        st.error(f"Last run: {st.session_state['director_error']}")
     b1, b2, b3 = st.columns(3)
     _runs = (
         (b1, "Run 1-agent (fast)", "1-agent", f"One call on {settings.director_model if settings else '-'}, about "
