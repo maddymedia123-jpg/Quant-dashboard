@@ -7,7 +7,10 @@ war room after a High-impact USD print settles and after a day-plan invalidation
 with the key the environment gives it (GEMINI_API_KEY). Every other report is run by a person.
 
 It shares the store with the dashboard (Turso, via TURSO_DATABASE_URL and TURSO_AUTH_TOKEN), and both may
-send: each alert is claimed by one statement on the database, so whichever claims it first sends it.
+send: each alert is claimed by one statement on the database, so whichever claims it first sends it. The
+worker talks to Turso directly, with no local replica (Store(direct=True)): Turso meters every page a replica
+pulls back, and that meter blocked the account on 23 Nov; the worker's ~100 statements a pass are metered as
+rows read instead, a few thousand a pass against 500 M a month.
 
 Settings come from the environment (on the server, /opt/quant/.env through systemd): TURSO_*,
 DISCORD_WEBHOOK_URL, TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID.
@@ -42,6 +45,12 @@ def _secrets() -> dict:
     return {k: os.environ[k] for k in SECRET_KEYS if os.environ.get(k)}
 
 
+def open_store() -> Store:
+    """The worker's store: direct to Turso, no replica (see the module note). A local file when TURSO_* is
+    not set, as before."""
+    return Store(direct=True)
+
+
 def one_pass(store: Store, now_ms: int | None = None, market=None) -> pipeline.PassResult:
     """One pass: the same steps, in the same order, as a page load."""
     m = market if market is not None else asyncio.run(fetch_all())
@@ -69,6 +78,12 @@ def one_pass(store: Store, now_ms: int | None = None, market=None) -> pipeline.P
     classification = latest[0].get("classification") if latest else None
     may_send = not _offline()        # fixture data is not the market: never sent anywhere
     r = pipeline.ledger(store, m, analyses, now, classification)
+    try:
+        pruned = store.prune(now)
+        if pruned.get("signals"):
+            log.info("pruned %d signals older than a week", pruned["signals"])
+    except Exception as e:  # noqa: BLE001 - housekeeping never stops the alerts
+        r.problems.append(f"prune: {type(e).__name__}: {e}")
     pipeline.market_alerts(store, m, analyses, now, _secrets(), may_send, r)
     if may_send:
         # his Section 6: the one desk-owned master swing card, opened and closed by the swing desks' gates
@@ -126,8 +141,9 @@ def main(argv=None) -> int:
         logging.getLogger(noisy).setLevel(logging.WARNING)
     signal.signal(signal.SIGTERM, _on_signal)
     signal.signal(signal.SIGINT, _on_signal)
-    store = Store()
-    log.info("store: %s (%s); channels: %s", store.path, store.backend, ", ".join(_secrets()) or "none")
+    store = open_store()
+    log.info("store: %s (%s%s); channels: %s", store.path, store.backend, ", direct" if store.direct else "",
+             ", ".join(_secrets()) or "none")
     while True:
         t0 = time.time()
         try:
