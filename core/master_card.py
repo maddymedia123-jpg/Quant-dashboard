@@ -15,6 +15,7 @@ import logging
 from dataclasses import dataclass, field
 
 from core import trades
+from core.qf_selfaudit import record_audit_lesson
 from core.trade_plan import deterministic_plan
 from core.trades import LONG, SHORT
 
@@ -156,7 +157,7 @@ def open_master(store, desks, now_ms: int) -> int | None:
                    for i, t in enumerate(tps, start=1)]
         schedule = trades.monitoring_schedule(now_ms, PROFILES[cat].timeframes, targets)
         plan.update({
-            "master": True, "desk": cat, "master_rules": RULES,
+            "master": True, "desk": cat, "master_rules": RULES, "hit_targets": [],
             "gate": {"verdict": g.verdict, "reason": g.reason, "zone": [f.zone[0], f.zone[1]], "invalidation": inv},
             "targets": [{"name": t.name, "price": t.price, "basis": t.basis, "due_ms": t.due_ms,
                          "due_from": t.due_from, "reward_r": t.reward_r} for t in targets],
@@ -181,15 +182,16 @@ def open_master(store, desks, now_ms: int) -> int | None:
 
 
 def review_masters(store, desks, now_ms: int) -> list[int]:
-    """Close the master card(s) whose hard invalidation or last target has been reached, or whose desk now
-    trades the other way. The trader's own cards are never touched."""
+    """Update target hits and close the master card(s) whose hard invalidation or last target has been
+    reached, or whose desk now trades the other way. The trader's own cards are never touched."""
     closed: list[int] = []
     price = desks.price
     for row in store.trades(status="open", limit=50):
-        plan = row.get("plan") or {}
+        plan = dict(row.get("plan") or {})
         if not plan.get("master"):
             continue
         reason = None
+        prog_hit: list[str] = []
         if plan.get("master_rules") != RULES:
             reason = ("superseded: opened under the previous master-card rules; the desk reopens it on the next "
                       "pass if its gate still calls for it")
@@ -198,6 +200,15 @@ def review_masters(store, desks, now_ms: int) -> list[int]:
                                           t.get("due_ms"), float(t.get("reward_r") or 0.0), str(t.get("due_from") or ""))
                        for t in plan.get("targets") or []]
             prog = trades.progress(row["side"], float(row["entry"]), float(row["stop"]), targets, float(price))
+            prog_hit = list(prog.hit)
+            prev_hit = list(plan.get("hit_targets") or [])
+            new_hits = [h for h in prog_hit if h not in prev_hit]
+            if new_hits and hasattr(store, "update_trade_plan"):
+                plan["hit_targets"] = sorted(set(prev_hit + prog_hit), key=lambda x: x)
+                store.update_trade_plan(row["id"], plan)
+                for h in new_hits:
+                    store.add_trade_event(row["id"], now_ms, EVENT, f"master:tp:{row['id']}:{h}",
+                                          f"🎯 Master swing {row['side']} reached {h} at ${float(price):,.0f}", float(price))
             if prog.stopped:
                 reason = f"hard invalidation: price reached the stop at ${float(row['stop']):,.0f}"
             elif targets and len(prog.hit) == len(targets):
@@ -211,6 +222,17 @@ def review_masters(store, desks, now_ms: int) -> list[int]:
             store.close_trade(row["id"], reason, price, now_ms)
             store.add_trade_event(row["id"], now_ms, EVENT, f"master:closed:{row['id']}",
                                   f"🧭 Master swing {row['side']} closed · {reason}", price)
+            is_win = ("all targets reached" in reason) or bool(prog_hit and "hard invalidation" not in reason)
+            try:
+                record_audit_lesson(
+                    summary=f"Master swing {row['side']} ({row.get('category') or plan.get('desk')}) closed: {reason}",
+                    root_cause=reason,
+                    hit=is_win,
+                    helpful_clues=[f"desk:{row.get('category') or plan.get('desk')}", "confluence_gate"] if is_win else [],
+                    misleading_clues=[] if is_win else [f"desk:{row.get('category') or plan.get('desk')}", "confluence_gate"],
+                )
+            except Exception:  # noqa: BLE001 - audit logging must not break card closure
+                pass
             log.info("master card #%s closed: %s", row["id"], reason)
             closed.append(row["id"])
     return closed
