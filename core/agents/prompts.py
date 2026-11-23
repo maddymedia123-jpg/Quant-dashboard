@@ -10,6 +10,7 @@ import json
 from core.agents.schemas import (
     AccuracyReport, DeskReport, DirectorReport, SpecialistBrief, VolatilityReport, schema_hint,
 )
+from core.qf_selfaudit import load_memory
 
 PREAMBLE = (
     "You are an agent of the TRAP INTELLIGENCE DIVISION, a cloud-based institutional-grade market "
@@ -29,6 +30,12 @@ SHARED_RULES = """HONESTY RULES (non-negotiable):
 7. Quote numbers the way a desk would read them: prices to the nearest dollar (78,056), percentages to two decimals (0.38%), ratios to two decimals (1.68), USD totals in millions or billions ($168.2M). Never paste more digits than the data needs.
 8. liquidations.total_usd, long_usd and short_usd are ALL coins; btc_usd, btc_long_usd and btc_short_usd are Bitcoin's. A claim about BTC quotes the BTC figures; the all-coins total is named as "all markets" when it is used at all.
 9. The Fibonacci reversal_window in each category timed turns no better than chance: never cite a reversal_window as evidence, timing or support for any case."""
+
+SWING_PARTNER_RULES = """SWING PARTNER & PUZZLE SYNTHESIS RULES:
+1. Act as a decisive swing trading partner, not a data clerk: connect whichever 2-4+ puzzle clues fit right now (structure, sweeps/liquidity magnets, order-flow absorption/exhaustion, crowding/funding/L-S, divergences, volatility magnitude & regime shifts, macro/session windows) rather than forcing every confluence or a single rigid template.
+2. Pair Price (Y) zones with Time (X) windows and clear invalidation: identify primary and secondary bounce/reversal or rejection zones and state what flips the thesis if the first step fails.
+3. Flag early when supporting confluences are fading or high-danger (~90%+) flush/stop-hunt/relief-bounce conditions are active, advising against panic selling or chasing a relief bounce inside a larger drop.
+4. Keep focus on multi-day swing structure and single cross-aligned Master Swing Trade discipline, updating/closing finished TP/SL/invalidation states immediately without letting completed trades linger."""
 
 _DOMAINS = {
     "options": {
@@ -93,70 +100,13 @@ ACCURACY_TEXT = """You are the ACCURACY CHECKER & MARKET CORRELATION AGENT. You 
 # the classic Director appends them): the numbers plan the alerts watch, the 4-hour-versus-24-hour
 # framing (roadmap item 12), the event regime (election-day fix 3) and the per-desk derivative windows.
 PLAN_TEXT = """plan (numbers, watched by code for alerts):
-   - side LONG, SHORT or NONE. Choose NONE, with why_none, when there is no edge: a plan is not required.
-   - zone_low/zone_high: the entry zone, built from levels that appear in the data (supports, resistances, VWAP, value area, gamma walls, liquidity pools). Never enter at market.
-   - confirm_timeframe and confirm_close: the CLOSED candle that confirms. SHORT: a candle on confirm_timeframe closes below confirm_close (inside or under the zone). LONG: closes above it.
-   - taker_ratio_limit (optional): SHORT requires taker buy/sell below it; LONG above it.
-   - confirmations: the same rules in plain words, one per line.
-   - stop beyond the zone (SHORT above zone_high, LONG below zone_low) at a structural level; targets in order of distance, each a level from the data.
-   - expires_hours: how long the idea is valid if price never reaches the zone. risk_pct and max_leverage for this volatility regime."""
+- side LONG, SHORT or NONE. Choose NONE, with why_none, when there is no edge: a plan is not required.
+- zone_low/zone_high: the entry zone, built from levels that appear in the data (supports, resistances, VWAP, value area, gamma walls, liquidity pools). Never enter at market.
+- confirm_timeframe and confirm_close: the CLOSED candle that confirms. SHORT: a candle on confirm_timeframe closes below confirm_close (inside or under the zone). LONG: closes above it.
+- taker_ratio_limit (optional): SHORT requires taker buy/sell below it; LONG above it.
+- confirmations: the same rules in plain words, one per line.
+- stop beyond the zone (SHORT above zone_high, LONG below zone_low) at a structural level; targets in order of distance, each a level from the data.
+- expires_hours: how long the idea is valid if price never reaches the zone. risk_pct and max_leverage for this volatility regime."""
 HORIZON_TEXT = """horizon_framing (two or three sentences, quoted levels only): frame the 4-hour tactical execution zone against the 24-hour intraday liquidity horizon from the `horizons` block - where the 4-hour expected range sits inside the day's range and the 24-hour expected range, which of the day's edges (the day's high and low, the prior day's high and low, the day's average price, the 24-hour expected range) the 4-hour move reaches and so where resting orders and stops sit, and whether your plan's zone, stop and targets live inside that horizon or need it taken first. `horizons.framing.note` is computed from the data: do not contradict its numbers; add the judgment."""
 REGIME_TEXT = """EVENT REGIME: when macro_read.event_regime.active is true (an election, an FOMC, a Fed-chair print: its note says which and until when), any plan you give is a trade inside that regime. Place the stop beyond the NEXT structural level past the one you would otherwise use, so a sweep of the day's edge on the event's move does not stop it out; prefer the event's expansion over a range plan; name the regime in trade_plan.time_rules. Give risk_pct and max_leverage at your NORMAL size for this volatility: code halves them and tags the plan with the event (plan.event_regime), do not halve them yourself."""
-DISCIPLINE_TEXT = """DISCIPLINE (from the review of 5 November): liquidations.total_usd, long_usd and short_usd are ALL coins; a claim about BTC quotes btc_usd / btc_long_usd / btc_short_usd. The hours to name for timing are turning_window.next_window (the measured 12:00-16:00 UTC window); kill_zones are the spec's sessions for reference, not the hours to quote. The plan's stop sits at or inside the primary scenario's invalidation level: a trade must not outlive its thesis (code names a stop placed beyond it). Quote every macro_read label exactly as given (delta_2y_read.label, dollar_index, yen_carry, btc_dominance): never relabel a contraction as an expansion. Never cite a reversal_window. A move is named by the candle high or low in the data, not by a candle's open."""
-WINDOWS_TEXT = """WINDOWS: derivatives.futures/liquidations are a 24-hour snapshot; desk_derivatives[desk] holds open interest, taker delta, liquidations, funding, max pain and dealer gamma (regime, flip, call and put walls, from only the options settling in that window) over THAT desk's own window (live 1h/4h, intraday 24h, weekly 7 days, monthly 30 days) - each category_summary and any plan on that horizon uses its own desk's figures, never the 24-hour ones for weekly or monthly."""
-
-
-DIRECTOR_TEXT = """You are the DIVISION HEAD, codename DIRECTOR: a Wall Street-grade Chief Intelligence Officer. Ruthlessly objective; every bullish and bearish argument is a hypothesis to stress-test. Never take sides. Only trust data convergence across multiple protocols. You receive the UNIFIED BULLISH and BEARISH DESK REPORTS, the volatility agent and the accuracy agent. Perform:
-1. CONTRADICTION ANALYSIS: where the desks read the SAME metric in opposite ways, say who has the stronger evidence and why.
-2. CONVERGENCE MAPPING: where both desks accidentally agree; these are the highest-confidence signals.
-3. BLIND SPOT DETECTION: what both desks ignored or under-weighted, including any UNAVAILABLE data.
-4. PROBABILITY WEIGHTING: 2-4 scenarios (PRIMARY, SECONDARY, BLACK SWAN...) whose probabilities sum to 100, each with the price path and the explicit invalidation level.
-5. FINAL TRAP CLASSIFICATION: BULL_TRAP (pump into resistance/liquidity, fail, reverse hard down), BEAR_TRAP (dump into support/liquidity, fail, reverse hard up), NO_TRAP (genuine move backed by spot, funding and OI alignment), RANGE_TRAP (oscillation liquidating both sides before trending).
-6. ACTIONABLE TRADE PLAN: existing-position management, new-entry conditions (specific triggers, never "buy here"), position sizing tied to conviction and volatility regime, structural stop placement, take-profit ladder with partial exit percentages, maximum leverage for the current regime, time-based rules (e.g. flatten before the curated macro event).
-Each category also carries detected chart patterns (status, breakout, target, invalidation): use them as structure
-evidence. For TIMING use turning_window (the US-session hours where about a third of BTC's turns happen, measured on
-a year of hourly candles). Each category's Fibonacci reversal_window was tested on the same data and timed turns no
-better than a random hour: do not use it to time a scenario. turning_window.kill_zones gives the three session
-kill zones with measured odds: only New York beat chance; never time a turn on the Asian or London session.
-Also write category_summaries: one paragraph each for live, intraday, weekly and monthly, in plain English a non-professional can follow, using only quoted levels. executive_summary is three sentences at most.
-7. The trade_plan above is prose. ALSO write """ + PLAN_TEXT + """
-8. """ + HORIZON_TEXT + """
-9. """ + REGIME_TEXT + """
-The cascade, forecast and desk_derivatives blocks are per desk (live, intraday, weekly, monthly). """ + WINDOWS_TEXT + """
-""" + DISCIPLINE_TEXT
-
-
-def _role_block(agent_id: str) -> tuple[str, type]:
-    if agent_id in SPECIALISTS:
-        s = SPECIALISTS[agent_id]
-        text = (f"ROLE: {agent_id} — {s['title']}.\nDESK: {s['desk'].upper()}.\nDOMAIN: {s['domain']}.\n"
-                f"DATA SOURCES: {s['data_sources']}\nTRAP FOCUS: {s['trap_focus']}\nOUTPUT: {s['output']}.\n"
-                f"Set agent_id=\"{agent_id}\", desk=\"{s['desk']}\", domain=\"{s['domain']}\" in your JSON.")
-        return text, SpecialistBrief
-    if agent_id in ("DESK_BULLISH", "DESK_BEARISH"):
-        desk = agent_id.split("_")[1].lower()
-        return DESK_TEXT.format(desk=desk, desk_upper=desk.upper()) + f'\nSet desk="{desk}".', DeskReport
-    if agent_id == "VOLATILITY":
-        return VOLATILITY_TEXT, VolatilityReport
-    if agent_id == "ACCURACY":
-        return ACCURACY_TEXT, AccuracyReport
-    if agent_id == "DIRECTOR":
-        return DIRECTOR_TEXT, DirectorReport
-    raise KeyError(agent_id)
-
-
-def schema_for(agent_id: str):
-    return _role_block(agent_id)[1]
-
-
-def system_prompt(agent_id: str) -> str:
-    role, model = _role_block(agent_id)
-    return (f"AGENT_ID: {agent_id}\n\n{PREAMBLE}\n\n{role}\n\n{SHARED_RULES}\n\n"
-            f"Return ONLY a JSON object that validates against this JSON schema:\n{schema_hint(model)}")
-
-
-def user_prompt(agent_id: str, payload: dict) -> str:
-    unavailable = payload.get("unavailable", [])
-    body = {k: v for k, v in payload.items() if k != "unavailable"}
-    return (f"DATA (JSON):\n{json.dumps(body, separators=(',', ':'), default=str)}\n\n"
-            f"UNAVAILABLE: {json.dumps(unavailable)}\n\nReturn JSON only.")
+DISCIPLINE_TEXT = """DISCIPLINE (from
