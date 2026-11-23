@@ -146,12 +146,14 @@ def frame(price: float | None, four: dict, day: dict) -> dict:
                 "below: the next four hours can take the day's edges either way, an expansion window, not a range")
     elif reach_up:
         out["state"] = "probe_above"
-        verb = (f"reaches {', '.join(c['name'] for c in reach_up)} above ({', '.join(f'{c['price']:,.0f}' for c in reach_up)}) "
+        prices = ", ".join(f"{c['price']:,.0f}" for c in reach_up)   # outside the f-string: Python < 3.12 (Streamlit) rejects a quote reused inside braces
+        verb = (f"reaches {', '.join(c['name'] for c in reach_up)} above ({prices}) "
                 "and nothing below: the tactical move is a probe of the day's upper edge, where resting sells "
                 "and stops sit; a break needs a close beyond it, a rejection there is the trap")
     elif reach_down:
         out["state"] = "probe_below"
-        verb = (f"reaches {', '.join(c['name'] for c in reach_down)} below ({', '.join(f'{c['price']:,.0f}' for c in reach_down)}) "
+        prices = ", ".join(f"{c['price']:,.0f}" for c in reach_down)
+        verb = (f"reaches {', '.join(c['name'] for c in reach_down)} below ({prices}) "
                 "and nothing above: the tactical move is a probe of the day's lower edge, where resting bids "
                 "and stops sit; a break needs a close beyond it, a rejection there is the trap")
     else:
