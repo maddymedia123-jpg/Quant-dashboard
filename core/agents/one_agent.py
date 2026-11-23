@@ -21,9 +21,9 @@ from pydantic import ValidationError
 from core.agents import context
 from core.agents.llm import LLMClient
 from core.agents.prompts import (DISCIPLINE_TEXT, HORIZON_TEXT, PLAN_TEXT, PREAMBLE, REGIME_TEXT, SHARED_RULES,
-                                 WINDOWS_TEXT)
+                                 SWING_PARTNER_RULES, WINDOWS_TEXT, _memory_block)
 from core.agents.schemas import (
-    AgentRun, DirectorReport, OneAgentOutput, TrapReport, schema_hint,
+    AgentRun, DirectorReport, OneAgentOutput, PlanLevels, TrapReport, schema_hint,
 )
 
 MAX_TOKENS = 16_000     # the model thinks before it answers, and thinking counts against this
@@ -49,24 +49,21 @@ ONE_AGENT_TEXT = ("""You are the DIVISION HEAD, codename DIRECTOR, working alone
 9. """ + HORIZON_TEXT + """
 10. """ + REGIME_TEXT + """
 READING THE DATA: cvd_5bars is REAL taker flow on the BTC perpetual (market buys minus market sells, BTC); if it says ESTIMATE it is not CVD. Each desk's forecast carries a track_record: when lean_right is not above price_rose_anyway, its lean has no edge - use its range and level odds, not its lean. COT is weekly context, not intraday timing. """ + WINDOWS_TEXT + """ TIMING: use turning_window (measured US-session turning hours); its kill_zones carry the spec's three sessions with measured odds - only New York beat chance, so never time a turn on the Asian or London session; the Fibonacci reversal_window in each category was tested and timed turns no better than chance - never use it for timing.
-""" + DISCIPLINE_TEXT)
+""" + DISCIPLINE_TEXT + """
+""" + SWING_PARTNER_RULES)
 
 ONE_AGENT_RULES = SHARED_RULES.replace(
     "3. Quote the figures you rely on in raw_metrics exactly as given (same units), so the Director can audit you.",
     "3. Quote the figures you rely on exactly as given (same units), so a reader can audit you.").replace(
     "4. Argue your desk's side as hard as the evidence allows, then state the single strongest argument AGAINST your thesis in key_risk_to_thesis.",
     "4. Every claim names the figure behind it.").replace(
-    "5. Conviction is 1-10. If your domain's data is unavailable, conviction is at most 3.",
+    "5. Conviction is 1-10, and a case built on unavailable data is at most 3.",
     "5. Conviction is 1-10, and a case built on unavailable data is at most 3.")
 
 
 def director_state(m, analyses: dict) -> dict:
     """The whole state in one payload: every desk's brief, cascade and forecast, all derivatives, options
     expiries, flow and sentiment, the macro read and the raw metric table."""
-    from core.agents.recon_profiles import PROFILES
-    from core.indicators.cascade import classify
-    from core.indicators.forecast import desk_forecast, to_state
-
     state = context.common_payload(m, analyses)
     deriv, missing = context.derivatives_payload(m)
     state["derivatives"] = deriv
@@ -88,7 +85,8 @@ def director_state(m, analyses: dict) -> dict:
 
 
 def system_prompt() -> str:
-    return (f"AGENT_ID: {AGENT_ID}\n\n{PREAMBLE}\n\n{ONE_AGENT_TEXT}\n\n{ONE_AGENT_RULES}\n\n"
+    prompt_body = f"{ONE_AGENT_TEXT}\n\n{_memory_block()}"
+    return (f"AGENT_ID: {AGENT_ID}\n\n{PREAMBLE}\n\n{prompt_body}\n\n{ONE_AGENT_RULES}\n\n"
             f"Return ONLY a JSON object that validates against this JSON schema:\n{schema_hint(OneAgentOutput)}")
 
 
