@@ -169,3 +169,117 @@ def test_the_store_says_why_it_is_not_on_turso(tmp_path, monkeypatch):
     assert s.backend == "sqlite" and s.turso_note.startswith("could not connect to Turso: ValueError: Hrana: 401")
     s.add_market_alert(1, "plan", "k", "h", None)
     assert s.claim_market_alerts(2), "a failed connection leaves a working local store, not a broken page"
+
+
+class _FakeLibsql:
+    """libsql as the store sees it: connect() records how it was called and returns an in-memory SQLite
+    connection with the one extra method a replica has, sync(), which counts its calls."""
+
+    def __init__(self):
+        self.calls, self.syncs = [], 0
+
+    def connect(self, *args, **kwargs):
+        import sqlite3
+        self.calls.append((args, kwargs))
+        fake = self
+
+        class Conn:
+            def __init__(self):
+                self._c = sqlite3.connect(":memory:", check_same_thread=False)
+
+            def execute(self, sql, params=()):
+                return self._c.execute(sql, params)
+
+            def executescript(self, script):
+                self._c.executescript(script)
+
+            def commit(self):
+                self._c.commit()
+
+            def rollback(self):
+                self._c.rollback()
+
+            def close(self):
+                self._c.close()
+
+            def sync(self):
+                fake.syncs += 1
+        return Conn()
+
+
+def test_a_direct_store_keeps_no_replica_and_never_syncs(tmp_path, monkeypatch):
+    """Turso meters every page an embedded replica pulls back (3 GB a month free; the account was blocked on
+    23 Nov after 250-330 MB a day of it). The worker opens the database directly instead: no local copy, no
+    pull, each query a round trip counted as rows read (500 M a month). The dashboard keeps its replica."""
+    monkeypatch.setenv("TURSO_DATABASE_URL", "libsql://quant.example.invalid")
+    monkeypatch.setenv("TURSO_AUTH_TOKEN", "tok")
+    fake = _FakeLibsql()
+    monkeypatch.setattr(store_mod, "libsql", fake)
+    s = Store(tmp_path / "x.sqlite", direct=True)
+    assert s.backend == "turso" and s.direct is True
+    assert fake.calls == [(("libsql://quant.example.invalid",), {"auth_token": "tok"})], "the URL alone: no replica path, no sync_url"
+    s.sync()
+    s.sync(min_gap_s=30)
+    assert fake.syncs == 0, "nothing to pull: the queries already run on Turso"
+    tid = s.open_trade(opened_ms=1_000, asset="BTC/USDT", side="SHORT", entry=64_000.0, stop=66_000.0, given_stop=66_000.0,
+                       stop_verdict="hard invalidation", category="weekly", plan={"desk": "weekly"})
+    assert s.trade(tid)["plan"]["desk"] == "weekly" and s.trades(status="open")[0]["entry"] == 64_000.0
+    assert s.turso_note is None
+
+
+def test_a_replica_store_still_syncs_as_before(tmp_path, monkeypatch):
+    monkeypatch.setenv("TURSO_DATABASE_URL", "libsql://quant.example.invalid")
+    monkeypatch.setenv("TURSO_AUTH_TOKEN", "tok")
+    fake = _FakeLibsql()
+    monkeypatch.setattr(store_mod, "libsql", fake)
+    s = Store(tmp_path / "x.sqlite")
+    assert s.backend == "turso" and s.direct is False
+    (args, kwargs), = fake.calls
+    assert args == (str(tmp_path / "x.turso.db"),) and kwargs == {"sync_url": "libsql://quant.example.invalid", "auth_token": "tok"}
+    before = fake.syncs
+    s.sync()
+    assert fake.syncs == before + 1
+
+
+def test_the_worker_opens_the_store_direct(monkeypatch):
+    seen = {}
+
+    class Recorder:
+        def __init__(self, *args, **kwargs):
+            seen["args"], seen["kwargs"] = args, kwargs
+    monkeypatch.setattr(worker, "Store", Recorder)
+    worker.open_store()
+    assert seen == {"args": (), "kwargs": {"direct": True}}
+
+
+def test_prune_drops_signals_older_than_a_week_and_keeps_the_latest_read_working():
+    """Signals are only ever read newest-first (last_signal); 79,000 of 81,000 rows were older than a week on
+    23 Nov, a third of the database that every full replica pull paid for."""
+    s = Store(":memory:")
+    day = 86_400_000
+    now = 100 * day
+    for age_days in (30, 8, 7, 6, 1, 0):
+        s.add_signal(now - age_days * day, "live", 40, 60_000.0)
+    s.add_signal(now - 20 * day, "weekly", 50, 60_000.0)
+    assert s.prune(now) == {"signals": 3}, "30, 20 and 8 days old go; exactly 7 days stays"
+    assert s.last_signal("live")["ts_ms"] == now and s.last_signal("weekly") is None
+    assert s.prune(now) == {"signals": 0}
+
+
+def test_market_alerts_keyed_and_the_newest_report_use_an_index():
+    """On a direct connection every row examined is metered: these two reads scanned the whole table
+    (4 x 988 and 5 x 85 rows a pass on 23 Nov)."""
+    s = Store(":memory:")
+    for i, key in enumerate(["cascade:live:a", "cascade:live:b", "cascade:liver:c", "cascade:intraday:a", "qf:2026-11-23"]):
+        s.add_market_alert(1_000 + i, "cascade", key, "h", 1.0)
+    assert [r["dedup_key"] for r in s.market_alerts_keyed("cascade:live:")] == ["cascade:live:b", "cascade:live:a"], \
+        "a prefix, not a word: cascade:liver: is another desk's key"
+    assert [r["dedup_key"] for r in s.market_alerts_keyed("cascade:", limit=2)] == ["cascade:intraday:a", "cascade:liver:c"], "newest first"
+
+    def plan(sql, args):
+        return " | ".join(r["detail"] for r in s._conn.execute("EXPLAIN QUERY PLAN " + sql, args).fetchall())
+    keyed = plan("SELECT * FROM market_alerts WHERE dedup_key >= ? AND dedup_key < ? ORDER BY ts_ms DESC, id DESC LIMIT ?",
+                 ("cascade:live:", "cascade:live:\U0010ffff", 20))
+    assert "SEARCH" in keyed and "SCAN market_alerts" not in keyed, keyed
+    newest = plan("SELECT id FROM reports ORDER BY ts_ms DESC LIMIT ?", (1,))
+    assert "idx_reports_ts" in newest, newest

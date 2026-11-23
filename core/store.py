@@ -110,6 +110,8 @@ CREATE TABLE IF NOT EXISTS book_reports (
     ts_ms INTEGER PRIMARY KEY, payload TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_calls_open ON calls (scored_ms, ts_ms);
 CREATE INDEX IF NOT EXISTS idx_signals_cat ON signals (category, ts_ms);
+CREATE INDEX IF NOT EXISTS idx_reports_ts ON reports (ts_ms);
+CREATE INDEX IF NOT EXISTS idx_market_alerts_key ON market_alerts (dedup_key);
 """
 
 
@@ -207,9 +209,18 @@ class _TursoConnection:
     writes go to Turso and are visible to this connection at once; another process's writes arrive on
     sync(). Measured from the worker VM 27 Oct: connect + sync 1.0 s, write 0.9 s cold, read 0.4 ms."""
 
-    def __init__(self, path: str, url: str, token: str):
-        self._conn = libsql.connect(path, sync_url=url, auth_token=token)
-        self._conn.sync()
+    def __init__(self, path: str | None, url: str, token: str, direct: bool = False):
+        """`direct`: no replica at all. Every statement is a round trip to Turso and is metered as rows
+        read and written, never as syncs. Turso bills every page a replica pulls back (3 GB a month on the
+        free plan): the worker's replica pulled 250-330 MB a day until 9 Nov and 40-75 MB a day after, and
+        the account was blocked on 23 Nov. The worker runs direct; the dashboard keeps its replica, where a
+        page load must read locally."""
+        self.direct = bool(direct)
+        if self.direct:
+            self._conn = libsql.connect(url, auth_token=token)
+        else:
+            self._conn = libsql.connect(path, sync_url=url, auth_token=token)
+            self._conn.sync()
 
     def execute(self, sql, params=()):
         return _TursoCursor(self._conn.execute(sql, params))
@@ -218,7 +229,7 @@ class _TursoConnection:
         self._conn.executescript(script)
         # the script ran on Turso; until a sync the local copy has not seen the tables it created, and the
         # column check right after it would read an empty or older table
-        self._conn.sync()
+        self.sync()
 
     def commit(self):
         self._conn.commit()
@@ -227,18 +238,22 @@ class _TursoConnection:
         self._conn.rollback()
 
     def sync(self):
-        self._conn.sync()
+        if not self.direct:
+            self._conn.sync()
 
     def close(self):
         self._conn.close()
 
 
 class Store:
-    def __init__(self, path: str | os.PathLike | None = None, readonly: bool = False):
+    def __init__(self, path: str | os.PathLike | None = None, readonly: bool = False, direct: bool = False):
         """`readonly` (the MCP server): the schema is not created or migrated and a file store is opened
         with SQLite's mode=ro, so nothing can be written through it; on Turso the embedded replica is
-        synced and read, and a write raises on the database side."""
+        synced and read, and a write raises on the database side. `direct` (the worker): on Turso, no
+        embedded replica, every statement a round trip (see _TursoConnection); on a local file it means
+        nothing."""
         self.readonly = bool(readonly)
+        self.direct = False
         if path == ":memory:":
             self.path = ":memory:"
         else:
@@ -262,8 +277,8 @@ class Store:
             # the replica lives beside the old file, under its own name: the two formats never mix
             replica = str(pathlib.Path(self.path).with_suffix(".turso.db"))
             try:
-                self._conn = _TursoConnection(replica, *turso)
-                self.path, self.backend = replica, "turso"
+                self._conn = _TursoConnection(None if direct else replica, *turso, direct=direct)
+                self.path, self.backend, self.direct = ("turso" if direct else replica), "turso", bool(direct)
             except Exception as e:  # noqa: BLE001 - a bad token or a network failure falls back, said so
                 log.error("store: Turso connection failed (%s: %s); using the local file", type(e).__name__, e)
                 # the message names the URL at most, never the token (libsql does not echo it)
@@ -888,11 +903,12 @@ class Store:
                                             (int(limit),)))
 
     def market_alerts_keyed(self, prefix: str, limit: int = 20) -> list[dict]:
-        """The alerts whose key starts with `prefix`, newest first (one Quant Forecast day's, say)."""
+        """The alerts whose key starts with `prefix`, newest first (one Quant Forecast day's, say). A key
+        range on the dedup_key index: substr() scanned the whole table, four times a pass (23 Nov)."""
         with self._lock:
             return _rows(self._conn.execute(
-                "SELECT * FROM market_alerts WHERE substr(dedup_key, 1, ?) = ? ORDER BY ts_ms DESC, id DESC LIMIT ?",
-                (len(prefix), prefix, limit)))
+                "SELECT * FROM market_alerts WHERE dedup_key >= ? AND dedup_key < ? ORDER BY ts_ms DESC, id DESC LIMIT ?",
+                (prefix, prefix + "\U0010ffff", limit)))
 
     # notified: 0 waiting, 2 claimed by a page that is sending it now, 1 delivered.
     CLAIM_TIMEOUT_MS = 10 * 60_000
@@ -941,13 +957,25 @@ class Store:
                                % ",".join("?" * len(ids)), tuple(ids))
             self._conn.commit()
 
+    SIGNAL_KEEP_MS = 7 * 86_400_000
+
+    def prune(self, now_ms: int) -> dict:
+        """Drop what nothing reads any more: signals older than a week (last_signal reads newest-first only;
+        79,000 of 81,000 rows were older than a week on 23 Nov, a third of the file every full replica pull
+        paid for). Returns the rows removed per table."""
+        with self._lock:
+            cur = self._conn.execute("DELETE FROM signals WHERE ts_ms < ?", (int(now_ms) - self.SIGNAL_KEEP_MS,))
+            n = cur.rowcount
+            self._conn.commit()
+        return {"signals": int(n if n is not None and n >= 0 else 0)}
+
     def sync(self, min_gap_s: float = 0.0) -> None:
         """Pull what the other process wrote (the worker, or the dashboard). A no-op on a local file.
 
         `min_gap_s` skips the pull when the last one is more recent than that. Turso meters every page an
         embedded replica pulls (3 GB a month on the free plan, 9 Nov); a dashboard that re-runs on every
         click would pull the same pages several times a minute. The worker passes no gap."""
-        if self.backend != "turso":
+        if self.backend != "turso" or self.direct:
             return
         with self._lock:
             now = time.monotonic()
