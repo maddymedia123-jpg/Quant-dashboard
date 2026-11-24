@@ -9,6 +9,7 @@ import streamlit.components.v1 as components
 
 from core.config import CATEGORIES, LIGHTWEIGHT_CHARTS_URL, TF_MINUTES
 from core.indicators.category import CategoryAnalysis
+from core.indicators.forecast import Forecast
 from ui.theme import palette
 
 # The design draws the fast EMA in deep steel and the slow one in pale steel; the long averages step
@@ -23,7 +24,8 @@ def _f(v) -> float | None:
     return None if math.isnan(v) or math.isinf(v) else v
 
 
-def chart_payload(a: CategoryAnalysis, dark: bool, signal: bool = False) -> dict:
+def _chart_payload(a: CategoryAnalysis, dark: bool, signal: bool, forecast: Forecast | None,
+                   gamma: dict | None, forecast_tf: str | None) -> dict:
     p = palette(dark, signal)
     df = a.chart_df
     n = len(df)
@@ -39,14 +41,9 @@ def chart_payload(a: CategoryAnalysis, dark: bool, signal: bool = False) -> dict
 
     # how far into the future the time axis must extend
     future_targets = [last_t + max(horizon, 12) * interval]
-    if a.fib:
-        future_targets += [z.timestamp_ms // 1000 for z in a.fib.upcoming]
-    for tl in a.trendlines:
-        future_targets.append(tl.points[1][0] // 1000)
-    for pat in a.patterns:
-        for ln in pat.lines:
-            if ln:
-                future_targets.append(ln[-1][0] // 1000)
+    forecast_steps = forecast.steps if forecast is not None and forecast.available else []
+    if forecast_steps:
+        future_targets.append(forecast_steps[-1].time_ms // 1000)
     future_n = min(90, max(12, math.ceil((max(future_targets) - last_t) / interval)))
     whitespace = [{"time": last_t + k * interval} for k in range(1, future_n + 1)]
 
@@ -56,41 +53,46 @@ def chart_payload(a: CategoryAnalysis, dark: bool, signal: bool = False) -> dict
         data = [{"time": t[i], "value": _f(vals[i])} for i in range(n) if _f(vals[i]) is not None]
         emas.append({"period": period, "color": EMA_COLORS.get(period, p["muted"]), "data": data})
 
-    levels = [{"price": _f(l.price), "title": f"{'R' if l.kind == 'resistance' else 'S'} {l.touches}x",
-               "color": p["down"] if l.kind == "resistance" else p["up"]} for l in a.levels]
+    # Keep the chart to nearby structure and a few option levels; the snapshot below carries every value.
+    levels = []
+    for kind in ("resistance", "support"):
+        matching = [lv for lv in a.levels if lv.kind == kind]
+        matching.sort(key=lambda lv: abs(lv.price - a.price))
+        for lv in matching[:2]:
+            levels.append({"price": _f(lv.price), "title": f"{'R' if kind == 'resistance' else 'S'} {lv.touches}x",
+                           "color": p["down"] if kind == "resistance" else p["up"]})
+    if gamma and gamma.get("available"):
+        for key, title, color in (("call_wall", "Ceiling wall", p["down"]),
+                                  ("zero_gamma_level", "Gamma flip", p["accent"]),
+                                  ("put_wall", "Floor wall", p["up"])):
+            price = _f(gamma.get(key))
+            if price is not None:
+                existing = next((lv for lv in levels if round(lv["price"], 2) == round(price, 2)), None)
+                if existing:
+                    existing["title"] += f" · {title}"
+                else:
+                    levels.append({"price": price, "title": title, "color": color})
+    levels.sort(key=lambda lv: abs(lv["price"] - a.price))
+    levels = levels[:6]
 
-    trendlines = [{"kind": tl.kind, "color": p["down"] if tl.kind == "resistance" else p["up"],
-                   "data": [{"time": tl.points[0][0] // 1000, "value": _f(tl.points[0][1])},
-                            {"time": min(tl.points[1][0] // 1000, last_t + future_n * interval), "value": _f(tl.points[1][1])}]}
-                  for tl in a.trendlines]
-
-    fibs = []
-    if a.fib:
-        first_t = t[0]
-        for z in a.fib.zones:
-            zt = z.timestamp_ms // 1000
-            if zt >= first_t:
-                fibs.append({"time": int(zt), "label": f"F{z.k}", "future": z.is_future})
-
-    retracements = []
-    if a.fib_retr is not None:
-        for ratio in (0.382, 0.5, 0.618):
-            retracements.append({"price": _f(a.fib_retr.levels[ratio]), "title": f"Fib {ratio}"})
-
-    pattern_color = {"bullish": p["up"], "bearish": p["down"], "neutral": p["accent"]}
-    max_t = last_t + future_n * interval
-    patterns = []
-    for pat in a.patterns:
-        lines = []
-        for ln in pat.lines:
-            pts = [{"time": int(ms // 1000), "value": _f(v)} for ms, v in ln if ms // 1000 <= max_t and _f(v) is not None]
-            if len(pts) >= 2:
-                lines.append(pts)
-        if lines:
-            patterns.append({"name": f"{pat.name} ({pat.status})", "color": pattern_color.get(pat.bias, p["accent"]), "lines": lines})
-
-    # The forecast lives in its own pane now (forecast_payload below): one median path with its odds,
-    # instead of a cone and an envelope here that answered a different question from it.
+    projection, band_high, band_low = [], [], []
+    if forecast_steps:
+        source_tf = forecast_tf or a.chart_tf
+        source_interval = TF_MINUTES[source_tf] * 60
+        group_size = max(1, math.ceil(interval / source_interval))
+        band_high = [{"time": last_t, "value": _f(forecast.price)}]
+        band_low = [{"time": last_t, "value": _f(forecast.price)}]
+        for start in range(0, len(forecast_steps), group_size):
+            group = forecast_steps[start:start + group_size]
+            first, final = group[0], group[-1]
+            projected_time = last_t + (len(projection) + 1) * interval
+            projection.append({
+                "time": projected_time, "open": _f(first.open),
+                "high": _f(max(step.high for step in group)), "low": _f(min(step.low for step in group)),
+                "close": _f(final.close),
+            })
+            band_high.append({"time": projected_time, "value": _f(final.band_high)})
+            band_low.append({"time": projected_time, "value": _f(final.band_low)})
 
     rvals = a.rsi.tolist()
     rsi_data = [{"time": t[i], "value": _f(rvals[i])} for i in range(n) if _f(rvals[i]) is not None]
@@ -102,25 +104,25 @@ def chart_payload(a: CategoryAnalysis, dark: bool, signal: bool = False) -> dict
                             "color": color, "shape": "circle", "text": ("~" if d.status == "forming" else "") + d.kind[0].upper() + "D"})
     markers.sort(key=lambda m: m["time"])
 
-    rw = getattr(a, "reversal", None)
-    reversal_zone = None
-    if rw is not None and getattr(rw, "status", None) in ("ACTIVE", "UPCOMING") and getattr(rw, "zone_ms", None):
-        reversal_zone = {
-            "time": int(rw.zone_ms) // 1000,
-            "label": f"Rev F{rw.zone_k} ({rw.status.lower()})",
-            "bias": getattr(rw, "bias", "none"),
-        }
-
     return {
-        "theme": {k: p[k] for k in ("panel", "border", "grid", "text", "muted", "accent", "up", "down", "fib", "fibFuture", "now")},
+        "theme": {k: p[k] for k in ("panel", "border", "grid", "text", "muted", "accent", "up", "down", "now")},
         "title": f"{a.label} · {a.chart_tf}" + (f" view · call on {cat.chart_tf}" if a.chart_tf != cat.chart_tf else ""),
         "candles": candles, "whitespace": whitespace, "emas": emas, "levels": levels,
-        "trendlines": trendlines, "fibs": fibs, "now": last_t,
-        "reversalZone": reversal_zone,
-        "retracements": retracements, "patterns": patterns,
+        "projection": projection, "bandHigh": band_high, "bandLow": band_low, "now": last_t,
         "rsi": {"data": rsi_data, "markers": markers},
         "visibleBars": 140,
     }
+
+
+def chart_payload(a: CategoryAnalysis, dark: bool, signal: bool = False) -> dict:
+    """The base chart payload without an optional forecast, for existing callers."""
+    return _chart_payload(a, dark, signal, None, None, None)
+
+
+def projected_chart_payload(a: CategoryAnalysis, dark: bool, forecast: Forecast, gamma: dict | None,
+                            forecast_tf: str, signal: bool = False) -> dict:
+    """The chart payload with the forecast projected onto the selected view's timeline."""
+    return _chart_payload(a, dark, signal, forecast, gamma, forecast_tf)
 
 
 _TEMPLATE = """<!doctype html><html><head><meta charset="utf-8">
@@ -147,7 +149,9 @@ const chart = LW.createChart(el, {
   // a vertical swipe over the chart scrolls the page instead of panning the price axis
   handleScroll: { vertTouchDrag: false },
 });
-const candles = chart.addSeries(LW.CandlestickSeries, { upColor: T.panel, downColor: T.down, borderVisible: true, borderUpColor: T.up, borderDownColor: T.down, wickUpColor: T.up, wickDownColor: T.down });
+const rgba = (hex, a) => { const h = hex.replace('#', ''); const n = parseInt(h.length === 3 ? h.split('').map(c => c + c).join('') : h, 16);
+  return 'rgba(' + (n >> 16 & 255) + ',' + (n >> 8 & 255) + ',' + (n & 255) + ',' + a + ')'; };
+const candles = chart.addSeries(LW.CandlestickSeries, { upColor: T.panel, downColor: T.down, borderVisible: true, borderUpColor: T.up, borderDownColor: T.down, wickUpColor: T.up, wickDownColor: T.down, lastValueVisible: false });
 candles.setData(P.candles.concat(P.whitespace));
 const legend = document.getElementById('legend');
 P.emas.forEach(e => {
@@ -155,18 +159,25 @@ P.emas.forEach(e => {
   s.setData(e.data);
   const tag = document.createElement('span'); tag.style.setProperty('--c', e.color); tag.textContent = 'EMA' + e.period; legend.appendChild(tag);
 });
-P.levels.forEach(l => candles.createPriceLine({ price: l.price, color: l.color, lineWidth: 1, lineStyle: LW.LineStyle.Dashed, axisLabelVisible: true, title: NARROW ? '' : l.title }));
-(P.retracements || []).forEach(r => candles.createPriceLine({ price: r.price, color: T.fib, lineWidth: 1, lineStyle: LW.LineStyle.SparseDotted, axisLabelVisible: true, title: NARROW ? '' : r.title }));
-(P.patterns || []).forEach(pt => {
-  pt.lines.forEach((ln, j) => {
-    const s = chart.addSeries(LW.LineSeries, { color: pt.color, lineWidth: 2, lineStyle: LW.LineStyle.LargeDashed, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
-    s.setData(ln);
-    if (j === 0) LW.createSeriesMarkers(s, [{ time: ln[ln.length - 1].time, position: 'aboveBar', color: pt.color, shape: 'square', text: pt.name }]);
+P.levels.forEach(l => candles.createPriceLine({ price: l.price, color: l.color, lineWidth: 1, lineStyle: LW.LineStyle.Dashed,
+  axisLabelVisible: true, title: NARROW ? '' : l.title }));
+if (P.projection && P.projection.length) {
+  const projected = chart.addSeries(LW.CandlestickSeries, {
+    upColor: 'rgba(0,0,0,0)', downColor: 'rgba(0,0,0,0)', borderVisible: true,
+    borderUpColor: rgba(T.accent, 0.8), borderDownColor: rgba(T.accent, 0.8),
+    wickUpColor: rgba(T.accent, 0.7), wickDownColor: rgba(T.accent, 0.7),
+    priceLineVisible: false, lastValueVisible: false,
   });
-});
-P.trendlines.forEach(t => {
-  const s = chart.addSeries(LW.LineSeries, { color: t.color, lineWidth: 1, lineStyle: LW.LineStyle.Dotted, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
-  s.setData(t.data);
+  projected.setData(P.projection);
+  [['bandHigh', '68% range'], ['bandLow', '68% range']].forEach(([key, title]) => {
+    const series = chart.addSeries(LW.LineSeries, { color: rgba(T.accent, 0.3), lineWidth: 1,
+      lineStyle: LW.LineStyle.Dashed, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+    series.setData(P[key]);
+  });
+  const projectedTag = document.createElement('span');
+  projectedTag.style.setProperty('--c', T.accent);
+  projectedTag.textContent = 'Hollow: median path · dashed: 68% range';
+  legend.appendChild(projectedTag);
 });
 const rsi = chart.addSeries(LW.LineSeries, { color: T.accent, lineWidth: 1, priceLineVisible: false, lastValueVisible: true, title: 'RSI 14' }, 1);
 rsi.setData(P.rsi.data);
@@ -204,11 +215,6 @@ class VLine {
   updateAllViews() { this._views.forEach(v => v.update()); }
   paneViews() { return this._views; }
 }
-P.fibs.forEach(f => candles.attachPrimitive(new VLine(chart, f.time, f.future ? T.fibFuture : T.fib, true, f.label)));
-if (P.reversalZone && P.reversalZone.time) {
-  const rzColor = P.reversalZone.bias === 'bullish' ? T.up : P.reversalZone.bias === 'bearish' ? T.down : T.accent;
-  candles.attachPrimitive(new VLine(chart, P.reversalZone.time, rzColor, true, P.reversalZone.label));
-}
 candles.attachPrimitive(new VLine(chart, P.now, T.now, false, 'now'));
 
 const total = P.candles.length + P.whitespace.length;
@@ -218,15 +224,31 @@ new ResizeObserver(() => chart.applyOptions({ width: el.clientWidth })).observe(
 </script></body></html>"""
 
 
-def build_chart_html(a: CategoryAnalysis, dark: bool, height: int = 560, signal: bool = False) -> str:
+def _build_chart_html(a: CategoryAnalysis, dark: bool, height: int, signal: bool, payload: dict) -> str:
     p = palette(dark, signal)
-    payload = json.dumps(chart_payload(a, dark, signal), separators=(",", ":"))
+    payload_json = json.dumps(payload, separators=(",", ":"))
     return (_TEMPLATE.replace("__LIB__", LIGHTWEIGHT_CHARTS_URL).replace("__HEIGHT__", str(height))
-            .replace("__PANEL__", p["panel"]).replace("__TEXT__", p["text"]).replace("__PAYLOAD__", payload))
+            .replace("__PANEL__", p["panel"]).replace("__TEXT__", p["text"]).replace("__PAYLOAD__", payload_json))
+
+
+def build_chart_html(a: CategoryAnalysis, dark: bool, height: int = 560, signal: bool = False) -> str:
+    return _build_chart_html(a, dark, height, signal, chart_payload(a, dark, signal))
+
+
+def build_projected_chart_html(a: CategoryAnalysis, dark: bool, forecast: Forecast, gamma: dict | None,
+                               forecast_tf: str, height: int = 560, signal: bool = False) -> str:
+    return _build_chart_html(a, dark, height, signal,
+                             projected_chart_payload(a, dark, forecast, gamma, forecast_tf, signal))
 
 
 def render_chart(a: CategoryAnalysis, dark: bool, height: int = 560, signal: bool = False) -> None:
     components.html(build_chart_html(a, dark, height, signal), height=height + 6, scrolling=False)
+
+
+def render_projected_chart(a: CategoryAnalysis, dark: bool, forecast: Forecast, gamma: dict | None,
+                           forecast_tf: str, height: int = 560, signal: bool = False) -> None:
+    components.html(build_projected_chart_html(a, dark, forecast, gamma, forecast_tf, height, signal),
+                    height=height + 6, scrolling=False)
 
 
 # ---------- the forecast pane (his Section 8) ----------

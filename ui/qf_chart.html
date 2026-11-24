@@ -5,8 +5,8 @@
 <script>
 const P = __PAYLOAD__;
 (function(){
-// The pure-forecasting chart: candles to the "now" line, the forecast as solid 1-hour candles after it
-// (green up-hours, red down-hours), faint chop bands, and the levels as right-axis badges only. Nothing
+// The pure-forecasting chart: candles to the "now" line, hollow projected 1-hour candles,
+// faint chop bands, and the levels as right-axis badges only. Nothing
 // is written over the candles.
 const T = P.theme, LW = LightweightCharts, el = document.getElementById('chart');
 // every time on this chart reads UTC first, PKT (UTC+5, no daylight saving) after it
@@ -29,10 +29,13 @@ const chart = LW.createChart(el, {
 });
 const real = chart.addSeries(LW.CandlestickSeries, { upColor: T.panel, downColor: T.down, borderVisible: true, borderUpColor: T.up, borderDownColor: T.down, wickUpColor: T.up, wickDownColor: T.down, priceLineVisible: false, lastValueVisible: false });
 real.setData(P.candles.concat(P.whitespace));
-// the forecast: solid 1-hour candles (the median path, hour by hour), the 68% envelope faint and dashed
+// Hollow projected candles are the median path, hour by hour; the envelope stays faint and dashed.
 if (P.proj && P.proj.length) {
-  const proj = chart.addSeries(LW.CandlestickSeries, { upColor: T.up, downColor: T.down, borderVisible: false,
-    wickUpColor: T.up, wickDownColor: T.down, priceLineVisible: false, lastValueVisible: false });
+  const proj = chart.addSeries(LW.CandlestickSeries, {
+    upColor: 'rgba(0,0,0,0)', downColor: 'rgba(0,0,0,0)', borderVisible: true,
+    borderUpColor: rgba(T.accent, 0.8), borderDownColor: rgba(T.accent, 0.8),
+    wickUpColor: rgba(T.accent, 0.7), wickDownColor: rgba(T.accent, 0.7),
+    priceLineVisible: false, lastValueVisible: false });
   proj.setData(P.proj);
   ['bandHigh', 'bandLow'].forEach(k => {
     const s = chart.addSeries(LW.LineSeries, { color: rgba(T.up, 0.3), lineWidth: 1, lineStyle: LW.LineStyle.Dashed, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });

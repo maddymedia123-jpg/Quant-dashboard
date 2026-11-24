@@ -170,7 +170,8 @@ def test_the_card_shows_stage_validity_levels_and_track_record():
     found = {"1h": hm.find(df, "1h", {"available": True, "put_wall": 102.0}), "4h": []}
     h = panels.harmonics_html(found)
     assert "Bullish Gartley" in h and "completed" in h and "valid</span>" in h and "put wall" in h
-    assert "137 setups" in h and "ti-card up" in h
+    assert "ti-card up" in h and "XABCD ratios" in h
+    assert "VWAP" not in h and "137 setups" not in h and "Backtest" not in h
     assert "No Gartley, Bat" in panels.harmonics_html({"1h": [], "4h": []})
 
 

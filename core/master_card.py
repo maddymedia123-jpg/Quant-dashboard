@@ -15,6 +15,7 @@ import logging
 from dataclasses import dataclass, field
 
 from core import trades
+from core.config import DESKS
 from core.qf_selfaudit import record_audit_lesson
 from core.trade_plan import deterministic_plan
 from core.trades import LONG, SHORT
@@ -29,6 +30,18 @@ EVENT = "master"
 # middle with reach of one desk range, so the first card sat five thousand dollars from price with the
 # verifier's stop; rules 2 open at the live price inside the zone with the desk's invalidation as the stop.
 RULES = 2
+
+
+def master_trade_context(desk_key: str) -> dict:
+    """Keep the tactical BTC swing context separate from the long/monthly thesis."""
+    desk = DESKS.get(desk_key)
+    if desk is None:
+        raise ValueError(f"unknown master-trade desk {desk_key!r}")
+    return {
+        "tier": desk.get("master_tier", desk["label"]),
+        "horizon": desk["horizon_label"],
+        "move_context": desk.get("move_context", "desk-specific range and levels"),
+    }
 
 
 @dataclass
@@ -158,6 +171,7 @@ def open_master(store, desks, now_ms: int) -> int | None:
         schedule = trades.monitoring_schedule(now_ms, PROFILES[cat].timeframes, targets)
         plan.update({
             "master": True, "desk": cat, "master_rules": RULES, "hit_targets": [],
+            "master_context": master_trade_context(cat),
             "gate": {"verdict": g.verdict, "reason": g.reason, "zone": [f.zone[0], f.zone[1]], "invalidation": inv},
             "targets": [{"name": t.name, "price": t.price, "basis": t.basis, "due_ms": t.due_ms,
                          "due_from": t.due_from, "reward_r": t.reward_r} for t in targets],

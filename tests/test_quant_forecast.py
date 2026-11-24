@@ -441,6 +441,7 @@ def test_the_chart_and_panels_build_from_a_plan():
     html_dark = build_qf_chart_html(p, df, dark=False, now_ms=DAY0)
     assert "__PAYLOAD__" not in html_dark and "#16181A" in html_dark, "the chart is the dark terminal in light mode too"
     assert "fillText(b.label" not in html_dark and "title: ''" in html_dark
+    assert "upColor: 'rgba(0,0,0,0)'" in html_dark and "borderUpColor: rgba(T.accent, 0.8)" in html_dark
     assert "P.proj" in html_dark and "glow" not in html_dark and "expansion" not in html_dark
     live = {"days": 0}
     for markup in (panels.qf_wire_html(p, "on track"), panels.qf_gameplan_html(p, live), panels.qf_levels_html(p),

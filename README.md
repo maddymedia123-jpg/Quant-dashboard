@@ -15,6 +15,11 @@ Streamlit dashboard with TradingView-style charts. Three layers:
 Nothing on the page is invented. Every feed carries an availability flag, missing values render as `—`,
 and every score can be recomputed from the probabilities and the weights in the code.
 
+The chart canvas stays focused on candles, EMAs, nearby structural/options levels, and a hollow median
+forecast with a faint 68% envelope. Fibonacci/time markers and pattern/trendline labels remain analysis
+inputs but are not drawn over the candles. A four-value wall/flip/path snapshot sits below the chart;
+forecast details and track records are collapsed by default.
+
 ## Run
 
     python -m venv .venv
@@ -172,6 +177,22 @@ Two honesty rules worth knowing:
   every desk.
 - **An open-interest window reports nothing unless a stored sample brackets it.** A reading from the wrong
   window is not an approximation of the right one.
+
+## Preemptive compression and liquidation gravity
+
+`core/gravity_engine.py` combines a tight-range/ATR squeeze with available open-interest buildup,
+funding skew, tested-book absorption loss, nearby liquidation clusters and unfilled fair-value gaps. It
+reports a directional pull estimate and an explicitly heuristic structural-failure probability; that
+probability is not a calibrated win rate. Missing or stale feeds remain unavailable and cannot count as
+zero-valued evidence.
+
+A DEFCON-1 preemptive override is emitted only when measured compression, leverage or absorption stress,
+a directional cue and the probability threshold all agree. It may surface before a candle-close break
+confirmation; otherwise the ordinary confluence gate still requires three distinct aligned families.
+Book absorption is used only from a fresh recorded report. The regular summary and dispatch remain
+one-sided, show UTC with PKT (UTC+5), and distinguish the $1,000-$3,000+ Intraday/Swing BTC-price-move
+context from the level-defined Long/Monthly context. This changes neither UTC candle anchoring nor
+SQLite insert-once/deduplication and accuracy scoring.
 
 ## TRAP Intelligence (its own tab)
 

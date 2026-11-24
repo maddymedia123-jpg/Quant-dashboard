@@ -160,14 +160,29 @@ def test_the_forecast_chart_is_clean_and_reads_utc_then_pkt(market):
     assert "upColor: 'rgba(0,0,0,0)'" in h.split("const path")[1][:200], "the path is hollow"
 
 
-def test_the_main_chart_no_longer_carries_a_second_forecast(market):
+def test_the_main_chart_carries_a_clean_forecast_projection(market):
     from core.config import CATEGORIES
-    from core.indicators.category import analyze_category
-    from ui.charts import build_chart_html, chart_payload
+    from core.indicators.category import analyze_category, view_analysis
+    from ui.charts import build_projected_chart_html, chart_payload, projected_chart_payload
     a = analyze_category(CATEGORIES["live"], market.spot.frames, market.futures)
-    p = chart_payload(a, dark=False)
-    assert "forecast" not in p and "projection" not in p
-    assert "P.forecast" not in build_chart_html(a, dark=False)
+    f, _tr = fc.desk_forecast(a, market.options.gamma)
+    p = projected_chart_payload(a, dark=False, forecast=f, gamma=market.options.gamma,
+                                forecast_tf=a.chart_tf, signal=False)
+    assert len(p["projection"]) == len(f.steps)
+    assert p["bandHigh"][0] == {"time": p["now"], "value": round(f.price, 2)}
+    assert p["bandHigh"][-1]["time"] == p["projection"][-1]["time"]
+    h = build_projected_chart_html(a, dark=False, forecast=f, gamma=market.options.gamma,
+                                   forecast_tf=a.chart_tf, height=560, signal=False)
+    assert "P.projection" in h and "lastValueVisible: false" in h
+    assert "rgba(0,0,0,0)" in h and "bandHigh" in p
+    coarse = view_analysis(CATEGORIES["live"], "4h", market.spot.frames, market.futures, a)
+    if coarse is not None:
+        coarse_projection = projected_chart_payload(
+            coarse, dark=False, forecast=f, gamma=market.options.gamma,
+            forecast_tf=a.chart_tf, signal=False,
+        )["projection"]
+        assert len(coarse_projection) == 1
+        assert coarse_projection[0]["time"] - chart_payload(coarse, dark=False)["now"] == 4 * 3600
 
 
 def test_the_odds_card_says_what_the_path_is_and_how_it_has_done(market):

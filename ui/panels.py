@@ -1322,10 +1322,13 @@ def trade_card_html(trade: dict, prog=None, now_ms: int = 0, price_now: float | 
     entry = trade.get("entry")
     stop = trade.get("stop")
     targets = plan.get("targets") or []
+    master_context = plan.get("master_context") or {}
 
     head = (f"<div class='ti-trade-head'><span class='ti-chip {'up' if side == 'LONG' else 'down'}'>{html.escape(side)}</span>"
             f"<span class='ti-h3'>{html.escape(asset)} from {fmt_num(entry, 0, '$')}</span>"
-            + (f"<span class='ti-chip warn'>Master swing · {html.escape(str(plan.get('desk') or '').capitalize())} desk</span>"
+            + (f"<span class='ti-chip warn'>Master swing · "
+               f"{html.escape(str(master_context.get('tier') or 'swing').title())} · "
+               f"{html.escape(str(plan.get('desk') or '').capitalize())} desk</span>"
                if plan.get("master") else "")
             + f"<span class='muted'>opened {_when(trade.get('opened_ms'), now_ms, future=False)}</span></div>")
     body = head
@@ -1334,6 +1337,10 @@ def trade_card_html(trade: dict, prog=None, now_ms: int = 0, price_now: float | 
         body += (f"<p class='muted'>Opened by the {html.escape(str(plan.get('desk') or '').capitalize())} desk's "
                  f"confluence gate, no one typed it in: {html.escape(str(g.get('reason') or ''))} It closes on its "
                  "last target, its hard invalidation, or that desk trading the other way. KILL still works.</p>")
+        if master_context:
+            body += (f"<p class='muted'>{html.escape(str(master_context.get('horizon') or ''))}"
+                     + (f" · {html.escape(str(master_context['move_context']))}"
+                        if master_context.get("move_context") else "") + "</p>")
 
     # --- live block: the only part a Refresh changes ---
     if closed:
@@ -2186,6 +2193,20 @@ def chart_head_html(a, signal: bool = False, symbol: str | None = None, call_tf:
             "</div>")
 
 
+def chart_snapshot_html(gamma: dict | None, median_path: float | None, horizon: str = "") -> str:
+    """A compact, non-chart snapshot of the nearest walls and the forecast median."""
+    g = gamma if gamma and gamma.get("available") else {}
+    values = (
+        ("Ceiling Wall", g.get("call_wall")),
+        ("Gamma Flip", g.get("zero_gamma_level")),
+        ("Median Path", median_path),
+        ("Floor Wall", g.get("put_wall")),
+    )
+    cells = "".join(_kv(label, fmt_num(value, 0, "$")) for label, value in values)
+    title = "Chart snapshot" + (f" · {horizon}" if horizon else "")
+    return card_html(title, f"<div class='ti-grid4 ti-chart-snapshot'>{cells}</div>", "neutral")
+
+
 
 
 # ---------- the timeframe cascade (bias / anchor / engine) ----------
@@ -2235,8 +2256,7 @@ def value_breaks_html(reads: dict) -> str:
 
 
 def harmonics_html(found: dict) -> str:
-    """Harmonic patterns on the desk's 1H/4H/1D, valid only beside a VWAP, value-area or gamma level."""
-    from core.indicators.harmonics import TRACK_RECORD
+    """Show harmonic geometry, levels and confirmation without backtest commentary."""
     rows, tone = "", "neutral"
     for tf, hs in found.items():
         for h in hs:
@@ -2262,11 +2282,9 @@ def harmonics_html(found: dict) -> str:
                 f"completed on {', '.join(found) or 'the 1H, 4H or 1D'}.</p>")
     else:
         body = f"<table class='ti-cascade'><tbody>{rows}</tbody></table>"
-    body += ("<p class='muted ti-note'>Swings from an ATR zigzag on completed candles; ratios to the standard "
-             "XABCD tables. A pattern is valid only when its reversal zone sits on a VWAP, value-area or gamma "
-             "level. The second confirmation is a regular RSI divergence at D: price goes past B, RSI(14) does "
-             "not. "
-             f"{html.escape(TRACK_RECORD)}</p>")
+    body += ("<p class='muted ti-note'>Geometry uses completed-candle swings and standard XABCD ratios. "
+             "The zone, targets and invalidation are the price levels to watch; RSI divergence at D is a "
+             "secondary candle-based confirmation.</p>")
     return card_html("Harmonic patterns", body, tone)
 
 
@@ -2494,7 +2512,8 @@ def layman_summary_html(a: CategoryAnalysis, label: str, derivs: dict | None, fe
                    f"{e(c['note'])}</li>" for c in s["confluences"]) or "<li class='muted'>– No level to judge against.</li>"
     verb = "Buy" if long else "Sell" if s["side"] == "SHORT" else "No zone"
     zone_line = f"{verb} {e(s['entry'])} · {e(s['bias'])}" if s["entry"] != "—" else e(s["bias"])
-    tone = {"TRADE": "up" if long else "down", "WAIT": "warn"}.get(s["verdict"], "muted")
+    tone = {"TRADE": "up" if long else "down", "DEFCON_1_PREEMPTIVE": "up" if long else "down",
+            "WAIT": "warn"}.get(s["verdict"], "muted")
     return (f"<div class='ti-read ti-layman'><span class='ti-kicker'>Summary · {html.escape(label)}</span>"
             f"<p><strong>🧭 BIG PICTURE</strong><br>{e(s['summary'])}</p>"
             + (f"<p class='ti-directive warn'><strong>🛋 WEEKEND TAPE</strong><br>{e(s['weekend']['note'])}</p>"
@@ -2513,6 +2532,7 @@ def layman_summary_html(a: CategoryAnalysis, label: str, derivs: dict | None, fe
             f"<p><strong>🛡 SAFETY LINE</strong><br>{e(s['safety'])}</p>"
             f"<p><strong>✅ VERIFIED CONFLUENCES · {e(s['score'])}, 3 needed</strong></p><ul class='ti-confl'>{rows}</ul>"
             f"<p class='ti-directive {tone}'><strong>📣 DIRECTIVE</strong><br>{e(s['directive'])}</p>"
+            f"<p class='muted ti-note'>{e(s['dispatch'])}</p>"
             f"<p><strong>⚠️ WARNING</strong><br>{e(s['warning'])}</p>"
             "<p class='muted ti-note'>Levels come from this desk's own analysis; the zone is the nearest level the "
             "bias acts from, a quarter ATR either side. The trade box opens only when three of the seven "

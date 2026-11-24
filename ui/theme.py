@@ -422,6 +422,7 @@ section[data-testid="stSidebar"] [data-testid="stRadio"] > label p {{ {label} co
 @media (max-width: 768px) {{
   .block-container {{ padding-left: 1rem; padding-right: 1rem; }}
   .ti-kpis {{ grid-template-columns: repeat(2, 1fr); }}
+  .ti-chart-snapshot {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
   .ti-kpi .v {{ font-size: 1.3rem; }}
   .stTabs [data-baseweb="tab"] {{ padding: 8px 10px; white-space: nowrap; }}
   .ti-card {{ padding: 14px; }}

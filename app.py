@@ -70,7 +70,7 @@ from core.store import TURSO_KEYS, Store, find_turso
 from core.indicators.trade_map import map_trade
 from ui import panels
 from core.trades import fmt_when
-from ui.charts import render_chart, render_forecast_chart
+from ui.charts import render_projected_chart
 from ui.nav import pick_from_strip
 from ui.theme import inject_css, kpi_strip, md_safe
 
@@ -573,7 +573,10 @@ def _desk_evidence(category: str, data_stamp: str):
     """What the summary's confluence gate reads: the desk's harmonics, its break reads, its liquidity,
     this week's prints and the dollar and yields - each the cached read the cards above already show."""
     from core.agents.context import _rates
+    from core.config import TF_MINUTES
     from core.confluence import HIGHER, Evidence
+    from core.gravity_engine import evaluate as evaluate_gravity
+    from core.indicators import smc
     # the higher-timeframe bar reads the levels of the desks above this one (Weekly, Monthly), never its own
     htf = tuple((f"{k} level", float(lv.price)) for k in HIGHER.get(category, ()) if analyses.get(k) is not None
                 for lv in analyses[k].levels)
@@ -582,6 +585,34 @@ def _desk_evidence(category: str, data_stamp: str):
     except Exception:  # noqa: BLE001 - the gate then reads the derivatives the summary passes, or none
         own = None
     desk = analyses.get(category)
+    frame = m.spot.frames.get(CATEGORIES[category].chart_tf)
+    book = store.book_report() if hasattr(store, "book_report") else None
+    absorption_drop = None
+    absorption_side = None
+    if book and book.get("available") and 0 <= now_ms - int(book.get("ts_ms", 0)) <= 10 * 60_000:
+        for scoop in reversed(book.get("scoops") or []):
+            wall = scoop.get("wall_btc")
+            remaining = scoop.get("now_btc")
+            if wall and remaining is not None and float(wall) > 0:
+                drop = max(0.0, min(1.0, 1.0 - float(remaining) / float(wall)))
+                if drop > 0:
+                    absorption_drop = drop
+                    absorption_side = scoop.get("side")
+                    break
+    futures = m.futures if m.futures.available else None
+    liq_levels = m.liq_levels.to_state() if m.liq_levels.available else None
+    gravity = evaluate_gravity(
+        frame,
+        price=desk.price if desk is not None else m.spot.last,
+        atr=desk.vol.atr if desk is not None else None,
+        oi_change_pct=futures.oi_change_24h_pct if futures is not None else None,
+        funding_rate=futures.funding_rate if futures is not None else None,
+        absorption_drop=absorption_drop,
+        absorption_side=absorption_side,
+        liq_levels=liq_levels,
+        fvgs=smc.fair_value_gaps(frame) if frame is not None else None,
+        bar_minutes=TF_MINUTES[CATEGORIES[category].chart_tf],
+    )
     return Evidence(harmonics=tuple(h for found in _desk_harmonics(category, data_stamp).values() for h in found),
                     htf_levels=htf, derivs=own,
                     fear_greed=m.sentiment.fear_greed if m.sentiment.available else None,
@@ -591,8 +622,9 @@ def _desk_evidence(category: str, data_stamp: str):
                     liquidity=_desk_state(category, data_stamp).get("liquidity"),
                     prints=tuple(_event_reads(data_stamp)),
                     rates=_rates(m),
-                    futures=m.futures if m.futures.available else None,
-                    liq_levels=m.liq_levels.to_state() if m.liq_levels.available else None)
+                    futures=futures,
+                    liq_levels=liq_levels,
+                    preemptive=gravity)
 
 
 def render_protocols(profile) -> None:
@@ -765,6 +797,8 @@ def category_tab(key):
             banner = panels.early_warning_html(early_warnings(a, m.futures, last_sig["squeeze_score"] if last_sig else None))
             if banner:
                 panels.render(banner)
+        gamma = desk_derivs.gamma_for(key, m)
+        fcast, record = desk_forecast(a, gamma, m.spot.frames.get(a.chart_tf))
         # the chart and the call it supports sit side by side, as the design draws them
         c_chart, c_dir = st.columns([2, 1], gap="large")
         with c_chart:
@@ -784,15 +818,14 @@ def category_tab(key):
                         st.caption(f"Not enough {view_tf} candles for that view yet; showing the {a.chart_tf} chart.")
                     view = a
                 panels.render(panels.chart_head_html(view, signal, m.spot.symbol, call_tf=a.chart_tf))
-                render_chart(view, dark, height=480, signal=signal)
+                render_projected_chart(view, dark, fcast, gamma, a.chart_tf, height=480, signal=signal)
+                panels.render(panels.chart_snapshot_html(
+                    gamma, fcast.end_median if fcast.available else None, a.vol.horizon_label))
         with c_dir:
             v = verdicts.get(key)
             panels.render(panels.anchored_direction_html(a, v, now_ms) if v else panels.direction_html(a))
-        # his Section 8: one clean forecast pane per desk - the median path, its range and its odds
-        fcast, record = desk_forecast(a, desk_derivs.gamma_for(key, m),
-                                      m.spot.frames.get(a.chart_tf))
-        render_forecast_chart(a, fcast, dark, height=340, signal=signal)
-        panels.render(panels.forecast_html(fcast, record, a.vol.horizon_label))
+        with st.expander(f"Forecast details & track record · {a.vol.horizon_label}", expanded=False):
+            panels.render(panels.forecast_html(fcast, record, a.vol.horizon_label))
         if fcast.available and fcast.end_low and fcast.end_high and a.price:
             # one range on the desk: everything below (plain read, volatility card, summary) quotes the
             # forecast's 68% range - the one with a track record - instead of a second, simpler estimate
@@ -1286,7 +1319,8 @@ if screen == "director":
                                        "both to compare the two pipelines. Section 1, the raw metric snapshot, "
                                        "is live below.</p>"))
     try:
-        panels.render(panels.scorecard_html(mode_scorecard(store)))
+        with st.expander("Director scorecard · track record", expanded=False):
+            panels.render(panels.scorecard_html(mode_scorecard(store)))
     except Exception as e:  # noqa: BLE001 - the scorecard must not blank the tab
         st.warning(f"Scorecard unavailable: {e}")
 
@@ -1427,6 +1461,10 @@ if screen == "qf":
                         render_qf_chart(_qf_plan, _h1, dark, height=380, signal=signal, now_ms=now_ms)
                     else:
                         render_qf_chart(_qf_plan, _h1, dark, height=560, signal=signal, now_ms=now_ms)
+                _qf_hours = _qf_plan.get("hours") or []
+                _qf_median = _qf_hours[-1].get("median") if _qf_hours else None
+                panels.render(panels.chart_snapshot_html(
+                    desk_derivs.gamma_for("intraday", m), _qf_median, "Quant Forecast"))
         with _qf_side:
             from core import qf_selfaudit, qf_weekly
             try:

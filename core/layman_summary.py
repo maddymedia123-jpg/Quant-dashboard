@@ -1,55 +1,447 @@
-from core.config import format_dual_time
+"""His Section 9 (v22): the standardized summary at the bottom of every desk, in his layout.
+
+    🧭 BIG PICTURE            1-3 plain sentences: the state, the crowd's mood, who is paying and who is selling
+    🕒 TIMELINE               what is happening now and what to expect; the measured turning window (UTC + PKT)
+    🎯 BOUNCE ZONE            the zone the desk acts from, with its plain reason
+    📈 TARGETS                Target 1, 2 and 3 as the highs (or lows) to expect
+    🛡 SAFETY LINE            the hard invalidation and the close that cancels the trade
+    ✅ VERIFIED CONFLUENCES   the seven families (core.confluence): which agree, which oppose, which say nothing
+    📣 DIRECTIVE              BUY / SELL the zone with three targets, or WAIT naming what is missing
+    ⚠️ WARNING                the next news print, the dollar, the weekend
+
+Everything comes from the desk's own deterministic analysis, its own-window derivatives
+(core.indicators.desk_derivs) and the gate's evidence - never from a model's text - so it can be checked
+against the cards above.
+
+The framework is geometry, not a forecast: the entry zone is the nearest level the bias would act from,
+widened by a quarter ATR each side; the invalidation sits beyond that zone (the desk's own invalidation
+when it does, otherwise half an ATR past the far edge); targets are the next three levels in the bias's
+direction, nearest first. A sideways desk takes his example, "Range-Bound / Conditional Long on Floor
+Retest" (or the short from the ceiling, whichever edge price is nearer). The trade is cancelled by a
+candle close beyond the safety line: the 4-hour candle on the four-hour and 24-hour desks (his rule), the
+desk's own candle on the weekly and monthly ones."""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from types import SimpleNamespace as NS
+
+from core.config import DESKS, format_dual_time
+from core.gravity_engine import LONG, SHORT, PreemptiveSignal
+
+ZONE_ATR = 0.25          # the entry zone: a quarter ATR either side of the level
+STOP_ATR = 0.5           # the fallback invalidation: half an ATR past the zone's far edge
+TF_WORDS = {"15m": "15-minute", "1h": "1-hour", "4h": "4-hour", "1d": "daily", "1w": "weekly", "1M": "monthly"}
+HORIZON_WORDS = {"next 4h": "the next 4 hours", "next 24h": "the next 24 hours"}
+WEEK_MS = 7 * 86_400_000
+PKT_OFFSET_MS = 5 * 3_600_000
+
+
+def _money(x: float | None) -> str:
+    return "—" if x is None else f"${x:,.0f}"
+
+
+def _pkt(ms: int) -> str:
+    return f"{datetime.fromtimestamp((ms + PKT_OFFSET_MS) / 1000, timezone.utc):%H:%M}"
+
+
+def _utc(ms: int) -> str:
+    return f"{datetime.fromtimestamp(ms / 1000, timezone.utc):%H:%M}"
+
+
+def _conf(c: float) -> str:
+    return "very strong" if c >= 0.85 else "strong" if c >= 0.60 else "moderate" if c >= 0.35 else "slight"
+
+
+def rule_tf(chart_tf: str) -> str:
+    """The candle whose close cancels the trade: his 4-hour rule on the short desks, the desk's own
+    candle where the chart is already a day or longer."""
+    return chart_tf if chart_tf in ("1d", "1w", "1M") else "4h"
+
+
+@dataclass(frozen=True)
+class Framework:
+    bias: str
+    zone: tuple[float, float] | None
+    invalidation: float | None
+    targets: tuple[float | None, float | None]
+    condition: str
+    side: str                       # LONG, SHORT or NONE
+    breakout: float | None = None   # a sideways desk: the far edge that turns the range into a trend
+    target3: float | None = None
+    level: float | None = None      # the level the zone is built on
+
+
+def _levels(a) -> tuple[list[float], list[float]]:
+    below = sorted((lv.price for lv in a.levels if lv.kind == "support" and lv.price < a.price), reverse=True)
+    above = sorted(lv.price for lv in a.levels if lv.kind == "resistance" and lv.price > a.price)
+    return below, above
+
+
+def framework(a) -> Framework:
+    """Bias, entry zone, invalidation and three targets from the desk's levels; geometry always holds:
+    a short's invalidation above its zone and targets below it, a long's the mirror image."""
+    d, atr = a.direction, a.vol.atr
+    tf = TF_WORDS.get(rule_tf(a.chart_tf), a.chart_tf)
+    below, above = _levels(a)
+    if atr is None or atr <= 0:
+        return Framework("No clear bias: not enough history", None, None, (None, None), "No clear line yet.", "NONE")
+    floor = below[0] if below else a.vol.exp_low
+    ceiling = above[0] if above else a.vol.exp_high
+
+    if d.direction == "BEARISH" or (d.direction == "NEUTRAL" and floor and ceiling
+                                    and ceiling - a.price < a.price - floor):
+        if ceiling is None:
+            return Framework("Bearish, no level above to sell from", None, None, (None, None), "No clear line yet.", "NONE")
+        zone = (ceiling - ZONE_ATR * atr, ceiling + ZONE_ATR * atr)
+        inv = d.invalidation if (d.direction == "BEARISH" and d.invalidation and d.invalidation > zone[1]) \
+            else zone[1] + STOP_ATR * atr
+        lower = [p for p in below if p < zone[0]] + ([a.vol.exp_low] if a.vol.exp_low and a.vol.exp_low < zone[0] else [])
+        lower = sorted(set(lower), reverse=True) + [None, None, None]
+        bias = (f"Bearish ({_conf(d.confidence)}) / Sell a rally into {_money(ceiling)}" if d.direction == "BEARISH"
+                else f"Range-Bound / Conditional Short on Ceiling Retest at {_money(ceiling)}")
+        return Framework(bias, zone, inv, (lower[0], lower[1]),
+                         f"A {tf} candle closing above {_money(inv)} cancels the short.", "SHORT",
+                         floor if d.direction == "NEUTRAL" else None, lower[2], ceiling)
+
+    if floor is None:
+        return Framework("Bullish, no level below to buy from", None, None, (None, None), "No clear line yet.", "NONE")
+    zone = (floor - ZONE_ATR * atr, floor + ZONE_ATR * atr)
+    inv = d.invalidation if (d.direction == "BULLISH" and d.invalidation and d.invalidation < zone[0]) \
+        else zone[0] - STOP_ATR * atr
+    upper = [p for p in above if p > zone[1]] + ([a.vol.exp_high] if a.vol.exp_high and a.vol.exp_high > zone[1] else [])
+    upper = sorted(set(upper)) + [None, None, None]
+    bias = (f"Bullish ({_conf(d.confidence)}) / Buy a dip into {_money(floor)}" if d.direction == "BULLISH"
+            else f"Range-Bound / Conditional Long on Floor Retest at {_money(floor)}")
+    return Framework(bias, zone, inv, (upper[0], upper[1]),
+                     f"A {tf} candle closing below {_money(inv)} cancels the long.", "LONG",
+                     ceiling if d.direction == "NEUTRAL" else None, upper[2], floor)
+
+
+def _mood(fear_greed: int | None) -> str:
+    if fear_greed is None:
+        return ""
+    word = ("extreme fear" if fear_greed < 25 else "fear" if fear_greed < 45 else "neutral" if fear_greed <= 55
+            else "greed" if fear_greed < 75 else "extreme greed")
+    return f"The crowd's mood is {word} ({fear_greed}/100)."
+
+
+def _flow(derivs: dict | None) -> str:
+    """Who is selling at market, who is paying to hold, and whether new bets are going on - over the
+    desk's own window, in words."""
+    if not derivs:
+        return ""
+    bits = []
+    td = derivs.get("taker_delta") or {}
+    if td.get("delta_btc") is not None:
+        side = "selling" if td["delta_btc"] < 0 else "buying"
+        bits.append(f"over the last {td['over']} there was more {side} than {'buying' if side == 'selling' else 'selling'} "
+                    f"at market (net {abs(td['delta_btc']):,.0f} BTC {'sold' if side == 'selling' else 'bought'})")
+    rate = (derivs.get("funding") or {}).get("latest_8h_rate")
+    if rate is not None:
+        bits.append("buyers are paying a high premium to stay in (a crowded long)" if rate >= 0.0003 else
+                    "buyers pay a small premium to stay in" if rate > 0 else
+                    "sellers are paying to stay in (a crowded short)" if rate < 0 else "neither side is paying to hold")
+    ois = derivs.get("open_interest") or []
+    if ois and ois[-1].get("change_pct") is not None:
+        o = ois[-1]
+        bits.append(f"open positions are {'growing' if o['change_pct'] > 0 else 'shrinking'} "
+                    f"({o['change_pct']:+.1f}% in {o['over']})")
+    return (bits[0][0].upper() + bits[0][1:] + ("; " + "; ".join(bits[1:]) if bits[1:] else "") + ".") if bits else ""
+
+
+def _in_words(ms: int) -> str:
+    h = ms / 3_600_000
+    if h < 1:
+        return "under an hour"
+    if h < 36:
+        return f"{h:.0f} hours"
+    return f"{h / 24:.0f} days"
+
+
+def _regime(ev, now_ms: int):
+    """The event regime, read from the prints the evidence already holds (election-day fix 3)."""
+    from core.indicators.event_regime import read
+    return read(getattr(ev, "prints", ()) or (), now_ms)
+
+
+def _warning(side: str, now_ms: int, ev, horizon_label: str, f=None, atr: float | None = None, regime=None) -> str:
+    """The event regime first when one is active (an election, an FOMC), then the next high-impact US print
+    inside the window, a dollar move against the trade, the weekend, and any bigger level standing between
+    the zone and Target 1 that does not bar the trade outright."""
+    from core.confluence import levels_before_target
+    from core.indicators.event_trap import PRE_WINDOW_MS
+    regime = regime if regime is not None else _regime(ev, now_ms)
+    bits = []
+    if regime.active:
+        bits.append(f"EVENT REGIME, {regime.note}; expect sharp moves either way, so widen the stop, cut size "
+                    "and take no range trade")
+    if f is not None and f.zone and atr:
+        for label, p in levels_before_target(side, f.zone, atr, f.targets[0], getattr(ev, "htf_levels", ()))[:2]:
+            bits.append(f"a {label} at {_money(p)} stands between the zone and Target 1; expect a pause there")
+    ahead = PRE_WINDOW_MS                      # the event window: five days ahead on every desk
+    prints = sorted((p for p in getattr(ev, "prints", ()) or ()
+                     if getattr(p, "state", "") in ("scheduled", "flat", "positioned")
+                     and now_ms < p.time_ms <= now_ms + ahead
+                     and not (regime.active and p.title == regime.title)), key=lambda p: p.time_ms)
+    if prints:
+        p = prints[0]
+        day = datetime.fromtimestamp(p.time_ms / 1000, timezone.utc)
+        line = f"a high-impact US print, {p.title}, lands at {_utc(p.time_ms)} UTC ({_pkt(p.time_ms)} PKT) {day:%a %d %b}"
+        line += f", {_in_words(p.time_ms - now_ms)} away; the event window is open"
+        if p.state == "positioned" and getattr(p, "runup_pct", None) is not None:
+            line += f"; BTC has already moved {p.runup_pct:+.1f}% into it, so a print that only meets forecast can reverse that"
+        bits.append(line)
+    d = ((getattr(ev, "rates", None) or {}).get("DTWEXBGS") or {})
+    if d.get("value") and d.get("change_1w") is not None:
+        pct = d["change_1w"] / d["value"] * 100
+        if side == "LONG" and pct >= 0.25:
+            bits.append(f"the dollar has risen {pct:.1f}% this week, a headwind for a long")
+        elif side == "SHORT" and pct <= -0.25:
+            bits.append(f"the dollar has fallen {abs(pct):.1f}% this week, a headwind for a short")
+    from core.indicators.weekend import read as weekend_read
+    wk = weekend_read(now_ms)
+    if wk.phase == "weekend":
+        bits.append("weekend tape: thin volume, so moves run further and reverse faster than the levels suggest")
+    elif wk.phase == "starting":
+        bits.append(wk.note[0].lower() + wk.note[1:].rstrip("."))
+    if not bits:
+        return "Nothing scheduled: no high-impact US print, dollar move against the trade, weekend or bigger level inside this window."
+    return "Watch: " + "; ".join(bits) + "."
+
+
+def lines(a, derivs: dict | None, fear_greed: int | None, now_ms: int, evidence=None) -> dict:
+    """The blocks, as data: the page renders them and tests read them."""
+    from core import confluence
+    from core.indicators.turn_window import next_window
+
+    f = framework(a)
+    d = a.direction
+    horizon = HORIZON_WORDS.get(a.vol.horizon_label, a.vol.horizon_label)
+    horizon = horizon if horizon.startswith("the ") else f"the {horizon}"
+    lean = {"BULLISH": f"leaning higher ({_conf(d.confidence)})", "BEARISH": f"leaning lower ({_conf(d.confidence)})"
+            }.get(d.direction, "moving sideways")
+    state = {"BULLISH": f"Buyers have the edge for {horizon}: BTC is {_money(a.price)}, {lean}.",
+             "BEARISH": f"Sellers have the edge for {horizon}: BTC is {_money(a.price)}, {lean}.",
+             }.get(d.direction, f"No side has the edge for {horizon}: BTC is {_money(a.price)}, moving sideways.")
+    tfw = TF_WORDS.get(rule_tf(a.chart_tf), a.chart_tf)
+    level = (f.zone[0] + f.zone[1]) / 2 if f.zone else None
+    if f.breakout is not None and f.side == "LONG":
+        flip = (f"It tilts lower on a {tfw} close below the {_money(level)} floor and higher above the "
+                f"{_money(f.breakout)} ceiling; the long setup is cancelled below {_money(f.invalidation)}.")
+    elif f.breakout is not None and f.side == "SHORT":
+        flip = (f"It tilts higher on a {tfw} close above the {_money(level)} ceiling and lower below the "
+                f"{_money(f.breakout)} floor; the short setup is cancelled above {_money(f.invalidation)}.")
+    elif f.side == "SHORT":
+        flip = f"A full move up needs a {tfw} close above {_money(f.invalidation)}."
+    elif f.side == "LONG":
+        flip = f"A full move down needs a {tfw} close below {_money(f.invalidation)}."
+    else:
+        flip = ""
+    summary = " ".join(s for s in (state, " ".join(x for x in (_mood(fear_greed), _flow(derivs)) if x), flip) if s)
+    from core.indicators.weekend import read as weekend_read
+    wk = weekend_read(now_ms)
+
+    ev = evidence or confluence.Evidence()
+    if (ev.derivs is None and derivs is not None) or (ev.fear_greed is None and fear_greed is not None):
+        ev = confluence.Evidence(**{**ev.__dict__, "derivs": ev.derivs if ev.derivs is not None else derivs,
+                                    "fear_greed": ev.fear_greed if ev.fear_greed is not None else fear_greed})
+    g = confluence.read(f, a, ev, now_ms)
+    n = len(g.families) or len(confluence.FAMILIES)
+    score = f"{len(g.agreeing)} of {n} agree"
+    entry = f"{_money(f.zone[0])} – {_money(f.zone[1])}" if f.zone else "—"
+    side = g.side if g.verdict == "DEFCON_1_PREEMPTIVE" else f.side
+    long = side == "LONG"
+    beyond, kind = ("below", "floor") if long else ("above", "ceiling")
+    targets = [t for t in (f.targets[0], f.targets[1], f.target3) if t is not None]
+    desk_key = getattr(a, "key", None) or {"1h": "live", "4h": "intraday", "1d": "weekly",
+                                           "1w": "monthly"}.get(a.chart_tf, "")
+    dispatch_decision = confluence.solve_one_sided_puzzle(
+        desk_key, g.families, g.preemptive, entry, targets, f.invalidation, preferred_side=f.side,
+    )
+    if g.verdict == "WAIT" and dispatch_decision["action"] in ("BUY", "SELL"):
+        action = dispatch_decision["action"]
+        dispatch_decision.update(
+            verdict="DIRECTIONAL_BIAS",
+            targets=[],
+            reason=(f"{action} is the one-sided bias, not trade authorization. "
+                    f"{g.reason.removeprefix('WAIT: ')}"),
+        )
+    elif g.verdict == "NO SETUP":
+        dispatch_decision.update(verdict="NO SETUP", action="NO SETUP", reason=g.reason)
+
+    if g.verdict == "DEFCON_1_PREEMPTIVE":
+        signal = g.preemptive
+        assert signal is not None
+        entry = _money(signal.entry_price) if signal.entry_price is not None else entry
+        target = signal.target_high if long else signal.target_low
+        targets = [target] if target is not None else []
+        safety_line = signal.safety_line if signal.safety_line is not None else f.invalidation
+        directive = (f"DEFCON-1 PREEMPTIVE {'BUY' if long else 'SELL'} {entry} before candle-close confirmation. "
+                     f"Target {_money(target)}; safety line {_money(safety_line)}. "
+                     f"Estimated structural failure probability "
+                     f"{signal.structural_failure_probability:.0%}." if signal.structural_failure_probability is not None
+                     else f"DEFCON-1 PREEMPTIVE {'BUY' if long else 'SELL'} {entry} before candle-close confirmation. "
+                          f"{signal.plain_english_reason}")
+        expect = signal.plain_english_reason
+    elif g.verdict == "TRADE":
+        expect = (f"a {'bounce' if long else 'rejection'} from the zone toward {_money(targets[0]) if targets else 'the next level'}"
+                  + (f", then {_money(targets[1])}" if len(targets) > 1 else "")
+                  + f"; the trade is off on a {tfw} close {beyond} {_money(f.invalidation)}")
+        directive = (f"{'BUY' if long else 'SELL'} {entry}. Targets {', '.join(_money(t) for t in targets)}. "
+                     f"Out on a {tfw} close {beyond} {_money(f.invalidation)}.")
+        if wk.active:
+            expect = (f"weekend playbook: a sweep through the zone and a rejection back inside the range rather than a "
+                      f"clean {'bounce' if long else 'rejection'}; the first target {_money(targets[0]) if targets else ''} "
+                      f"is the realistic one until weekday volume returns; the trade is off on a {tfw} close {beyond} "
+                      f"{_money(f.invalidation)}")
+            directive += " Weekend: trade the sweep and rejection at the zone, not breakout continuation."
+    elif g.verdict == "WAIT":
+        if dispatch_decision["action"] in ("BUY", "SELL"):
+            action = dispatch_decision["action"]
+            blocker = g.reason.removeprefix("WAIT: ")
+            expect = f"{action} is the one-sided bias, but no trade is authorized: {blocker}"
+            directive = f"{action} BIAS, not cleared to trade: {blocker}"
+        else:
+            expect = "no trade yet. " + g.reason
+            directive = "WAIT / SITTING OUT IS AN EDGE. " + g.reason.removeprefix("WAIT: ")
+    else:
+        expect = "no setup until this desk has a level to act from"
+        directive = "NO SETUP. No level to trade from on this desk."
+    regime = _regime(ev, now_ms)
+    if regime.active:
+        from core.trades import fmt_when
+        directive += (f" Event regime ({regime.title}): wider stop, smaller size, no range trade until "
+                      f"{fmt_when(regime.until_ms)}.")
+    phase_now = (f"What's happening: BTC is {_money(a.price)}, {lean}"
+                 + (f"; the {kind} at {_money(f.level)} is the zone ({score})" if f.zone else "")
+                 + f". What to expect: {expect}" + ("" if expect.endswith(".") else "."))
+    zone_why = (f"preemptive entry from the live price before a candle-close confirmation"
+                if g.verdict == "DEFCON_1_PREEMPTIVE" else
+                f"the nearest {kind} {beyond} price, a quarter of a {TF_WORDS.get(a.chart_tf, a.chart_tf)} swing either side"
+                + ("; backed by " + "; ".join(x.note for x in g.agreeing) if g.agreeing else "; nothing else backs it yet")
+                if f.zone else "no level to build a zone on")
+    invalidation = (g.preemptive.safety_line if g.verdict == "DEFCON_1_PREEMPTIVE" and g.preemptive else f.invalidation)
+    safety = (f"{_money(invalidation)}. Preemptive invalidation: a move beyond this line cancels the alert."
+              if g.verdict == "DEFCON_1_PREEMPTIVE" else
+              f"{_money(invalidation)}. {f.condition} Until that close, a wick through the zone is noise, not a signal."
+              if f.zone else f.condition)
+    w = next_window(now_ms)
+    day = datetime.fromtimestamp((w.start_ms + PKT_OFFSET_MS) / 1000, timezone.utc)
+    window1 = (f"{_pkt(w.start_ms)} – {_pkt(w.end_ms)} PKT {day:%a %d %b} ({_utc(w.start_ms)}–{_utc(w.end_ms)} UTC)"
+               + (", happening now" if w.active else "") + ": about a third of BTC's turns happen in these hours")
+    return {
+        "summary": summary,
+        "bias": f.bias,
+        "side": side,
+        "verdict": g.verdict,
+        "phase_now": phase_now,
+        "entry": entry,
+        "zone_why": zone_why,
+        "invalidation": _money(invalidation),
+        "safety": safety,
+        "target1": _money(targets[0]) if targets else "—",
+        "target2": _money(targets[1]) if len(targets) > 1 else "—",
+        "target3": _money(targets[2]) if len(targets) > 2 else "—",
+        "window1": window1,
+        "window2": "None we trust: cycle timing was tested on a year of candles and timed turns no better than chance.",
+        "condition": f.condition,
+        "kill_zones": _kill_zones(now_ms),
+        "score": score,
+        "confluences": [{"key": x.key, "label": x.label, "side": x.side,
+                         "agrees": None if x.side == "NONE" else x.side == f.side, "note": x.note}
+                        for x in g.families],
+        "directive": directive,
+        "warning": _warning(f.side, now_ms, ev, a.vol.horizon_label, f, a.vol.atr, regime),
+        "event_regime": regime.to_state(),
+        "bar": None if g.bar is None else {"label": g.bar.label, "price": g.bar.price, "note": g.bar.note},
+        "anomaly": None if g.trap is None else g.trap.to_state(),
+        "weekend": wk.to_state() if wk.phase != "weekday" else None,
+        "preemptive": None if g.preemptive is None else {
+            "available": g.preemptive.available, "defcon_1": g.preemptive.defcon_1,
+            "direction": g.preemptive.direction, "pull_velocity": g.preemptive.pull_velocity,
+            "structural_failure_probability": g.preemptive.structural_failure_probability,
+            "reason": g.preemptive.plain_english_reason,
+        },
+        "dispatch": render_dispatch_text(
+            DESKS.get(desk_key, {}).get("label", desk_key or a.chart_tf), a.price,
+            {**dispatch_decision, "entry": entry, "safety_line": invalidation},
+            g.preemptive, window1, desk_key=desk_key,
+        ),
+    }
+
 
 def render_dispatch_text(
     category_name: str,
     current_price: float,
     decision: dict,
-    preemptive: PreemptiveSignal,
-    window_utc_pkt: str,
+    preemptive: PreemptiveSignal | None = None,
+    window_utc_pkt: str = "—",
+    *,
+    desk_key: str | None = None,
+    dt_utc: datetime | None = None,
 ) -> str:
-    ts = format_dual_time()
-    is_emergency = decision["verdict"] == "DEFCON_1_PREEMPTIVE"
+    """Render a plain-English one-sided dispatch with UTC and PKT shown together."""
+    timestamp = format_dual_time(dt_utc)
+    is_emergency = decision.get("verdict") == "DEFCON_1_PREEMPTIVE"
+    action = decision.get("action", "WAIT / SITTING OUT IS AN EDGE")
+    is_cleared = decision.get("verdict") in ("TRADE", "DEFCON_1_PREEMPTIVE")
+    context = DESKS.get(desk_key or "", {})
+    target_text = " – ".join(_money(value) for value in decision.get("targets") or []) or "—"
+    safety = _money(decision.get("safety_line"))
 
-    header = (
-        f"🚨 EMERGENCY PREEMPTIVE ALERT ({category_name.upper()})"
-        if is_emergency
-        else f"📡 WAR ROOM DIRECTIVE ({category_name.upper()})"
-    )
+    if action in ("BUY", "SELL", "LONG", "SHORT"):
+        action = {"LONG": "BUY", "SHORT": "SELL"}.get(action, action)
+        direction = "upside squeeze" if action == "BUY" else "downside flush"
+        tier = context.get("master_tier", context.get("label"))
+        move = context.get("move_context")
+        heading = ("EMERGENCY DEFCON-1 PREEMPTIVE ALERT" if is_emergency else
+                   "ONE-SIDED MARKET DIRECTIVE" if is_cleared else
+                   "ONE-SIDED MARKET BIAS (NOT CLEARED TO TRADE)")
+        lines = [
+            f"{heading} ({category_name.upper()})",
+            f"Time: {timestamp}",
+            f"Current BTC price: {_money(current_price)}.",
+        ]
+        if tier:
+            lines.append(f"Master context: {tier} · {context.get('horizon_label', '—')}.")
+        if move:
+            lines.append(f"Expected move context: {move}.")
+        lines.extend((
+            (f"Directive: {action} ({direction}) at {decision.get('entry', '—')}."
+             if is_cleared else f"Bias: {action} ({direction}); monitor {decision.get('entry', '—')}, no trade authorized."),
+            (f"Targets: {target_text}. Safety line: {safety}." if is_cleared else
+             f"No targets until the gate clears. Safety line: {safety}."),
+            f"Window: {window_utc_pkt}.",
+            str(decision.get("reason") or
+                (preemptive.plain_english_reason if is_emergency and preemptive else "")),
+        ))
+        return " ".join(line for line in lines if line)
 
-    if decision["action"] in ("BUY", "SELL"):
-        t_str = " – ".join(f"${t:,.0f}" for t in decision["targets"])
-        move_label = "Upside Squeeze Target" if decision["action"] == "BUY" else "Downside Liquidation Target"
-        warning_line = (
-            f"Preemptive Notice: {preemptive.plain_english_reason} "
-            f"{'Build short hedges / close longs' if decision['action'] == 'SELL' else 'Position for upside squeeze'} immediately."
-            if is_emergency
-            else f"One-Sided Execution: {decision['action']} at {decision['entry']}. {decision['reason']}"
-        )
-        return (
-            f"========================================\n"
-            f"{header}\n"
-            f"⏰ Time: {ts}\n"
-            f"========================================\n\n"
-            f"📈 CURRENT MARKET STATE & PRICE:\n"
-            f"- Current Price: ${current_price:,.0f} (Live Tracking)\n"
-            f"- Trend Phase: {decision['reason']}\n\n"
-            f"🕒 EXPECTED TIMELINE & REVERSAL WINDOW:\n"
-            f"- Preemptive Window: {window_utc_pkt}\n\n"
-            f"📍 KEY LEVELS & TARGETS:\n"
-            f"- {move_label}: {t_str}\n"
-            f"- Safety Line (Hard Invalidation): ${decision['safety_line']:,.0f}\n\n"
-            f"⚠️ ACTION DIRECTIVE:\n"
-            f"- {warning_line}\n\n"
-            f"Trade Wisely! ⚠️\n"
-            f"========================================"
-        )
+    if action == "NO SETUP":
+        return (f"MARKET SETUP ({category_name.upper()}) · Time: {timestamp} · "
+                f"Current BTC price: {_money(current_price)} · NO SETUP: {decision.get('reason') or 'no level to trade from'}.")
+    return (f"ONE-SIDED MARKET DIRECTIVE ({category_name.upper()}) · Time: {timestamp} · "
+            f"Current BTC price: {_money(current_price)} · Directive: WAIT / SITTING OUT IS AN EDGE "
+            f"({decision.get('reason') or 'balanced chop with fewer than three aligned major confluences'}).")
 
-    return (
-        f"========================================\n"
-        f"{header}\n"
-        f"⏰ Time: {ts}\n"
-        f"========================================\n"
-        f"- Current Price: ${current_price:,.0f}\n"
-        f"- Directive: WAIT / SITTING OUT IS AN EDGE ({decision['reason']})\n"
-        f"========================================"
-    )
+
+def _kill_zones(now_ms: int) -> str:
+    """His three kill zones with what they measured: the ones near chance are said to be, not dropped."""
+    from core.indicators.turn_window import ZONES, next_zones
+
+    on = {w.zone.key: w.active for w in next_zones(now_ms)}
+    edge, none = [], []
+    for z in ZONES:
+        w = NS(active=on.get(z.key, False))
+        pkt = z.hours_label.split("(")[1].rstrip(")")
+        if z.near_chance:
+            none.append(f"{z.name} ({pkt})")
+        else:
+            edge.append(f"{z.name} {pkt}{' (on now)' if w.active else ''}: {z.share_of_turns:.0%} of turns, "
+                        f"{z.times_chance:.1f}x chance")
+    text = "; ".join(edge)
+    if none:
+        text += (". " if text else "") + " and ".join(none) + ": no better than chance, not turning times"
+    return text + (". Window 1 (12:00-16:00 UTC) is the strongest four hours; the New York session "
+                   "(13:00-17:00 UTC) overlaps it by three, so they are one afternoon, not two.")

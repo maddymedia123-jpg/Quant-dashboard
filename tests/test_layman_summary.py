@@ -82,7 +82,7 @@ def test_the_box_follows_his_v22_layout_in_order_with_no_indicator_words():
     order = ["🧭 BIG PICTURE", "🕒 TIMELINE", "Now: What's happening:", "What to expect:", "Turning window:",
              "🎯 BOUNCE ZONE", "Sell $81,550 – $81,650", "Why:", "📈 TARGETS", "Target 1 (the first low to expect):",
              "Target 2:", "Target 3:", "🛡 SAFETY LINE", "✅ VERIFIED CONFLUENCES · 0 of 7 agree, 3 needed",
-             "📣 DIRECTIVE", "WAIT. 0 of 7 confluences agree", "⚠️ WARNING"]
+             "📣 DIRECTIVE", "WAIT / SITTING OUT IS AN EDGE. 0 of 7 confluences agree", "⚠️ WARNING"]
     at = [h.index(x) for x in order]
     assert at == sorted(at), order
     assert "\n\n" not in h and "<pre" not in h
@@ -109,7 +109,7 @@ def test_the_gate_opens_the_directive_with_three_targets_and_closes_it_naming_wh
     assert [c["agrees"] for c in s["confluences"]] == [True, True, None, True, None, None, None]
     assert s["safety"].startswith("$80,000. A 4-hour candle closing below $80,000 cancels the long.")
     bare = ls.lines(bull, None, None, NOON)
-    assert bare["verdict"] == "WAIT" and bare["directive"].startswith("WAIT. 0 of 7 confluences agree, 3 are needed. Missing: ")
+    assert bare["verdict"] == "WAIT" and bare["directive"].startswith("WAIT / SITTING OUT IS AN EDGE. 0 of 7 confluences agree, 3 are needed. Missing: ")
     assert "nothing else backs it yet" in bare["zone_why"]
     # the mood and derivatives the caller already passes count as evidence even without an Evidence object
     assert ls.lines(bull, {"funding": {"latest_8h_rate": -0.0002}}, 15, NOON)["confluences"][3]["agrees"] is True
@@ -177,8 +177,10 @@ def test_the_warning_names_the_next_print_the_dollar_and_the_weekend():
     assert walled["warning"].startswith("Watch: a weekly level at $81,200 stands between the zone and Target 1; expect a pause there")
     barred = ls.lines(bull, DERIVS, 18, NOON, evidence_for_a_long(htf_levels=(("weekly level", 80_910.0),)))
     assert barred["verdict"] == "WAIT" and barred["bar"]["price"] == 80_910.0
-    assert barred["directive"].startswith("WAIT. 3 of 7 confluences agree, but a weekly level at $80,910 sits just above the zone")
-    assert "What to expect: no trade yet. WAIT: 3 of 7" in barred["phase_now"]
+    assert barred["directive"].startswith("BUY BIAS, not cleared to trade: 3 of 7 confluences agree, but a weekly level at $80,910 sits just above the zone")
+    assert "What to expect: BUY is the one-sided bias, but no trade is authorized" in barred["phase_now"]
+    assert "ONE-SIDED MARKET BIAS (NOT CLEARED TO TRADE)" in barred["dispatch"]
+    assert "BUY (upside squeeze)" in barred["dispatch"] and "no trade authorized" in barred["dispatch"]
     # the window is five days either side (owner, 4 Nov): three days out warns on every desk, six does not
     soon = evidence_for_a_long(prints=(NS(title="CPI", time_ms=NOON + 3 * 86_400_000, state="flat"),))
     for tf, horizon in (("1h", "next 4h"), ("1w", "next 30 days")):

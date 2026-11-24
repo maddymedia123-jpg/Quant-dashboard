@@ -1,9 +1,97 @@
-from dataclasses import dataclass
+"""His v22 Section 9: the confluence gate. A desk's trade box opens only when at least three of seven
+independent families of evidence agree with the zone the desk wants to act from; fewer is a WAIT that names
+what is missing, and two families pointing the other way is a WAIT that names the conflict.
+
+The seven families, each judged on its own feed so no single read can open the gate on its own:
+
+    pattern       a harmonic completing inside the zone, on the desk's own timeframes
+    options       a put wall (for a long) or call wall (for a short) inside the zone
+    flow          who is winning at market on the desk's chart: absorption at the level, or flow confirming
+    positioning   a crowded side to force out - read the contrarian way (Hammad): extreme fear plus a
+                  crowded short is a bullish trigger, extreme greed plus a crowded long a bearish one
+    structure     a failed break (the trap it is), a sweep that was reclaimed, or a value-area edge in the zone
+    macro         the dollar and the 2-year yield over the week, and which side the last news print trapped
+    timing        the measured turning window, counting only while it is on
+
+Over the gate sits the higher-timeframe bar (Hammad, v22): a Weekly or Monthly level within half an ATR
+beyond the zone, on the path to Target 1, bars the trade even when three families agree. A level inside
+the zone is allowed - the zone is where the trade is entered, so a level there is the entry, not a wall -
+and a level farther out but still before Target 1 is only named in the warning.
+
+Everything here is code over the desk's own numbers; nothing comes from a model's text. Notes are written
+for the layman summary, so they name no indicator."""
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
+
+LONG, SHORT, NONE = "LONG", "SHORT", "NONE"
+NEED = 3                          # families that must agree before the trade box opens
+ZONE_PAD_ATR = 0.25               # a level counts as "at the zone" this far outside it
+# the positioning thresholds live with the anomaly trap, which reads the same crowd
+from core.indicators.weekend import is_weekend  # noqa: E402
+from core.indicators.anomaly_trap import (FEAR_EXTREME, GREED_EXTREME, LONG_ACCOUNTS_CROWDED,  # noqa: E402
+                                          PREMIUM_CROWDED_LONG, PREMIUM_CROWDED_SHORT,
+                                          SHORT_ACCOUNTS_CROWDED, from_evidence, long_share)
+from core.gravity_engine import PreemptiveSignal
+HTF_BAR_ATR = 0.5                 # a higher-timeframe level this far beyond the zone bars the path
+HIGHER = {"live": ("weekly", "monthly"), "intraday": ("weekly", "monthly"), "weekly": ("monthly",), "monthly": ()}
+DOLLAR_WEEK_PCT = 0.25            # the broad dollar index, one-week change, in percent
+YIELD_WEEK_PTS = 0.10             # the US 2-year yield, one-week change, in percentage points
+PKT_MS = 5 * 3_600_000
+# His liquidation magnet, the honest version: resting clusters within MAGNET_PCT of the zone are the crowd
+# that gets forced out, and price is drawn to the bigger side; a side has to carry MAGNET_MIN_USD and beat
+# the other by MAGNET_RATIO before it is a pull at all.
+MAGNET_PCT = 2.0
+MAGNET_MIN_USD = 20_000_000
+MAGNET_RATIO = 1.5
+# A headline's pull on the tape fades as the market absorbs it (his v28 narrative decay): weight e^(-age / NEWS_DECAY_MS),
+# and below NEWS_FLOOR (about 45 hours) the print is absorbed and casts no vote.
+NEWS_DECAY_MS = 24 * 3_600_000
+NEWS_FLOOR = 0.15
+
+FAMILIES = (("pattern", "a pattern completing at the zone"),
+            ("options", "an options wall at the zone"),
+            ("flow", "a turn in the order flow"),
+            ("positioning", "a crowded side to force out"),
+            ("structure", "a failed break, a reclaimed sweep or a value edge"),
+            ("macro", "the dollar, yields and the news prints"),
+            ("timing", "the turning window"))
+LABEL = dict(FAMILIES)
+
+
+@dataclass(frozen=True)
+class Evidence:
+    """What the desk screen hands the gate; every field may be missing, and a missing feed is a family that
+    says nothing, never one that agrees."""
+    harmonics: tuple = ()             # core.indicators.harmonics.Harmonic, the desk's own timeframes
+    derivs: dict | None = None        # core.indicators.desk_derivs.read(...)
+    fear_greed: int | None = None
+    futures: object | None = None     # FuturesSnapshot: long_account_pct, long_short_ratio
+    breaks: tuple = ()                # core.indicators.vwap_break.BreakRead per timeframe
+    liquidity: dict | None = None     # timeframe -> core.indicators.liquidity.summarise(...)
+    prints: tuple = ()                # core.indicators.event_trap.EventRead
+    rates: dict | None = None         # core.agents.context._rates(m)
+    htf_levels: tuple = ()            # (label, price) from the desks above this one, e.g. ("weekly level", 80_910.0)
+    price_change_24h_pct: float | None = None   # the candle side of the anomaly trap
+    oi_history: tuple = ()            # (ms, BTC) open interest, for "at a 30-day high"
+    liq_levels: dict | None = None    # core.data.types.LiquidationLevelsSnapshot.to_state(): resting clusters, one venue
+    preemptive: PreemptiveSignal | None = None
+
+
+@dataclass(frozen=True)
+class Family:
+    key: str
+    label: str
+    side: str       # LONG, SHORT or NONE
+    note: str       # one plain clause, no indicator words
+
 
 @dataclass
 class MasterTradeCard:
-    tier: str               # "INTRADAY SWING MASTER" | "MONTHLY MACRO MASTER"
-    action: str             # "BUY" | "SELL" | "WAIT"
+    tier: str
+    action: str
     entry_zone: str
     targets: list[float]
     safety_line: float
@@ -11,66 +99,408 @@ class MasterTradeCard:
     pre_invalidation_warning: str | None
     summary_line: str
 
+
+@dataclass(frozen=True)
+class Bar:
+    label: str
+    price: float
+    note: str
+
+
+@dataclass(frozen=True)
+class Gate:
+    side: str                      # the zone's side: LONG, SHORT or NONE
+    verdict: str                   # TRADE, WAIT or NO SETUP
+    families: tuple[Family, ...]
+    reason: str
+    agreeing: tuple[Family, ...] = field(default=())
+    opposing: tuple[Family, ...] = field(default=())
+    bar: Bar | None = None         # the higher-timeframe level barring the path, if any
+    trap: object | None = None     # core.indicators.anomaly_trap.AnomalyTrap, if the crowd is extreme against the candle
+    preemptive: PreemptiveSignal | None = None
+
+    @property
+    def missing(self) -> tuple[Family, ...]:
+        return tuple(f for f in self.families if f.side == NONE)
+
+
+def _money(x: float | None) -> str:
+    return "—" if x is None else f"${x:,.0f}"
+
+
+def _at(level: float | None, zone: tuple[float, float], atr: float) -> bool:
+    return level is not None and zone[0] - ZONE_PAD_ATR * atr <= level <= zone[1] + ZONE_PAD_ATR * atr
+
+
+def _other(side: str) -> str:
+    return {LONG: SHORT, SHORT: LONG}.get(side, NONE)
+
+
+def _vote(key: str, votes: list[tuple[str, str]], nothing: str, both: str) -> Family:
+    """One family from several reads: all one way is that way; reads both ways cancel and say so."""
+    sides = {s for s, _ in votes}
+    if not votes:
+        return Family(key, LABEL[key], NONE, nothing)
+    if len(sides) > 1:
+        return Family(key, LABEL[key], NONE, both + ": " + "; ".join(n for _, n in votes))
+    return Family(key, LABEL[key], votes[0][0], "; ".join(n for _, n in votes))
+
+
+# ---------- the seven families ----------
+def pattern(harmonics, zone: tuple[float, float], atr: float) -> Family:
+    found = []
+    for h in harmonics or ():
+        if getattr(h, "stage", "") not in ("in_zone", "completed"):
+            continue
+        lo, hi = h.prz
+        if lo <= zone[1] + ZONE_PAD_ATR * atr and hi >= zone[0] - ZONE_PAD_ATR * atr:
+            side = LONG if h.side == "bullish" else SHORT
+            found.append((side, f"a {h.name} {'completing' if h.stage == 'completed' else 'in its zone'} at "
+                                f"{_money(lo)} – {_money(hi)}"))
+    return _vote("pattern", found, "no pattern completing at the zone", "patterns disagree at the zone")
+
+
+def options(derivs: dict | None, zone: tuple[float, float], atr: float) -> Family:
+    g = (derivs or {}).get("gamma") or {}
+    votes = []
+    if _at(g.get("put_wall"), zone, atr):
+        votes.append((LONG, f"a put wall at {_money(g['put_wall'])} sits in the zone"))
+    if _at(g.get("call_wall"), zone, atr):
+        votes.append((SHORT, f"a call wall at {_money(g['call_wall'])} sits in the zone"))
+    return _vote("options", votes, "no options wall at the zone", "walls on both sides of the zone")
+
+
+def _quiet_tape(chart_tf: str, liquidity: dict | None) -> str:
+    """The backdrop clause when taker swings have compressed against their norm (core.indicators.liquidity
+    .flow_variance): the one population-level precursor the cascade research supported. Never a vote."""
+    tv = ((liquidity or {}).get(chart_tf) or {}).get("taker_variance") or {}
+    if not tv.get("available") or tv.get("state") != "compressed":
+        return ""
+    return (f"; the tape has gone quiet: taker swings over the last {tv.get('short_bars', 20)} bars are "
+            f"{float(tv.get('ratio') or 0) * 100:.0f}% of the {tv.get('long_bars', 100)}-bar norm, the backdrop "
+            "the recorded cascades shared, a condition and not a signal")
+
+
+def flow(chart_tf: str, liquidity: dict | None) -> Family:
+    state = ((liquidity or {}).get(chart_tf) or {}).get("cumulative_delta", {}).get("state")
+    quiet = _quiet_tape(chart_tf, liquidity)
+    word = {"bullish absorption": (LONG, "price was pushed down but buyers took everything offered"),
+            "bearish absorption": (SHORT, "price was pushed up but sellers met every bid"),
+            "confirming up": (LONG, "buyers are winning at market as price rises"),
+            "confirming down": (SHORT, "sellers are winning at market as price falls")}.get(state)
+    if word is None:
+        return Family("flow", LABEL["flow"], NONE, ("no turn in the order flow yet" if state else
+                                                    "order flow not readable on this chart") + quiet)
+    return Family("flow", LABEL["flow"], word[0], word[1] + quiet)
+
+
+def _magnet(liq_levels: dict | None, zone: tuple[float, float] | None) -> tuple[str, str] | None:
+    """The vote from resting liquidation clusters within reach of the zone, or None."""
+    if not liq_levels or not liq_levels.get("available") or not zone:
+        return None
+    mid = (zone[0] + zone[1]) / 2
+    reach = mid * MAGNET_PCT / 100
+
+    def total(rows) -> float:
+        t = 0.0
+        for c in rows or ():
+            try:
+                price, notional = float(c["price"]), float(c.get("notional_usd") or 0)
+            except (KeyError, TypeError, ValueError):
+                continue
+            if abs(price - mid) <= reach:
+                t += notional
+        return t
+    below, above = total(liq_levels.get("longs")), total(liq_levels.get("shorts"))
+    big, small = max(below, above), min(below, above)
+    if big < MAGNET_MIN_USD or (small and big / small < MAGNET_RATIO):
+        return None
+    venue = liq_levels.get("venue") or "Hyperliquid"
+    side, who, where, usd = (SHORT, "longs", "below", below) if below > above else (LONG, "shorts", "above", above)
+    return (side, f"${usd / 1e6:,.0f}M of {venue} {who} liquidate within {MAGNET_PCT:g}% {where} the zone: "
+                  "price is drawn to where the forced orders sit")
+
+
+def positioning(fear_greed: int | None, futures, derivs: dict | None, trap=None,
+                liq_levels: dict | None = None, zone: tuple[float, float] | None = None) -> Family:
+    """Contrarian by design: the crowded side is the one that gets forced out. A named anomaly trap (his
+    Section 5.3) is this family at its strongest and speaks for it."""
+    if trap is not None:
+        return Family("positioning", LABEL["positioning"], trap.side,
+                      f"{trap.name} ({trap.status}): {' + '.join((trap.mood,) + trap.crowd)}; {trap.flow}: "
+                      f"the {trap.trapped} are the crowd that gets forced out")
+    votes = []
+    if fear_greed is not None:
+        if fear_greed < FEAR_EXTREME:
+            votes.append((LONG, f"extreme fear ({fear_greed}/100)"))
+        elif fear_greed > GREED_EXTREME:
+            votes.append((SHORT, f"extreme greed ({fear_greed}/100)"))
+    pct = long_share(futures)
+    if pct is not None:
+        if pct <= SHORT_ACCOUNTS_CROWDED:
+            votes.append((LONG, f"a crowded short ({pct:.0%} of accounts long)"))
+        elif pct >= LONG_ACCOUNTS_CROWDED:
+            votes.append((SHORT, f"a crowded long ({pct:.0%} of accounts long)"))
+    rate = ((derivs or {}).get("funding") or {}).get("latest_8h_rate")
+    if rate is not None:
+        if rate <= PREMIUM_CROWDED_SHORT:
+            votes.append((LONG, "shorts are paying to hold"))
+        elif rate >= PREMIUM_CROWDED_LONG:
+            votes.append((SHORT, "longs are paying a high premium to hold"))
+    pull = _magnet(liq_levels, zone)
+    if pull is not None:
+        votes.append(pull)
+    fam = _vote("positioning", votes, "no crowded side to force out", "crowded both ways")
+    if fam.side != NONE:
+        who = "shorts" if fam.side == LONG else "longs"
+        fam = Family(fam.key, fam.label, fam.side, f"{fam.note}: the {who} are the crowd that gets forced out")
+    return fam
+
+
+def structure(chart_tf: str, zone: tuple[float, float], atr: float, breaks, liquidity: dict | None,
+              weekend: bool = False) -> Family:
+    """The first thing that fires, chart timeframe first: a break read, then a sweep, then a value edge. On the
+    weekend (his microstructure modifier) a clean break is not breakout continuation and does not count; a
+    failed break, a reclaimed sweep or a value edge is the weekend playbook and still does."""
+    reads = sorted((b for b in breaks or () if getattr(b, "available", False)),
+                   key=lambda b: 0 if b.timeframe == chart_tf else 1)
+    untrusted = None
+    for b in reads:
+        up = b.direction == "up"
+        if weekend and b.state in ("qualified", "pullback"):
+            untrusted = untrusted or (f"the {b.timeframe} break {'above' if up else 'below'} {_money(b.edge)} came on "
+                                      "weekend tape and is not trusted until a weekday close confirms it")
+            continue
+        if b.state == "failed":
+            return Family("structure", LABEL["structure"], SHORT if up else LONG,
+                          f"the {b.timeframe} break {'above' if up else 'below'} {_money(b.edge)} failed: "
+                          f"a trap for the {'buyers' if up else 'sellers'}")
+        if b.state in ("qualified", "pullback"):
+            return Family("structure", LABEL["structure"], LONG if up else SHORT,
+                          f"a clean {b.timeframe} break {'above' if up else 'below'} {_money(b.edge)}"
+                          + (", now pulling back to it" if b.state == "pullback" else ""))
+    tfs = [chart_tf] + [tf for tf in (liquidity or {}) if tf != chart_tf]
+    for tf in tfs:
+        lq = (liquidity or {}).get(tf) or {}
+        pools = lq.get("pools") or {}
+        for side_key, side in (("sellside", LONG), ("buyside", SHORT)):
+            p = pools.get(side_key) or {}
+            if p.get("swept") and p.get("reclaimed") and _at(p.get("price"), zone, atr):
+                return Family("structure", LABEL["structure"], side,
+                              f"the {'lows' if side == LONG else 'highs'} at {_money(p['price'])} were swept and "
+                              f"reclaimed on the {tf}")
+        vp = lq.get("volume_profile") or {}
+        if vp.get("available"):
+            if _at(vp.get("value_area_low"), zone, atr):
+                return Family("structure", LABEL["structure"], LONG,
+                              f"the zone is the bottom edge of where the {tf} volume traded ({_money(vp['value_area_low'])})")
+            if _at(vp.get("value_area_high"), zone, atr):
+                return Family("structure", LABEL["structure"], SHORT,
+                              f"the zone is the top edge of where the {tf} volume traded ({_money(vp['value_area_high'])})")
+    return Family("structure", LABEL["structure"], NONE,
+                  untrusted or "no failed break, reclaimed sweep or value edge at the zone")
+
+
+def news_weight(age_ms: int) -> float:
+    """How much of a print's impact is left, age in ms: 1.0 at the print, 1/e a day later."""
+    return math.exp(-max(0, age_ms) / NEWS_DECAY_MS)
+
+
+def macro(rates: dict | None, prints, now_ms: int) -> Family:
+    votes = []
+    r = rates or {}
+    d = r.get("DTWEXBGS") or {}
+    if d.get("value") and d.get("change_1w") is not None:
+        pct = d["change_1w"] / d["value"] * 100
+        if pct <= -DOLLAR_WEEK_PCT:
+            votes.append((LONG, f"the dollar fell {abs(pct):.1f}% this week, a tailwind"))
+        elif pct >= DOLLAR_WEEK_PCT:
+            votes.append((SHORT, f"the dollar rose {pct:.1f}% this week, a headwind"))
+    y = r.get("DGS2") or {}
+    if y.get("change_1w") is not None:
+        if y["change_1w"] <= -YIELD_WEEK_PTS:
+            votes.append((LONG, f"the 2-year yield fell {abs(y['change_1w']):.2f} points this week"))
+        elif y["change_1w"] >= YIELD_WEEK_PTS:
+            votes.append((SHORT, f"the 2-year yield rose {y['change_1w']:.2f} points this week"))
+    trapped = [p for p in prints or () if getattr(p, "state", "") in ("sell_the_news", "spike_faded")
+               and getattr(p, "trapped", None) in ("longs", "shorts")
+               and news_weight(now_ms - int(p.time_ms)) >= NEWS_FLOOR]
+    for p in sorted(trapped, key=lambda p: int(p.time_ms))[-1:]:
+        age_ms = now_ms - int(p.time_ms)
+        fading = f" ({age_ms / 3_600_000:.0f} hours old, fading)" if age_ms >= NEWS_DECAY_MS else ""
+        votes.append((SHORT if p.trapped == "longs" else LONG, f"the {p.title} print trapped the {p.trapped}{fading}"))
+    return _vote("macro", votes, "no dollar, yield or news-print lean this week", "macro is mixed")
+
+
+def timing(side: str, now_ms: int) -> Family:
+    from core.indicators.turn_window import next_window
+    w = next_window(now_ms)
+    hm = lambda ms, off=0: f"{datetime.fromtimestamp((ms + off) / 1000, timezone.utc):%H:%M}"  # noqa: E731
+    span = f"{hm(w.start_ms)}–{hm(w.end_ms)} UTC, {hm(w.start_ms, PKT_MS)}–{hm(w.end_ms, PKT_MS)} PKT"
+    if w.active:
+        return Family("timing", LABEL["timing"], side, f"the turning window is on now ({span})")
+    day = datetime.fromtimestamp(w.start_ms / 1000, timezone.utc)
+    return Family("timing", LABEL["timing"], NONE, f"next turning window {span} {day:%a %d %b}")
+
+
+# ---------- the higher-timeframe bar ----------
+def _on_path(side: str, zone: tuple[float, float], target1: float | None, price: float) -> bool:
+    """Beyond the zone's far edge, on the way to Target 1 (or anywhere beyond when there is no target)."""
+    if side == LONG:
+        return price > zone[1] and (target1 is None or price < target1)
+    return price < zone[0] and (target1 is None or price > target1)
+
+
+def htf_bar(side: str, zone: tuple[float, float], atr: float, target1: float | None, htf_levels) -> Bar | None:
+    """The nearest higher-timeframe level within half an ATR beyond the zone on the path to Target 1."""
+    if side not in (LONG, SHORT) or not atr:
+        return None
+    edge = zone[1] if side == LONG else zone[0]
+    near = [(label, p) for label, p in htf_levels or () if _on_path(side, zone, target1, p)
+            and abs(p - edge) <= HTF_BAR_ATR * atr]
+    if not near:
+        return None
+    label, p = min(near, key=lambda lp: abs(lp[1] - edge))
+    above = side == LONG
+    return Bar(label, p, f"a {label} at {_money(p)} sits just {'above' if above else 'below'} the zone, between it "
+                         f"and Target 1: the path is barred until a close {'above' if above else 'below'} it, or "
+                         f"until that level is the zone")
+
+
+def levels_before_target(side: str, zone: tuple[float, float], atr: float, target1: float | None, htf_levels) -> list:
+    """Higher-timeframe levels on the path to Target 1 that do not bar it (farther than the bar's band),
+    nearest first - the warning names them."""
+    if side not in (LONG, SHORT) or not atr:
+        return []
+    edge = zone[1] if side == LONG else zone[0]
+    out = [(label, p) for label, p in htf_levels or () if _on_path(side, zone, target1, p)
+           and abs(p - edge) > HTF_BAR_ATR * atr]
+    return sorted(out, key=lambda lp: abs(lp[1] - edge))
+
+
+# ---------- the gate ----------
+def judge(side: str, zone: tuple[float, float], atr: float, chart_tf: str, ev: Evidence, now_ms: int,
+          trap=None) -> tuple[Family, ...]:
+    return (pattern(ev.harmonics, zone, atr),
+            options(ev.derivs, zone, atr),
+            flow(chart_tf, ev.liquidity),
+            positioning(ev.fear_greed, ev.futures, ev.derivs, trap, liq_levels=ev.liq_levels, zone=zone),
+            structure(chart_tf, zone, atr, ev.breaks, ev.liquidity, weekend=is_weekend(now_ms)),
+            macro(ev.rates, ev.prints, now_ms),
+            timing(side, now_ms))
+
+
+def gate(side: str, families: tuple[Family, ...], bar: Bar | None = None) -> Gate:
+    if side not in (LONG, SHORT):
+        return Gate(NONE, "NO SETUP", families, "NO SETUP: no level to trade from.")
+    agreeing = tuple(f for f in families if f.side == side)
+    opposing = tuple(f for f in families if f.side == _other(side))
+    n = len(families)
+    if len(opposing) >= 2:
+        reason = (f"WAIT: {' and '.join(f.label for f in opposing)} point the other way: "
+                  + "; ".join(f.note for f in opposing) + ".")
+    elif len(agreeing) >= NEED and bar is None:
+        reason = f"TRADE: {len(agreeing)} of {n} confluences agree"
+        if opposing:
+            reason += f"; {opposing[0].label} points the other way: {opposing[0].note}"
+        return Gate(side, "TRADE", families, reason + ".", agreeing, opposing)
+    elif len(agreeing) >= NEED:
+        # the higher-timeframe bar: enough agrees, but the path to Target 1 runs straight into a bigger level
+        reason = f"WAIT: {len(agreeing)} of {n} confluences agree, but {bar.note}."
+        return Gate(side, "WAIT", families, reason, agreeing, opposing, bar)
+    else:
+        missing = [f.label for f in families if f.side != side]
+        reason = (f"WAIT: {len(agreeing)} of {n} confluences agree, {NEED} are needed. Missing: "
+                  + ", ".join(missing) + ".")
+    if bar is not None:
+        reason += f" Also {bar.note}."
+    return Gate(side, "WAIT", families, reason, agreeing, opposing, bar)
+
+
+def read(f, a, ev: Evidence | None, now_ms: int) -> Gate:
+    """The gate for a desk: `f` is its layman framework (side and zone), `a` its analysis."""
+    ev = ev or Evidence()
+    atr = getattr(getattr(a, "vol", None), "atr", None)
+    trap = from_evidence(ev, a.chart_tf, now_ms)
+    signal = ev.preemptive
+    if signal is not None and signal.defcon_1 and signal.direction in (LONG, SHORT):
+        families = (judge(f.side, f.zone, atr, a.chart_tf, ev, now_ms, trap)
+                    if f.side in (LONG, SHORT) and f.zone is not None and atr else ())
+        return Gate(signal.direction, "DEFCON_1_PREEMPTIVE", families,
+                    signal.plain_english_reason, trap=trap, preemptive=signal)
+    if f.side not in (LONG, SHORT) or f.zone is None or not atr:
+        return replace(gate(NONE, ()), trap=trap, preemptive=signal)
+    g = gate(f.side, judge(f.side, f.zone, atr, a.chart_tf, ev, now_ms, trap),
+             htf_bar(f.side, f.zone, atr, f.targets[0], ev.htf_levels))
+    return replace(g, trap=trap, preemptive=signal)
+
+
+def _family_value(family, key: str, default=None):
+    return family.get(key, default) if isinstance(family, dict) else getattr(family, key, default)
+
+
 def solve_one_sided_puzzle(
     desk_key: str,
-    families: list,
-    preemptive: PreemptiveSignal,
+    families: list | tuple,
+    preemptive: PreemptiveSignal | None,
     entry_zone: str,
     targets: list[float],
-    safety_line: float,
+    safety_line: float | None,
+    preferred_side: str | None = None,
 ) -> dict:
-    """
-    Combines all data feeds into one decisive direction.
-    1. DEFCON-1 preemptive trap overrides lagging candle closes.
-    2. Otherwise, requires >= 3 core confluences aligned on one side.
-    """
-    if preemptive.defcon_1 and preemptive.direction in ("LONG", "SHORT"):
-        action = "BUY" if preemptive.direction == "LONG" else "SELL"
+    """Return a one-sided bias after three-family agreement or an urgent DEFCON override."""
+    if preemptive is not None and preemptive.defcon_1 and preemptive.direction in (LONG, SHORT):
+        action = "BUY" if preemptive.direction == LONG else "SELL"
+        targets_ = [x for x in (preemptive.target_high if action == "BUY" else preemptive.target_low,) if x is not None]
         return {
-            "verdict": "DEFCON_1_PREEMPTIVE",
-            "side": preemptive.direction,
-            "action": action,
-            "entry": entry_zone,
-            "targets": [preemptive.target_low, preemptive.target_high],
-            "safety_line": preemptive.safety_line,
-            "aligned_count": 4,
+            "verdict": "DEFCON_1_PREEMPTIVE", "side": preemptive.direction, "action": action,
+            "entry": entry_zone, "targets": targets_,
+            "safety_line": preemptive.safety_line if preemptive.safety_line is not None else safety_line,
+            "aligned_count": sum(_family_value(f, "side") == preemptive.direction for f in families),
             "reason": preemptive.plain_english_reason,
         }
 
-    bullish = [f for f in families if f.side == "LONG"]
-    bearish = [f for f in families if f.side == "SHORT"]
-
-    if len(bullish) >= 3 and len(bullish) > len(bearish):
+    by_side: dict[str, dict[str, object]] = {LONG: {}, SHORT: {}}
+    for family in families:
+        side = _family_value(family, "side")
+        key = _family_value(family, "key", str(id(family)))
+        if side in by_side:
+            by_side[side][str(key)] = family
+    bullish, bearish = by_side[LONG], by_side[SHORT]
+    if len(bullish) >= NEED and len(bullish) > len(bearish):
+        side, action, aligned = LONG, "BUY", bullish
+    elif len(bearish) >= NEED and len(bearish) > len(bullish):
+        side, action, aligned = SHORT, "SELL", bearish
+    elif len(bullish) == len(bearish) and len(bullish) >= NEED and preferred_side in (LONG, SHORT):
+        side, action, aligned = (LONG, "BUY", bullish) if preferred_side == LONG else (SHORT, "SELL", bearish)
         return {
-            "verdict": "TRADE",
-            "side": "LONG",
-            "action": "BUY",
-            "entry": entry_zone,
-            "targets": targets,
-            "safety_line": safety_line,
-            "aligned_count": len(bullish),
-            "reason": f"{len(bullish)} major structural confluences aligned bullish.",
+            "verdict": "DIRECTIONAL_BIAS", "side": side, "action": action,
+            "entry": entry_zone, "targets": [], "safety_line": safety_line,
+            "aligned_count": len(aligned),
+            "reason": f"Evidence is evenly split; {action} is the desk's one-sided bias, not trade authorization.",
         }
-
-    if len(bearish) >= 3 and len(bearish) > len(bullish):
+    else:
+        count = max(len(bullish), len(bearish))
+        if count >= NEED or len(bullish) == len(bearish):
+            return {
+                "verdict": "BALANCED_CONFLICT", "side": NONE, "action": "WAIT / SITTING OUT IS AN EDGE",
+                "entry": "None", "targets": [], "safety_line": safety_line,
+                "aligned_count": count,
+                "reason": ("Major confluences are split across both directions; no one-sided edge is supported."
+                           if count >= NEED else
+                           f"Balanced chop: {count} major confluences align; {NEED} are required for a directional setup."),
+            }
+        side, action, aligned = (LONG, "BUY", bullish) if len(bullish) > len(bearish) else (SHORT, "SELL", bearish)
         return {
-            "verdict": "TRADE",
-            "side": "SHORT",
-            "action": "SELL",
-            "entry": entry_zone,
-            "targets": targets,
-            "safety_line": safety_line,
-            "aligned_count": len(bearish),
-            "reason": f"{len(bearish)} major structural confluences aligned bearish.",
+            "verdict": "DIRECTIONAL_BIAS", "side": side, "action": action,
+            "entry": entry_zone, "targets": [], "safety_line": safety_line,
+            "aligned_count": len(aligned),
+            "reason": (f"{action} is the one-sided bias, but only {len(aligned)} major confluences align; "
+                       f"{NEED} are required before trade authorization."),
         }
-
     return {
-        "verdict": "WAIT",
-        "side": "NONE",
-        "action": "WAIT / SITTING OUT IS AN EDGE",
-        "entry": "None",
-        "targets": [],
-        "safety_line": 0.0,
-        "aligned_count": max(len(bullish), len(bearish)),
-        "reason": "Order flow and options walls are balanced; fewer than 3 core confluences align.",
+        "verdict": "TRADE", "side": side, "action": action, "entry": entry_zone,
+        "targets": list(targets), "safety_line": safety_line,
+        "aligned_count": len(aligned),
+        "reason": f"{len(aligned)} major structural confluences aligned {'bullish' if side == LONG else 'bearish'}.",
     }
