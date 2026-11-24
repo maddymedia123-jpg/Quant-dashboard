@@ -672,9 +672,12 @@ def data_status_html(m: MarketSnapshot) -> str:
     rows = []
     for name in MarketSnapshot.SOURCES:
         s = getattr(m, name)
-        src = html.escape(str(s.source)) + ("" if s.available else " · unavailable")
+        source = str(s.source)
+        src = html.escape(source) + ("" if s.available else " · unavailable")
+        details = html.escape(f"{source} — {s.error}" if s.error else source)
         rows.append(f"<div class='ti-feed{'' if s.available else ' off'}'><span class='dot'></span>"
-                    f"<span>{html.escape(FEED_NAMES.get(name, name))}</span><span class='src' title='{src}'>{src}</span></div>")
+                    f"<span>{html.escape(FEED_NAMES.get(name, name))}</span>"
+                    f"<span class='src' title='{details}'>{src}</span></div>")
     return "<span class='ti-label'>Feeds</span><div class='ti-feeds'>" + "".join(rows) + "</div>"
 
 

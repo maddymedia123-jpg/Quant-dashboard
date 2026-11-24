@@ -13,6 +13,7 @@ from core.data.types import OptionsSnapshot
 
 log = logging.getLogger(__name__)
 BASE = "https://www.deribit.com/api/v2/public"
+OPTIONS_TIMEOUT = httpx.Timeout(4.0, connect=2.0)
 
 
 def parse_instrument(name: str) -> tuple[str, float, str]:
@@ -123,9 +124,38 @@ def _gamma(payload: dict, desks: bool) -> dict:
 
 async def fetch_options(client: httpx.AsyncClient) -> OptionsSnapshot:
     try:
-        r = await client.get(f"{BASE}/get_book_summary_by_currency", params={"currency": SYMBOLS["deribit"], "kind": "option"})
+        r = await client.get(f"{BASE}/get_book_summary_by_currency",
+                             params={"currency": SYMBOLS["deribit"], "kind": "option"},
+                             timeout=OPTIONS_TIMEOUT)
         r.raise_for_status()
-        return parse_book_summary(r.json())
+        payload = r.json()
+        if not isinstance(payload, dict) or not isinstance(payload.get("result"), list) or not payload["result"]:
+            raise ValueError("Deribit returned an empty options chain")
+        return parse_book_summary(payload)
+    except Exception as primary_error:  # noqa: BLE001 - provider boundary
+        primary_reason = _error_text(primary_error)
+        log.warning("deribit options unavailable; trying OKX: %s", primary_reason)
+
+    from core.data.okx_options import fetch_okx_options
+    try:
+        fallback = await fetch_okx_options(client)
+        if fallback.available:
+            fallback.error = f"Deribit failed ({primary_reason}); OKX succeeded"
+            return fallback
+        fallback_reason = fallback.error or "no usable option inputs"
     except Exception as e:  # noqa: BLE001 - provider boundary
-        log.error("deribit unavailable: %s", e)
-        return OptionsSnapshot.unavailable("deribit", str(e))
+        fallback_reason = _error_text(e)
+
+    reason = f"deribit: {primary_reason}; okx: {fallback_reason}"
+    log.error("options unavailable from all providers: %s", reason)
+    return OptionsSnapshot(
+        available=False,
+        source="deribit,okx",
+        error=reason,
+        gamma={"available": False, "regime": "unknown", "note": reason},
+    )
+
+
+def _error_text(error: Exception) -> str:
+    detail = str(error).strip()
+    return f"{type(error).__name__}: {detail}" if detail else type(error).__name__

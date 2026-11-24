@@ -36,7 +36,8 @@ Kraken spot OHLCV (Gemini exchange fallback) · USD-M futures for funding, open 
 taker flow, tried in order **Binance → Bybit → Gate.io**, then thinner fallbacks (CoinLobster relay +
 Hyperliquid composite, Kraken Futures, and finally values derived from our own stored samples) ·
 Hyperliquid funding and OI · CoinLobster 24h liquidations, $100K+ whale trades and unusual-flow radar ·
-Deribit options for max pain, put/call and IV skew · DefiLlama stablecoin supply · alternative.me Fear &
+Deribit options for max pain, put/call and IV skew, with a live OKX options fallback (source and primary-feed
+failure shown in feed status) · DefiLlama stablecoin supply · alternative.me Fear &
 Greed · Forex Factory weekly economic calendar (high-impact USD prints with forecast/previous; drives the
 macro-window trigger) · CoinDesk and Cointelegraph RSS plus the cryptocurrency.cv aggregator for headlines · goldprice.dev for XAU/USD spot
 (gold only; silver and copper are plan-gated) · Polymarket odds via voxodds.com, with an execution-quality

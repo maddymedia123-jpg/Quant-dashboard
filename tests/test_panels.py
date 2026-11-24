@@ -53,6 +53,16 @@ def test_panels_render_strings_and_squeeze_banner():
     assert banner and "SQUEEZE" in banner
 
 
+def test_options_feed_status_exposes_fallback_source_and_primary_failure():
+    m = _market()
+    m.options = OptionsSnapshot(source="okx", error="Deribit failed (TimeoutError); OKX succeeded")
+
+    status = panels.data_status_html(m)
+
+    assert "okx" in status
+    assert "Deribit failed (TimeoutError); OKX succeeded" in status
+
+
 def test_trade_result_macro_and_status():
     m = _market()
     live = analyze_category(CATEGORIES["live"], m.spot.frames, m.futures)
