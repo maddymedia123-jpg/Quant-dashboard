@@ -1,6 +1,8 @@
 """Streamlit entrypoint for TRAP INTELLIGENCE."""
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
 import importlib
 import inspect
 import logging
@@ -120,6 +122,27 @@ _FALLBACK_CSS = """
 """
 
 
+def _await_if_needed(obj):
+    if not inspect.isawaitable(obj):
+        return obj
+
+    def _run_in_fresh_loop():
+        loop = asyncio.new_event_loop()
+        try:
+            asyncio.set_event_loop(loop)
+            return loop.run_until_complete(obj)
+        finally:
+            loop.close()
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(obj)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(_run_in_fresh_loop).result()
+
+
 def _build_css(dark: bool, signal: bool) -> str:
     for fn_name in ("css", "build_css", "get_css", "stylesheet", "styles"):
         fn = getattr(theme, fn_name, None)
@@ -134,6 +157,7 @@ def _build_css(dark: bool, signal: bool) -> str:
                         out = fn(dark)
                     except TypeError:
                         out = fn()
+            out = _await_if_needed(out)
             if isinstance(out, str) and out.strip():
                 return out if "<style" in out else f"<style>{out}</style>"
     return _FALLBACK_CSS
@@ -187,7 +211,7 @@ def _fallback_snapshot(bucket_ms: int):
     snap_cls = getattr(core_data, "MarketSnapshot", None) if core_data else None
     if callable(snap_cls):
         try:
-            obj = snap_cls()
+            obj = _await_if_needed(snap_cls())
             if getattr(obj, "generated_at", None) is None:
                 obj.generated_at = datetime.fromtimestamp(bucket_ms / 1000.0, tz=timezone.utc)
             return obj, ["Using fallback snapshot: no snapshot loader discovered in core.data"]
@@ -255,9 +279,19 @@ def _call_snapshot_loader(bucket_ms: int):
             except TypeError:
                 res = _SNAPSHOT_LOADER()
 
-    if isinstance(res, tuple) and len(res) == 2 and hasattr(res[0], "spot"):
-        return res
-    return res, []
+    res = _await_if_needed(res)
+
+    if isinstance(res, tuple) and len(res) == 2:
+        snap = _await_if_needed(res[0])
+        errs = _await_if_needed(res[1])
+        if hasattr(snap, "spot"):
+            return snap, errs if isinstance(errs, list) else ([errs] if errs else [])
+
+    if hasattr(res, "spot"):
+        return res, []
+
+    fallback_snap, fallback_errs = _fallback_snapshot(bucket_ms)
+    return fallback_snap, [*fallback_errs, f"Unexpected snapshot loader return type: {type(res).__name__}"]
 
 
 def _inject_css(dark: bool, signal: bool) -> None:
@@ -291,14 +325,16 @@ def _snapshot(force: bool = False) -> tuple:
         st.session_state["snap_bucket"] = bucket
     else:
         bucket = st.session_state["snap_bucket"]
-    return _load_snapshot(bucket)
+    snap, errs = _load_snapshot(bucket)
+    snap = _await_if_needed(snap)
+    return snap, errs
 
 
 def _compute_analyses(m) -> dict:
     out = {}
     for key in CATEGORIES:
         try:
-            out[key] = cat_ind.analyze(key, m)
+            out[key] = _await_if_needed(cat_ind.analyze(key, m))
         except Exception as exc:  # noqa: BLE001
             log.warning("analysis failed for %s: %s", key, exc)
             out[key] = None
@@ -311,11 +347,11 @@ def _sync_accuracy(m, analyses: dict, now_ms: int) -> dict:
                 "by_classification_24h": {}, "by_classification_7d": {}, "recent_calls": []}
     try:
         if hasattr(accuracy, "record_calls"):
-            accuracy.record_calls(m, analyses, now_ms)
+            _await_if_needed(accuracy.record_calls(m, analyses, now_ms))
         if hasattr(accuracy, "score_due"):
-            accuracy.score_due(m, now_ms)
+            _await_if_needed(accuracy.score_due(m, now_ms))
         if hasattr(accuracy, "summary"):
-            return accuracy.summary()
+            return _await_if_needed(accuracy.summary())
     except Exception as exc:  # noqa: BLE001
         log.warning("accuracy ledger failed: %s", exc)
     return {"total_scored": 0, "open_calls": 0, "by_category": {},
@@ -456,7 +492,7 @@ def _render_traps(m, analyses: dict, now_ms: int) -> None:
 
     if st.button("Sweep timeframes now", use_container_width=False):
         try:
-            candidates, judged = traps.scan_and_judge(m, analyses, now_ms)
+            candidates, judged = _await_if_needed(traps.scan_and_judge(m, analyses, now_ms))
             swept_ms = now_ms
             st.session_state["trap_candidates"] = candidates
             st.session_state["trap_swept_ms"] = swept_ms
@@ -517,7 +553,7 @@ def _render_trade(m, analyses: dict, now_ms: int) -> None:
             st.warning("Trade map builder not available in this build.")
         else:
             try:
-                tm = trade_map.build_trade_map(
+                tm = _await_if_needed(trade_map.build_trade_map(
                     m=m,
                     analyses=analyses,
                     category=horizon_key,
@@ -525,7 +561,7 @@ def _render_trade(m, analyses: dict, now_ms: int) -> None:
                     entry=float(entry),
                     stop=float(stop_in) if stop_in > 0 else None,
                     leverage=5.0,
-                )
+                ))
                 panels.render(panels.trade_result_html(tm))
                 st.session_state["last_trade_map"] = tm
             except Exception as exc:  # noqa: BLE001
@@ -558,7 +594,7 @@ def _render_director(m, analyses: dict, now_ms: int) -> None:
         else:
             with st.spinner("Running multi-agent analysis..."):
                 try:
-                    report = runner.run_15_agent(cfg, m, analyses, now_ms=now_ms)
+                    report = _await_if_needed(runner.run_15_agent(cfg, m, analyses, now_ms=now_ms))
                     st.session_state["latest_report"] = report
                 except Exception as exc:  # noqa: BLE001
                     st.error(f"Analysis run failed: {exc}")
@@ -600,9 +636,9 @@ def _render_qf(m, analyses: dict, now_ms: int) -> None:
         st.info("Quant forecast module not present in this build.")
         return
     try:
-        plan = quant_forecast.ensure_plan(m, analyses, now_ms)
-        live = quant_forecast.live_state(plan, m, now_ms)
-        status, msgs = qf_alerts.evaluate(plan, live, m, now_ms)
+        plan = _await_if_needed(quant_forecast.ensure_plan(m, analyses, now_ms))
+        live = _await_if_needed(quant_forecast.live_state(plan, m, now_ms))
+        status, msgs = _await_if_needed(qf_alerts.evaluate(plan, live, m, now_ms))
         panels.render(panels.qf_wire_html(plan, status=status, live=live))
         panels.render(panels.qf_directive_html(plan))
         panels.render(panels.qf_schedule_html(plan, now_ms))
