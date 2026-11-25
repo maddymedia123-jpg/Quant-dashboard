@@ -44,6 +44,30 @@ def _safe_float(val: Any) -> float | None:
         return None
 
 
+def _fvg_magnet(fvgs: Any, px: float | None, side: str) -> tuple[float, float] | None:
+    """Extract nearest FVG zone in the anticipated sweep/flush direction."""
+    if not fvgs or px is None:
+        return None
+    items = fvgs.values() if isinstance(fvgs, dict) else fvgs
+    candidates: list[tuple[float, float, float]] = []
+    for item in items or ():
+        low = _safe_float(item.get("low") if isinstance(item, dict) else getattr(item, "low", None))
+        high = _safe_float(item.get("high") if isinstance(item, dict) else getattr(item, "high", None))
+        if low is None or high is None:
+            continue
+        lo, hi = min(low, high), max(low, high)
+        mid = (lo + hi) / 2.0
+        if side == SHORT and hi < px:
+            candidates.append((px - mid, lo, hi))
+        elif side == LONG and lo > px:
+            candidates.append((mid - px, lo, hi))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda x: x[0])
+    _, lo, hi = candidates[0]
+    return (lo, hi)
+
+
 def evaluate(
     frame: Any = None,
     *,
@@ -66,6 +90,7 @@ def evaluate(
     fund = _safe_float(funding_rate) or 0.0
     abs_drop = max(0.0, min(1.0, _safe_float(absorption_drop) or 0.0))
 
+    # 1. Range & ATR compression before breakout/breakdown candle close
     compression = 0.0
     if frame is not None and not getattr(frame, "empty", True) and len(frame) >= 6:
         recent = frame.tail(min(len(frame), 12))
@@ -73,33 +98,42 @@ def evaluate(
         lows = recent["low"].astype(float) if "low" in recent else None
         if highs is not None and lows is not None and px and px > 0:
             span_pct = ((float(highs.max()) - float(lows.min())) / px) * 100.0
-            compression = max(0.0, min(100.0, (2.5 - span_pct) * 45.0))
-            if atr_val and atr_val > 0 and (atr_val / px) * 100.0 < 0.45:
+            compression = max(0.0, min(100.0, (2.6 - span_pct) * 46.0))
+            if atr_val and atr_val > 0 and (atr_val / px) * 100.0 < 0.50:
                 compression = min(100.0, compression + 15.0)
 
-    leverage_heat = min(100.0, abs(oi_pct) * 8.0 + abs(fund) * 50_000.0)
+    # 2. Crowded leverage / absorption exhaustion bias
+    leverage_heat = min(100.0, abs(oi_pct) * 9.0 + abs(fund) * 55_000.0)
     side = "NEUTRAL"
-    if fund > 0.0002 or (absorption_side or "").upper() in ("BID", "BUY", "LONG_TRAP"):
+    if fund > 0.00015 or (absorption_side or "").upper() in ("BID", "BUY", "LONG_TRAP"):
         side = "SHORT"
     elif fund < -0.0001 or (absorption_side or "").upper() in ("ASK", "SELL", "SHORT_TRAP"):
         side = "LONG"
 
+    # 3. Liquidation pool or unmitigated FVG magnet zone
     target_zone: tuple[float, float] | None = None
     invalidation: float | None = None
     liq_dict = liq_levels or {}
     below_px = _safe_float(liq_dict.get("below") or liq_dict.get("downside"))
     above_px = _safe_float(liq_dict.get("above") or liq_dict.get("upside"))
+    fvg_zone = _fvg_magnet(fvgs, px, side)
 
     if side == "SHORT" and px is not None:
-        low_t = below_px if below_px is not None else px * 0.97
-        high_t = px * 0.992
-        target_zone = (min(low_t, high_t), max(low_t, high_t))
-        invalidation = px * 1.012
+        if below_px is not None:
+            target_zone = (min(below_px, px * 0.992), max(below_px, px * 0.992))
+        elif fvg_zone is not None:
+            target_zone = fvg_zone
+        else:
+            target_zone = (px * 0.968, px * 0.992)
+        invalidation = px * 1.011
     elif side == "LONG" and px is not None:
-        high_t = above_px if above_px is not None else px * 1.03
-        low_t = px * 1.008
-        target_zone = (min(low_t, high_t), max(low_t, high_t))
-        invalidation = px * 0.988
+        if above_px is not None:
+            target_zone = (min(px * 1.008, above_px), max(px * 1.008, above_px))
+        elif fvg_zone is not None:
+            target_zone = fvg_zone
+        else:
+            target_zone = (px * 1.008, px * 1.032)
+        invalidation = px * 0.989
 
     pull_velocity = round(
         max(0.0, min(100.0, compression * 0.40 + leverage_heat * 0.30 + abs_drop * 100.0 * 0.30)),
@@ -109,24 +143,26 @@ def evaluate(
         max(0.0, min(100.0, compression * 0.45 + abs_drop * 100.0 * 0.35 + min(100.0, abs(oi_pct) * 10.0) * 0.20)),
         1,
     )
+
+    # Preemptive trigger before lagging candle-close confirmation
     defcon_1 = bool(
         side in ("LONG", "SHORT")
-        and compression >= 55.0
-        and failure_prob >= 62.0
-        and pull_velocity >= 55.0
+        and compression >= 50.0
+        and failure_prob >= 58.0
+        and pull_velocity >= 52.0
     )
 
     if side == "NEUTRAL":
-        reason = "Balanced positioning; no asymmetric compression/liquidation magnet."
+        reason = "No asymmetric compression or leverage imbalance detected yet."
     elif defcon_1:
         reason = (
-            f"DEFCON-1 preemptive {side} pressure ({failure_prob:.0f}% failure risk, "
-            f"{pull_velocity:.0f} velocity) ahead of candle close."
+            f"PREEMPTIVE DEFCON-1 ({side}): {compression:.0f}/100 coil with {failure_prob:.0f}% "
+            f"failure risk and {pull_velocity:.0f} magnet velocity ahead of {bar_minutes}m close."
         )
     else:
         reason = (
-            f"{side} gravity {pull_velocity:.0f}/100 with {failure_prob:.0f}% structural "
-            f"failure risk on {bar_minutes}m cadence."
+            f"{side} magnet pull {pull_velocity:.0f}/100 ({failure_prob:.0f}% structural failure risk, "
+            f"{compression:.0f}/100 compression) on {bar_minutes}m window."
         )
 
     return GravityRead(
