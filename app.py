@@ -5,6 +5,7 @@ import asyncio
 import importlib
 import inspect
 import logging
+import os
 import pkgutil
 import sys
 import threading
@@ -20,6 +21,7 @@ if str(ROOT) not in sys.path:
 import streamlit as st  # noqa: E402
 import streamlit.components.v1 as components  # noqa: E402
 
+from core.config import CATEGORIES, CHART_VIEWS, Category  # noqa: E402
 from core.indicators import category as cat_ind  # noqa: E402
 from core.indicators import desk_derivs  # noqa: E402
 from core.trades import fmt_when  # noqa: E402
@@ -33,37 +35,12 @@ def _opt_import(module_path: str):
         return None
 
 
-_cfg = _opt_import("core.config")
-_DEFAULT_CATEGORIES = ("live", "intraday", "weekly", "monthly")
-_DEFAULT_LABELS = {
-    "live": "Live Recon",
-    "intraday": "Intraday",
-    "weekly": "Weekly",
-    "monthly": "Monthly",
-}
-_DEFAULT_TIMEFRAMES = {
-    "live": ("1h", "4h"),
-    "intraday": ("4h", "1d"),
-    "weekly": ("1d", "1w"),
-    "monthly": ("1w", "1M"),
-}
-
-CATEGORIES = tuple(getattr(_cfg, "CATEGORIES", None) or _DEFAULT_CATEGORIES)
-_raw_labels = getattr(_cfg, "CATEGORY_LABELS", None)
-CATEGORY_LABELS = dict(_raw_labels) if isinstance(_raw_labels, dict) and _raw_labels else dict(_DEFAULT_LABELS)
-_raw_tfs = getattr(_cfg, "CATEGORY_TIMEFRAMES", None)
-CATEGORY_TIMEFRAMES = dict(_raw_tfs) if isinstance(_raw_tfs, dict) and _raw_tfs else dict(_DEFAULT_TIMEFRAMES)
-
-for _k in CATEGORIES:
-    CATEGORY_LABELS.setdefault(_k, _k.replace("_", " ").title())
-    CATEGORY_TIMEFRAMES.setdefault(_k, ("1h", "4h"))
-
 core_data = _opt_import("core.data")
 core_pipeline = _opt_import("core.pipeline")
 accuracy = _opt_import("core.accuracy")
 qf_alerts = _opt_import("core.qf_alerts")
 quant_forecast = _opt_import("core.quant_forecast")
-_raw_store = _opt_import("core.store")
+_store_mod = _opt_import("core.store")
 traps = _opt_import("core.traps")
 recon_profiles = _opt_import("core.agents.recon_profiles")
 runner = _opt_import("core.agents.runner")
@@ -71,37 +48,19 @@ agents_types = _opt_import("core.agents.types")
 LLMConfig = getattr(agents_types, "LLMConfig", None) if agents_types else None
 trade_map = _opt_import("core.indicators.trade_map")
 
-
-class _StoreProxy:
-    """Forwards to core.store while supplying missing ledger/table attributes safely."""
-
-    def __init__(self, inner):
-        self._inner = inner
-        self.calls: list = []
-
-    def __getattr__(self, name: str):
-        if self._inner is not None and hasattr(self._inner, name):
-            return getattr(self._inner, name)
-        if name in ("calls", "all_calls", "recent_calls", "open_calls"):
-            return []
-        if name.startswith(("list_", "get_", "load_", "fetch_", "all_")):
-            return lambda *_a, **_kw: []
-        if name.startswith(("save_", "record_", "insert_", "update_", "delete_", "close_", "prune_", "sync_")):
-            return lambda *_a, **_kw: None
-        raise AttributeError(f"'_StoreProxy' object has no attribute '{name}'")
-
-
-store = _StoreProxy(_raw_store) if _raw_store is not None else None
-
 log = logging.getLogger("trap_intelligence")
 
 st.set_page_config(page_title="TRAP INTELLIGENCE", page_icon="◆", layout="wide",
                    initial_sidebar_state="expanded")
 
+CATEGORY_KEYS = tuple(CATEGORIES.keys())
+CATEGORY_LABELS = {k: c.label for k, c in CATEGORIES.items()}
+CATEGORY_TIMEFRAMES = {k: (c.chart_tf, c.context_tf) for k, c in CATEGORIES.items()}
+
 MAX_TRADES = 20
 NAV = (
-    *[("desk", k, CATEGORY_LABELS[k], f"{CATEGORY_TIMEFRAMES[k][0]} chart · {CATEGORY_TIMEFRAMES[k][1]} ctx")
-      for k in CATEGORIES],
+    *[("desk", k, c.label, f"{CHART_VIEWS.get(k, (c.chart_tf, c.context_tf))[0]} chart · {c.context_tf} ctx")
+      for k, c in CATEGORIES.items()],
     ("traps", "traps", "TRAP intelligence", "Sweep, anchored traps, watch list"),
     ("trade", "trade", "Active trade", "Positions, stops and targets"),
     ("director", "director", "Director report", "Run Analysis to generate"),
@@ -111,7 +70,7 @@ NAV = (
 NAV_LABELS = [label for _kind, _key, label, _sub in NAV]
 NAV_CAPTIONS = [sub for _kind, _key, _label, sub in NAV]
 NAV_BY_LABEL = {label: (kind, key) for (kind, key, label, _sub) in NAV}
-DESK_INDEX = {key: i + 1 for i, key in enumerate(CATEGORIES)}
+DESK_INDEX = {key: i + 1 for i, key in enumerate(CATEGORY_KEYS)}
 
 _FALLBACK_CSS = """
 <style>
@@ -143,6 +102,42 @@ _FALLBACK_CSS = """
 .muted { opacity: 0.72; }
 </style>
 """
+
+
+def _secrets_dict() -> dict:
+    out = dict(os.environ)
+    try:
+        for k, v in st.secrets.items():
+            if isinstance(v, (str, int, float, bool)):
+                out[str(k)] = str(v)
+            elif isinstance(v, dict):
+                for sk, sv in v.items():
+                    out[str(sk)] = str(sv)
+    except Exception:  # noqa: BLE001
+        pass
+    return out
+
+
+@st.cache_resource(show_spinner=False)
+def _get_store():
+    if _store_mod is None:
+        return None
+    for attr in ("get_store", "open_store", "connect", "Store"):
+        factory = getattr(_store_mod, attr, None)
+        if callable(factory):
+            try:
+                return factory()
+            except TypeError:
+                try:
+                    secrets = _secrets_dict()
+                    url = secrets.get("DATABASE_URL") or secrets.get("SUPABASE_DB_URL") or secrets.get("DB_PATH")
+                    if url:
+                        return factory(url)
+                except Exception:  # noqa: BLE001
+                    pass
+            except Exception as exc:  # noqa: BLE001
+                log.warning("store init via %s failed: %s", attr, exc)
+    return _store_mod
 
 
 def _render_html_frame(html_str: str, height: int = 54) -> None:
@@ -196,7 +191,7 @@ def _run_coro_sync(coro):
     return holder.get("val")
 
 
-def _candidate_modules():
+def _resolve_snapshot_loader():
     mods = []
     if core_data is not None:
         mods.append(core_data)
@@ -207,12 +202,6 @@ def _candidate_modules():
                 m = _opt_import(mod_name)
                 if m is not None:
                     mods.append(m)
-    if core_pipeline is not None:
-        mods.append(core_pipeline)
-    return mods
-
-
-def _resolve_snapshot_loader():
     preferred = (
         "fetch_all",
         "fetch_snapshot",
@@ -227,17 +216,11 @@ def _resolve_snapshot_loader():
         "collect",
         "snapshot",
     )
-    mods = _candidate_modules()
     for mod in mods:
         for name in preferred:
             fn = getattr(mod, name, None)
             if callable(fn):
                 return fn
-    for mod in mods:
-        for name, obj in inspect.getmembers(mod, callable):
-            if not name.startswith("_") and name.startswith(("fetch", "load", "get", "collect", "build", "gather")):
-                if "snapshot" in name or "market" in name or "all" in name:
-                    return obj
     return None
 
 
@@ -245,18 +228,8 @@ _SNAPSHOT_LOADER = _resolve_snapshot_loader()
 
 
 def _fallback_snapshot(bucket_ms: int):
-    snap_cls = getattr(core_data, "MarketSnapshot", None) if core_data else None
-    if callable(snap_cls):
-        try:
-            obj = snap_cls()
-            if getattr(obj, "generated_at", None) is None:
-                obj.generated_at = datetime.fromtimestamp(bucket_ms / 1000.0, tz=timezone.utc)
-            return obj, ["Using fallback snapshot: no snapshot loader discovered in core.data"]
-        except Exception:  # noqa: BLE001
-            pass
-
     def _feed(source="unavailable", **extra):
-        base = {"available": False, "source": source, "error": "no loader in core.data"}
+        base = {"available": False, "source": source, "error": "snapshot loader unavailable"}
         base.update(extra)
         return SimpleNamespace(**base)
 
@@ -286,56 +259,32 @@ def _fallback_snapshot(bucket_ms: int):
                         change_24h_pp=None, change_7d_pp=None, total_mcap_usd=None,
                         mcap_change_24h_pct=None, as_of_ms=None),
         news=_feed("news", headlines=[]),
-    ), ["Using fallback snapshot: no snapshot loader discovered in core.data"]
-
-
-def _invoke_loader_smart(fn, bucket_ms: int):
-    sig = inspect.signature(fn)
-    params = sig.parameters
-    kwargs = {}
-
-    if "now_ms" in params:
-        kwargs["now_ms"] = bucket_ms
-    elif "ts_ms" in params:
-        kwargs["ts_ms"] = bucket_ms
-    elif "timestamp_ms" in params:
-        kwargs["timestamp_ms"] = bucket_ms
-
-    for p in params.values():
-        if p.name in kwargs:
-            continue
-        if p.default is not inspect.Parameter.empty:
-            continue
-        if p.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
-            continue
-        pname = p.name.lower()
-        ann = str(p.annotation).lower() if p.annotation is not inspect.Parameter.empty else ""
-        if "dict" in ann or "mapping" in ann or any(k in pname for k in ("cfg", "config", "settings", "opts", "options", "params", "secrets", "env")):
-            kwargs[p.name] = {}
-        elif "int" in ann or "ms" in pname or "time" in pname:
-            kwargs[p.name] = bucket_ms
-        elif "str" in ann or "symbol" in pname:
-            kwargs[p.name] = "BTC/USDT"
-        elif "bool" in ann:
-            kwargs[p.name] = False
-
-    return fn(**kwargs)
+    ), ["Fallback snapshot used"]
 
 
 def _call_snapshot_loader(bucket_ms: int):
     if _SNAPSHOT_LOADER is None:
         return _fallback_snapshot(bucket_ms)
+    sig = inspect.signature(_SNAPSHOT_LOADER)
+    kwargs = {}
+    if "now_ms" in sig.parameters:
+        kwargs["now_ms"] = bucket_ms
+    for p in sig.parameters.values():
+        if p.name not in kwargs and p.default is inspect.Parameter.empty and p.kind not in (
+            inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD
+        ):
+            pname = p.name.lower()
+            ann = str(p.annotation).lower() if p.annotation is not inspect.Parameter.empty else ""
+            if "dict" in ann or any(k in pname for k in ("cfg", "config", "settings", "secrets", "opts")):
+                kwargs[p.name] = _secrets_dict()
+            elif "int" in ann or "ms" in pname:
+                kwargs[p.name] = bucket_ms
     try:
-        res = _invoke_loader_smart(_SNAPSHOT_LOADER, bucket_ms)
+        res = _SNAPSHOT_LOADER(**kwargs)
     except Exception:  # noqa: BLE001
-        try:
-            res = _SNAPSHOT_LOADER()
-        except Exception:  # noqa: BLE001
-            res = _SNAPSHOT_LOADER(now_ms=bucket_ms)
-
+        res = _SNAPSHOT_LOADER()
     if inspect.isawaitable(res):
         res = _run_coro_sync(res)
-
     if isinstance(res, tuple) and len(res) == 2 and hasattr(res[0], "spot"):
         return res
     if hasattr(res, "spot"):
@@ -356,13 +305,6 @@ def _load_snapshot_cached(bucket_ms: int):
     return _call_snapshot_loader(bucket_ms)
 
 
-def _load_snapshot(bucket_ms: int):
-    return _load_snapshot_cached(bucket_ms)
-
-
-_load_snapshot.clear = _load_snapshot_cached.clear  # type: ignore[attr-defined]
-
-
 def _snapshot(force: bool = False) -> tuple:
     step = 60_000
     bucket = (_now_ms() // step) * step
@@ -374,194 +316,50 @@ def _snapshot(force: bool = False) -> tuple:
         st.session_state["snap_bucket"] = bucket
     else:
         bucket = st.session_state["snap_bucket"]
-    return _load_snapshot(bucket)
+    return _load_snapshot_cached(bucket)
 
 
-def _category_spec_for(key: str):
-    tfs = CATEGORY_TIMEFRAMES.get(key, ("1h", "4h"))
-    for mod in (_cfg, cat_ind, recon_profiles):
-        if mod is None:
-            continue
-        for attr in ("CATEGORY_SPECS", "CATEGORY_CONFIGS", "CATEGORIES_BY_KEY", "DESKS", "FOR_CATEGORY"):
-            container = getattr(mod, attr, None)
-            if isinstance(container, dict) and key in container:
-                return container[key]
-        for _n, obj in inspect.getmembers(mod):
-            if hasattr(obj, "chart_tf") and (
-                getattr(obj, "key", None) == key
-                or getattr(obj, "category", None) == key
-                or getattr(obj, "name", None) == key
-                or getattr(obj, "chart_tf", None) == tfs[0]
-            ):
-                return obj
-    return SimpleNamespace(
-        key=key,
-        category=key,
-        name=key,
-        label=CATEGORY_LABELS.get(key, key.title()),
-        chart_tf=tfs[0],
-        ctx_tf=tfs[1],
-        context_tf=tfs[1],
-    )
-
-
-def _resolve_category_analyzer():
-    for name in (
-        "analyze",
-        "analyze_category",
-        "build_category",
-        "run_category",
-        "compute_category",
-        "evaluate_category",
-        "compute",
-        "evaluate",
-        "run",
-        "build",
-    ):
-        fn = getattr(cat_ind, name, None)
-        if callable(fn):
-            return fn
-    for name, obj in inspect.getmembers(cat_ind, callable):
-        if name.startswith("_"):
-            continue
-        if getattr(obj, "__module__", "") != getattr(cat_ind, "__name__", ""):
-            continue
-        try:
-            params = [
-                p for p in inspect.signature(obj).parameters.values()
-                if p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
-            ]
-            if len(params) >= 2:
-                return obj
-        except (TypeError, ValueError):
-            continue
-    return None
-
-
-_CAT_ANALYZER = _resolve_category_analyzer()
-
-
-def _map_param_value(p: inspect.Parameter, key: str, spec, m, now_ms: int):
-    pname = p.name.lower()
-    ann = str(p.annotation).lower() if p.annotation is not inspect.Parameter.empty else ""
+def _compute_analyses(m) -> dict[str, cat_ind.CategoryAnalysis | None]:
     frames = getattr(getattr(m, "spot", None), "frames", None) or {}
-    tfs = CATEGORY_TIMEFRAMES.get(key, ("1h", "4h"))
-
-    if pname in ("category_key", "cat_key", "key"):
-        return key
-    if pname in ("category", "cat", "desk", "horizon", "spec", "profile"):
-        return spec
-    if pname in ("m", "snap", "snapshot", "market", "data") or "snapshot" in ann:
-        return m
-    if pname in ("frames", "candles", "ohlc", "ohlcv"):
-        return frames
-    if pname in ("primary_tf", "tf", "timeframe", "entry_tf"):
-        return tfs[0]
-    if pname in ("context_tf", "ctx_tf", "higher_tf", "htf"):
-        return tfs[1]
-    if pname in ("tfs", "timeframes"):
-        return tfs
-    if pname in ("now_ms", "ts_ms", "timestamp_ms", "now") or "int" in ann:
-        return now_ms
-    if pname in ("store", "db"):
-        return store
-    if pname in ("cfg", "config", "settings", "opts", "options", "params") or "dict" in ann:
-        return {}
-    return None
-
-
-def _invoke_category_analyzer(fn, key: str, m, now_ms: int):
-    spec = _category_spec_for(key)
-    sig = inspect.signature(fn)
-    pos_args = []
-    kw_args = {}
-
-    for p in sig.parameters.values():
-        if p.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
-            continue
-        val = _map_param_value(p, key, spec, m, now_ms)
-        if val is None and p.default is not inspect.Parameter.empty:
-            continue
-        if p.kind == inspect.Parameter.KEYWORD_ONLY:
-            kw_args[p.name] = val
-        else:
-            pos_args.append(val)
-
-    return fn(*pos_args, **kw_args)
-
-
-def _compute_analyses(m, now_ms: int) -> dict:
-    out = {}
-    if _CAT_ANALYZER is None:
-        log.warning("No analyzer callable found in core.indicators.category")
-        return {k: None for k in CATEGORIES}
-    for key in CATEGORIES:
+    futures = getattr(m, "futures", None)
+    out: dict[str, cat_ind.CategoryAnalysis | None] = {}
+    for key, cat in CATEGORIES.items():
         try:
-            out[key] = _invoke_category_analyzer(_CAT_ANALYZER, key, m, now_ms)
+            out[key] = cat_ind.analyze_category(cat, frames, futures)
         except Exception as exc:  # noqa: BLE001
             log.warning("analysis failed for %s: %s", key, exc)
             out[key] = None
     return out
 
 
-def _sync_accuracy(m, analyses: dict, now_ms: int) -> dict:
-    empty = {"total_scored": 0, "open_calls": 0, "by_category": {},
-             "by_classification_24h": {}, "by_classification_7d": {}, "recent_calls": []}
-    if accuracy is None:
-        return empty
+def _run_pipeline_pass(store, m, analyses: dict, now_ms: int) -> None:
+    if store is None or core_pipeline is None:
+        return
+    valid_analyses = {k: v for k, v in analyses.items() if v is not None}
     try:
-        if hasattr(accuracy, "record_calls"):
-            for call in (
-                lambda: accuracy.record_calls(m, analyses, now_ms, store),
-                lambda: accuracy.record_calls(m, analyses, now_ms),
-            ):
-                try:
-                    call()
-                    break
-                except TypeError:
-                    continue
-        if hasattr(accuracy, "score_due"):
-            for call in (
-                lambda: accuracy.score_due(m, now_ms, store),
-                lambda: accuracy.score_due(m, now_ms),
-            ):
-                try:
-                    call()
-                    break
-                except TypeError:
-                    continue
-        if hasattr(accuracy, "summary"):
-            for call in (
-                lambda: accuracy.summary(store=store),
-                lambda: accuracy.summary(store),
-                lambda: accuracy.summary(),
-            ):
-                try:
-                    res = call()
-                    return res if isinstance(res, dict) else empty
-                except TypeError:
-                    continue
+        res = core_pipeline.ledger(store, m, valid_analyses, now_ms)
+        for prob in res.problems:
+            log.warning("pipeline %s", prob)
     except Exception as exc:  # noqa: BLE001
-        log.warning("accuracy ledger failed: %s", exc)
-    return empty
+        log.warning("pipeline ledger failed: %s", exc)
 
 
 def _llm_config_from_env():
     if LLMConfig is None:
         return None
-    import os
+    secrets = _secrets_dict()
     for provider, env_key, default_model in (
         ("openrouter", "OPENROUTER_API_KEY", "deepseek/deepseek-chat-v3-0324:free"),
         ("groq", "GROQ_API_KEY", "llama-3.3-70b-versatile"),
         ("gemini", "GEMINI_API_KEY", "gemini-2.5-flash"),
     ):
-        key = (os.environ.get(env_key) or "").strip()
+        key = (secrets.get(env_key) or "").strip()
         if key:
             return LLMConfig(provider=provider, api_key=key, model=default_model)
     return None
 
 
-def _render_sidebar(m, analyses: dict, now_ms: int) -> tuple[bool, bool, str, bool]:
+def _render_sidebar(m, analyses: dict) -> tuple[bool, bool, str, bool]:
     if "dark_mode" not in st.session_state:
         st.session_state["dark_mode"] = False
     if "signal_colours" not in st.session_state:
@@ -576,11 +374,11 @@ def _render_sidebar(m, analyses: dict, now_ms: int) -> tuple[bool, bool, str, bo
     _inject_css(dark, signal)
 
     tones, tfs = [], []
-    for key in CATEGORIES:
+    for key in CATEGORY_KEYS:
         a = analyses.get(key)
         tones.append(panels.rail_tone(None, a))
-        tfs.append(CATEGORY_TIMEFRAMES[key][0])
-    extra = len(NAV) - len(CATEGORIES)
+        tfs.append(CHART_VIEWS.get(key, CATEGORY_TIMEFRAMES[key])[0])
+    extra = len(NAV) - len(CATEGORY_KEYS)
     tones.extend(["neutral"] * extra)
     tfs.extend([""] * extra)
 
@@ -629,39 +427,50 @@ def _render_topbar(m, now_ms: int) -> bool:
 
 
 def _render_desk(key: str, m, analyses: dict, now_ms: int, dark: bool, signal: bool) -> None:
-    a = analyses.get(key)
-    if a is None:
-        st.warning(f"No analysis available for {CATEGORY_LABELS[key]}.")
-        frames = getattr(getattr(m, "spot", None), "frames", None) or {}
-        st.caption(f"Snapshot spot={getattr(getattr(m, 'spot', None), 'last', None)}, frames={list(frames.keys())}")
+    base_a = analyses.get(key)
+    cat = CATEGORIES[key]
+    if base_a is None:
+        st.warning(f"No analysis available for {cat.label}.")
         return
-    for_cat = getattr(recon_profiles, "FOR_CATEGORY", None) or {}
+
+    for_cat = getattr(recon_profiles, "FOR_CATEGORY", None) or getattr(recon_profiles, "PROFILES", None) or {}
     profile = for_cat.get(key) or getattr(recon_profiles, "LIVE", None)
     if profile is not None:
-        panels.render(panels.desk_hero_html(DESK_INDEX[key], profile, a, now_ms))
+        panels.render(panels.desk_hero_html(DESK_INDEX[key], profile, base_a, now_ms))
     gamma = desk_derivs.gamma_for(key, m)
-    panels.render(panels.gamma_bar_html(gamma, getattr(m.spot, "last", None), CATEGORY_LABELS[key]))
+    panels.render(panels.gamma_bar_html(gamma, getattr(m.spot, "last", None), cat.label))
+
+    views = CHART_VIEWS.get(key, (cat.chart_tf, cat.context_tf))
+    view_tf = st.radio(
+        "Chart candle",
+        list(views),
+        horizontal=True,
+        key=f"chart_view_{key}",
+    )
+    frames = getattr(getattr(m, "spot", None), "frames", None) or {}
+    chart_a = cat_ind.view_analysis(cat, view_tf, frames, getattr(m, "futures", None), base_a) or base_a
 
     fg = getattr(m.sentiment, "fear_greed", None)
     derivs = desk_derivs.read(key, m, now_ms)
 
     left, right = st.columns([7, 5], gap="large")
     with left:
-        panels.render(panels.chart_head_html(a, signal=signal, symbol=getattr(m.spot, "symbol", None)))
-        st.plotly_chart(charts.price_chart(a, dark=dark, signal=signal), use_container_width=True, config={"displayModeBar": False})
-        panels.render(panels.layman_html(a))
-        panels.render(panels.patterns_html(a))
-        panels.render(panels.divergence_html(a))
+        panels.render(panels.chart_head_html(chart_a, signal=signal, symbol=getattr(m.spot, "symbol", None)))
+        st.plotly_chart(charts.price_chart(chart_a, dark=dark, signal=signal), use_container_width=True,
+                        config={"displayModeBar": False})
+        panels.render(panels.layman_html(chart_a))
+        panels.render(panels.patterns_html(chart_a))
+        panels.render(panels.divergence_html(chart_a))
     with right:
-        panels.render(panels.direction_html(a))
-        panels.render(panels.volatility_html(a))
-        panels.render(panels.fib_html(a))
+        panels.render(panels.direction_html(base_a))
+        panels.render(panels.volatility_html(base_a))
+        panels.render(panels.fib_html(chart_a))
 
     st.markdown("---")
-    panels.render(panels.layman_summary_html(a, CATEGORY_LABELS[key], derivs, fg, now_ms))
+    panels.render(panels.layman_summary_html(base_a, cat.label, derivs, fg, now_ms))
 
 
-def _render_traps(m, analyses: dict, now_ms: int) -> None:
+def _render_traps(store, m, analyses: dict, now_ms: int) -> None:
     panels.render(panels.engine_hero_html(
         5, "TRAP Intelligence",
         "Sweep timeframes for engineered bull/bear traps, monitor anchored traps, and review settled history."
@@ -673,7 +482,12 @@ def _render_traps(m, analyses: dict, now_ms: int) -> None:
         st.info("TRAP intelligence module not present in this build.")
         return
 
-    rows = traps.all_traps() if hasattr(traps, "all_traps") else []
+    rows = []
+    if store is not None and hasattr(store, "traps"):
+        rows = store.traps(limit=200)
+    elif hasattr(traps, "all_traps"):
+        rows = traps.all_traps()
+
     candidates = st.session_state.get("trap_candidates") or []
     swept_ms = st.session_state.get("trap_swept_ms")
     judged = st.session_state.get("trap_judged") or []
@@ -687,7 +501,10 @@ def _render_traps(m, analyses: dict, now_ms: int) -> None:
             st.session_state["trap_candidates"] = candidates
             st.session_state["trap_swept_ms"] = swept_ms
             st.session_state["trap_judged"] = judged
-            rows = traps.all_traps() if hasattr(traps, "all_traps") else rows
+            if store is not None and hasattr(store, "traps"):
+                rows = store.traps(limit=200)
+            elif hasattr(traps, "all_traps"):
+                rows = traps.all_traps()
             settled = [r for r in rows if r.get("status") != "active"][:12]
         except Exception as exc:  # noqa: BLE001
             st.error(f"Sweep failed: {exc}")
@@ -702,7 +519,7 @@ def _render_traps(m, analyses: dict, now_ms: int) -> None:
     panels.render(panels.trap_settled_html(settled, now_ms, CATEGORY_LABELS))
 
 
-def _render_trade(m, analyses: dict, now_ms: int) -> None:
+def _render_trade(store, m, analyses: dict, now_ms: int) -> None:
     panels.render(panels.engine_hero_html(
         6, "Active Trade",
         "Enter a position and it is evaluated, pinned and tracked until you kill it. Levels are computed in code first; "
@@ -718,7 +535,7 @@ def _render_trade(m, analyses: dict, now_ms: int) -> None:
     spot_px = float(getattr(m.spot, "last", None) or 60000.0)
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        asset = st.text_input("Asset", value="BTC/USDT")
+        _asset = st.text_input("Asset", value="BTC/USDT")
     with c2:
         side = st.selectbox("Direction", ["LONG", "SHORT"])
     with c3:
@@ -728,13 +545,13 @@ def _render_trade(m, analyses: dict, now_ms: int) -> None:
 
     horizon_key = st.radio(
         "Judge it over",
-        ["live", "intraday", "weekly", "monthly"],
+        list(CATEGORY_KEYS),
         format_func=lambda k: {
             "live": "Live Recon · four hours",
             "intraday": "Intraday · 24 hours",
             "weekly": "Weekly · seven days",
             "monthly": "Monthly · 30 days",
-        }[k],
+        }.get(k, k),
         horizontal=True,
     )
 
@@ -760,7 +577,12 @@ def _render_trade(m, analyses: dict, now_ms: int) -> None:
     if "last_trade_map" in st.session_state:
         panels.render(panels.trade_result_html(st.session_state["last_trade_map"]))
 
-    open_trades = store.open_trades() if (store is not None and hasattr(store, "open_trades")) else []
+    open_trades = []
+    if store is not None:
+        if hasattr(store, "trades"):
+            open_trades = store.trades(status="open", limit=MAX_TRADES)
+        elif hasattr(store, "open_trades"):
+            open_trades = store.open_trades()
     if not open_trades:
         st.caption("No position is being tracked. Open one above and it stays pinned here.")
     else:
@@ -768,13 +590,19 @@ def _render_trade(m, analyses: dict, now_ms: int) -> None:
             panels.render(panels.trade_card_html(t, now_ms=now_ms, price_now=getattr(m.spot, "last", None)))
 
 
-def _render_director(m, analyses: dict, now_ms: int) -> None:
+def _render_director(store, m, analyses: dict, now_ms: int) -> None:
     panels.render(panels.engine_hero_html(
         7, "Director Report",
         "Multi-agent synthesis across technicals, order flow, derivatives, and macro."
     ))
-    latest_fn = getattr(store, "latest_report", None) if store is not None else None
-    report = st.session_state.get("latest_report") or (latest_fn() if callable(latest_fn) else None)
+    report = st.session_state.get("latest_report")
+    if report is None and store is not None:
+        if hasattr(store, "reports"):
+            reps = store.reports(limit=1)
+            report = reps[0] if reps else None
+        elif hasattr(store, "latest_report"):
+            report = store.latest_report()
+
     if st.session_state.pop("run_analysis_requested", False):
         cfg = _llm_config_from_env()
         if cfg is None:
@@ -796,7 +624,7 @@ def _render_director(m, analyses: dict, now_ms: int) -> None:
     panels.render(panels.report_stats_html(report))
     panels.render(panels.director_html(report))
     panels.render(panels.director_lists_html(report))
-    panels.render(panels.director_desks_html(report, CATEGORY_LABELS, {k: CATEGORY_TIMEFRAMES[k][0] for k in CATEGORIES}))
+    panels.render(panels.director_desks_html(report, CATEGORY_LABELS, {k: c.chart_tf for k, c in CATEGORIES.items()}))
     panels.render(panels.briefs_html(report))
 
 
@@ -817,7 +645,7 @@ def _render_macro(m, now_ms: int) -> None:
     panels.render(panels.news_html(getattr(m, "news", None), now_ms))
 
 
-def _render_qf(m, analyses: dict, now_ms: int) -> None:
+def _render_qf(store, m, analyses: dict, now_ms: int) -> None:
     panels.render(panels.engine_hero_html(
         9, "Quant Forecast",
         "24-hour quantitative plan, volatility windows, timeline, and live self-audit."
@@ -826,7 +654,10 @@ def _render_qf(m, analyses: dict, now_ms: int) -> None:
         st.info("Quant forecast module not present in this build.")
         return
     try:
-        plan = quant_forecast.ensure_plan(m, analyses, now_ms)
+        try:
+            plan = quant_forecast.ensure_plan(store, m, analyses, now_ms)
+        except TypeError:
+            plan = quant_forecast.ensure_plan(m, analyses, now_ms)
         live = quant_forecast.live_state(plan, m, now_ms)
         status, msgs = qf_alerts.evaluate(plan, live, m, now_ms)
         panels.render(panels.qf_wire_html(plan, status=status, live=live))
@@ -840,20 +671,21 @@ def _render_qf(m, analyses: dict, now_ms: int) -> None:
 
 def main() -> None:
     now_ms = _now_ms()
+    store = _get_store()
     m, _errs = _snapshot(force=False)
-    analyses = _compute_analyses(m, now_ms)
-    _sync_accuracy(m, analyses, now_ms)
+    analyses = _compute_analyses(m)
+    _run_pipeline_pass(store, m, analyses, now_ms)
 
-    dark, signal, choice, force_refresh = _render_sidebar(m, analyses, now_ms)
+    dark, signal, choice, force_refresh = _render_sidebar(m, analyses)
     if force_refresh:
         m, _errs = _snapshot(force=True)
-        analyses = _compute_analyses(m, now_ms)
+        analyses = _compute_analyses(m)
         now_ms = _now_ms()
 
     top_refresh = _render_topbar(m, now_ms)
     if top_refresh:
         m, _errs = _snapshot(force=True)
-        analyses = _compute_analyses(m, now_ms)
+        analyses = _compute_analyses(m)
         now_ms = _now_ms()
         st.rerun()
 
@@ -861,15 +693,15 @@ def main() -> None:
     if kind == "desk":
         _render_desk(key, m, analyses, now_ms, dark, signal)
     elif kind == "traps":
-        _render_traps(m, analyses, now_ms)
+        _render_traps(store, m, analyses, now_ms)
     elif kind == "trade":
-        _render_trade(m, analyses, now_ms)
+        _render_trade(store, m, analyses, now_ms)
     elif kind == "director":
-        _render_director(m, analyses, now_ms)
+        _render_director(store, m, analyses, now_ms)
     elif kind == "macro":
         _render_macro(m, now_ms)
     elif kind == "qf":
-        _render_qf(m, analyses, now_ms)
+        _render_qf(store, m, analyses, now_ms)
 
 
 if __name__ == "__main__":
