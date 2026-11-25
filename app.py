@@ -21,7 +21,7 @@ if str(ROOT) not in sys.path:
 import streamlit as st  # noqa: E402
 import streamlit.components.v1 as components  # noqa: E402
 
-from core.config import CATEGORIES, CHART_VIEWS, Category  # noqa: E402
+from core.config import CATEGORIES, CHART_VIEWS  # noqa: E402
 from core.indicators import category as cat_ind  # noqa: E402
 from core.indicators import desk_derivs  # noqa: E402
 from core.trades import fmt_when  # noqa: E402
@@ -167,6 +167,76 @@ def _build_css(dark: bool, signal: bool) -> str:
             if isinstance(out, str) and out.strip():
                 return out if "<style" in out else f"<style>{out}</style>"
     return _FALLBACK_CSS
+
+
+def _resolve_chart_fn():
+    preferred = (
+        "price_chart",
+        "desk_chart",
+        "category_chart",
+        "candlestick_chart",
+        "candle_chart",
+        "build_chart",
+        "make_chart",
+        "plot_chart",
+        "chart",
+        "render_chart",
+    )
+    for name in preferred:
+        fn = getattr(charts, name, None)
+        if callable(fn):
+            return fn
+    for name, obj in inspect.getmembers(charts, callable):
+        if name.startswith("_"):
+            continue
+        if getattr(obj, "__module__", "") == getattr(charts, "__name__", ""):
+            return obj
+    return None
+
+
+_CHART_FN = _resolve_chart_fn()
+
+
+def _render_desk_chart(chart_a: cat_ind.CategoryAnalysis, dark: bool, signal: bool) -> None:
+    if _CHART_FN is None:
+        st.info("Chart builder not found in ui.charts.")
+        return
+    sig = inspect.signature(_CHART_FN)
+    pos_args = []
+    kw_args = {}
+    for p in sig.parameters.values():
+        if p.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+            continue
+        pname = p.name.lower()
+        if pname in ("a", "analysis", "cat_analysis", "category_analysis", "data"):
+            val = chart_a
+        elif pname == "dark":
+            val = dark
+        elif pname in ("signal", "signal_colours", "signal_colors"):
+            val = signal
+        elif pname == "height":
+            val = 460
+        elif p.default is not inspect.Parameter.empty:
+            continue
+        else:
+            val = None
+        if p.kind == inspect.Parameter.KEYWORD_ONLY:
+            kw_args[p.name] = val
+        else:
+            pos_args.append(val)
+
+    try:
+        out = _CHART_FN(*pos_args, **kw_args)
+    except TypeError:
+        try:
+            out = _CHART_FN(chart_a, dark=dark, signal=signal)
+        except TypeError:
+            out = _CHART_FN(chart_a)
+
+    if isinstance(out, str):
+        _render_html_frame(out, height=480)
+    elif out is not None:
+        st.plotly_chart(out, use_container_width=True, config={"displayModeBar": False})
 
 
 def _run_coro_sync(coro):
@@ -455,9 +525,9 @@ def _render_desk(key: str, m, analyses: dict, now_ms: int, dark: bool, signal: b
 
     left, right = st.columns([7, 5], gap="large")
     with left:
-        panels.render(panels.chart_head_html(chart_a, signal=signal, symbol=getattr(m.spot, "symbol", None)))
-        st.plotly_chart(charts.price_chart(chart_a, dark=dark, signal=signal), use_container_width=True,
-                        config={"displayModeBar": False})
+        panels.render(panels.chart_head_html(chart_a, signal=signal, symbol=getattr(m.spot, "symbol", None),
+                                           call_tf=cat.chart_tf))
+        _render_desk_chart(chart_a, dark=dark, signal=signal)
         panels.render(panels.layman_html(chart_a))
         panels.render(panels.patterns_html(chart_a))
         panels.render(panels.divergence_html(chart_a))
