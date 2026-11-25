@@ -4,9 +4,12 @@ from __future__ import annotations
 import importlib
 import inspect
 import logging
+import pkgutil
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
@@ -86,35 +89,98 @@ NAV_BY_LABEL = {label: (kind, key) for (kind, key, label, _sub) in NAV}
 DESK_INDEX = {key: i + 1 for i, key in enumerate(CATEGORIES)}
 
 
+def _candidate_modules():
+    mods = []
+    if core_data is not None:
+        mods.append(core_data)
+        pkg_path = getattr(core_data, "__path__", None)
+        pkg_prefix = getattr(core_data, "__name__", "core.data") + "."
+        if pkg_path is not None:
+            for _finder, mod_name, _ispkg in pkgutil.walk_packages(pkg_path, pkg_prefix):
+                m = _opt_import(mod_name)
+                if m is not None:
+                    mods.append(m)
+    return mods
+
+
 def _resolve_snapshot_loader():
-    if core_data is None:
-        return None
     preferred = (
         "fetch_all",
         "fetch_snapshot",
         "load_snapshot",
         "get_snapshot",
+        "build_snapshot",
+        "collect_snapshot",
         "fetch",
         "load_all",
         "collect",
         "snapshot",
     )
-    for name in preferred:
-        fn = getattr(core_data, name, None)
-        if callable(fn):
-            return fn
-    for name, obj in inspect.getmembers(core_data, callable):
-        if not name.startswith("_") and name.startswith(("fetch", "load", "get", "collect")):
-            return obj
+    mods = _candidate_modules()
+    for mod in mods:
+        for name in preferred:
+            fn = getattr(mod, name, None)
+            if callable(fn):
+                return fn
+    for mod in mods:
+        for name, obj in inspect.getmembers(mod, callable):
+            if not name.startswith("_") and name.startswith(("fetch", "load", "get", "collect", "build")):
+                if "snapshot" in name or "market" in name or "all" in name or "data" in name:
+                    return obj
     return None
 
 
 _SNAPSHOT_LOADER = _resolve_snapshot_loader()
 
 
+def _fallback_snapshot(bucket_ms: int):
+    snap_cls = getattr(core_data, "MarketSnapshot", None) if core_data else None
+    if callable(snap_cls):
+        try:
+            obj = snap_cls()
+            if getattr(obj, "generated_at", None) is None:
+                obj.generated_at = datetime.fromtimestamp(bucket_ms / 1000.0, tz=timezone.utc)
+            return obj, ["Using fallback snapshot: no snapshot loader discovered in core.data"]
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _feed(source="unavailable", **extra):
+        base = {"available": False, "source": source, "error": "no loader in core.data"}
+        base.update(extra)
+        return SimpleNamespace(**base)
+
+    return SimpleNamespace(
+        generated_at=datetime.fromtimestamp(bucket_ms / 1000.0, tz=timezone.utc),
+        spot=_feed("spot", last=None, change_24h_pct=None, symbol="BTC/USDT", frames={}),
+        futures=_feed("futures", funding_rate=None, funding_7d_mean=None, open_interest=None,
+                     open_interest_usd=None, oi_change_24h_pct=None, long_short_ratio=None,
+                     taker_buy_sell_ratio=None, oi_history=[]),
+        options=_feed("options", max_pain=None, max_pain_expiry=None, put_call_oi_ratio=None,
+                      iv_atm=None, iv_skew=None, expiries=[], gamma=None, gamma_by_desk={}),
+        sentiment=_feed("sentiment", fear_greed=None, classification=None),
+        hyperliquid=_feed("hyperliquid", funding_rate_1h=None, open_interest=None),
+        liquidations=_feed("liquidations", total_usd=None, long_usd=None, short_usd=None,
+                           btc_usd=None, btc_long_usd=None),
+        whales=_feed("whales", btc_buy_usd=None, btc_sell_usd=None, window_minutes=None, btc_trades=None),
+        stablecoins=_feed("stablecoins", total_usd=None, change_24h_pct=None),
+        taker_flow=_feed("taker_flow", frames={}),
+        calendar=_feed("calendar", events=[], upcoming=lambda _now, _win: []),
+        macro=_feed("macro", series={}, spread_2s10s=None, delta_2y=None),
+        fx=_feed("fx", dxy=None, dxy_as_of_ms=None, dxy_week_ago_ms=None, dxy_stale=False,
+                 dxy_change_1w_pct=None, dxy_change_1m_pct=None, dxy_note=None, rate=None,
+                 as_of_ms=None, stale=False, change_1w_pct=None, change_1m_pct=None, boj_rate_pct=None),
+        metals=_feed("metals", xau_usd=None, unit="troy_ounce", bid=None, ask=None,
+                     is_stale=False, computed_ms=None),
+        dominance=_feed("dominance", btc_pct=None, eth_pct=None, stable_pct=None,
+                        change_24h_pp=None, change_7d_pp=None, total_mcap_usd=None,
+                        mcap_change_24h_pct=None, as_of_ms=None),
+        news=_feed("news", headlines=[]),
+    ), ["Using fallback snapshot: no snapshot loader discovered in core.data"]
+
+
 def _call_snapshot_loader(bucket_ms: int):
     if _SNAPSHOT_LOADER is None:
-        raise ImportError("No snapshot loader function found in core.data")
+        return _fallback_snapshot(bucket_ms)
     try:
         sig = inspect.signature(_SNAPSHOT_LOADER)
         params = sig.parameters
@@ -126,9 +192,7 @@ def _call_snapshot_loader(bucket_ms: int):
                 if p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
             ]
             req_pos = [p for p in pos_params if p.default is inspect.Parameter.empty]
-            if len(req_pos) >= 1:
-                res = _SNAPSHOT_LOADER(bucket_ms)
-            elif len(pos_params) >= 1:
+            if len(req_pos) >= 1 or len(pos_params) >= 1:
                 res = _SNAPSHOT_LOADER(bucket_ms)
             else:
                 res = _SNAPSHOT_LOADER()
