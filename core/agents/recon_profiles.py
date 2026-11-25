@@ -19,7 +19,7 @@ WEEK_MS = 7 * DAY_MS
 MONDAY_OFFSET_MS = 4 * DAY_MS
 
 # Which category analysis is drawn on which chart timeframe.
-ANALYSIS_FOR_TF = {"1h": "live", "4h": "intraday", "1d": "weekly", "1w": "monthly"}
+ANALYSIS_FOR_TF = {"1h": "live", "12h": "intraday", "1d": "weekly", "1w": "monthly"}
 
 
 @dataclass(frozen=True)
@@ -85,11 +85,9 @@ class ReconProfile:
 PROFILES: dict[str, ReconProfile] = {
     # lower, middle, higher: the middle timeframe is the one the desk charts and forecasts, and the higher
     # one is the candle its summary is pinned to - so each desk judges the structure of its own window.
-    # Monthly reads true calendar-month candles; it used to read the same 4h/1d/1w as Weekly.
     "live": ReconProfile("live", "Live Recon", ("15m", "1h", "4h"), "four hours", "4h", "4-hour", "4h", "1d"),
-    # his v22 Section 3 cascade: 4H/12H/24H -> 1D (24H is the daily candle), 4H -> 1D -> 0.5W -> 1W,
-    # 1D -> 1W -> 2W -> 1M; the 3D candle is Weekly's second chart in his table, read here as a brief
-    "intraday": ReconProfile("intraday", "Intraday", ("1h", "4h", "1d"), "24 hours", "1d", "Daily", "daily", "1w", ("12h",)),
+    # Intraday charts 12h candles (2 x 12h = 24h horizon) and pins its summary to the 1d candle.
+    "intraday": ReconProfile("intraday", "Intraday", ("4h", "12h", "1d"), "24 hours", "1d", "Daily", "daily", "1w", ("1h",)),
     "weekly": ReconProfile("weekly", "Weekly", ("4h", "1d", "1w"), "seven days", "1w", "Weekly", "weekly", "1M", ("3d", "0.5w")),
     "monthly": ReconProfile("monthly", "Monthly", ("1d", "1w", "1M"), "30 days", "1M", "Monthly", "monthly", "3M", ("2w",)),
 }
