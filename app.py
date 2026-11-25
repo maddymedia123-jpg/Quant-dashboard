@@ -1,11 +1,13 @@
 """Streamlit entrypoint for TRAP INTELLIGENCE."""
 from __future__ import annotations
 
+import asyncio
 import importlib
 import inspect
 import logging
 import pkgutil
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -139,6 +141,28 @@ def _build_css(dark: bool, signal: bool) -> str:
     return _FALLBACK_CSS
 
 
+def _run_coro_sync(coro):
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    holder: dict[str, object] = {}
+    err_holder: dict[str, BaseException] = {}
+
+    def _worker():
+        try:
+            holder["val"] = asyncio.run(coro)
+        except BaseException as exc:  # noqa: BLE001
+            err_holder["err"] = exc
+
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+    t.join(timeout=60)
+    if "err" in err_holder:
+        raise err_holder["err"]
+    return holder.get("val")
+
+
 def _candidate_modules():
     mods = []
     if core_data is not None:
@@ -255,9 +279,14 @@ def _call_snapshot_loader(bucket_ms: int):
             except TypeError:
                 res = _SNAPSHOT_LOADER()
 
+    if inspect.isawaitable(res):
+        res = _run_coro_sync(res)
+
     if isinstance(res, tuple) and len(res) == 2 and hasattr(res[0], "spot"):
         return res
-    return res, []
+    if hasattr(res, "spot"):
+        return res, []
+    return _fallback_snapshot(bucket_ms)
 
 
 def _inject_css(dark: bool, signal: bool) -> None:
