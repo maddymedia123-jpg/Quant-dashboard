@@ -143,7 +143,7 @@ def oi_history(m) -> list[tuple[int, float]]:
 
 
 def gamma_for(category: str | None, m) -> dict | None:
-    """Resolve gamma profile from active or fallback options feed."""
+    """Resolve gamma profile from active options feed; never label max-pain fallback as GEX walls."""
     opts = getattr(m, "options", None)
     if not getattr(opts, "available", False):
         return None
@@ -154,22 +154,12 @@ def gamma_for(category: str | None, m) -> dict | None:
         if not out.get("source") and getattr(opts, "source", None):
             out["source"] = opts.source
         return out
-    # Fallback synthesis if options feed is available with max_pain/walls but no prebuilt gamma dict
     mp = getattr(opts, "max_pain", None)
     if mp is not None:
+        exp = getattr(opts, "max_pain_expiry", None) or "nearest expiry"
         return {
-            "available": True,
-            "regime": "neutral",
-            "zero_gamma_level": float(mp),
-            "max_gamma_strike": float(mp),
-            "call_wall": None,
-            "put_wall": None,
-            "net_gex_usd_per_1pct": None,
-            "options_used": len(getattr(opts, "expiries", None) or []),
-            "expiries": getattr(opts, "expiries", None) or [],
-            "horizon_days": WINDOWS.get(category or "", WINDOWS["monthly"]).expiry_days,
-            "source": getattr(opts, "source", "fallback options"),
-            "note": "Fallback options max-pain anchor (full gamma surface unavailable).",
+            "available": False,
+            "note": f"Full GEX surface unavailable; options max-pain fallback at ${float(mp):,.0f} ({exp}).",
         }
     return None
 
