@@ -69,29 +69,6 @@ from core.indicators.forecast import desk_forecast
 from core.store import TURSO_KEYS, Store, find_turso
 from core.indicators.trade_map import map_trade
 from ui import panels
-
-
-def _data_status_html(snap) -> str:
-    fn = getattr(panels, "data_status_html", None)
-    if callable(fn):
-        return fn(snap)
-    rows = []
-    for name in getattr(type(snap), "SOURCES", ()):
-        s = getattr(snap, name, None)
-        if s is None:
-            continue
-        source = html.escape(str(getattr(s, "source", "")))
-        avail = bool(getattr(s, "available", False))
-        err = getattr(s, "error", None)
-        src_txt = source + ("" if avail else " · unavailable")
-        details = html.escape(f"{source} — {err}" if err else source)
-        rows.append(
-            f"<div class='ti-feed{'' if avail else ' off'}'><span class='dot'></span>"
-            f"<span>{html.escape(name)}</span>"
-            f"<span class='src' title='{details}'>{src_txt}</span></div>"
-        )
-    return "<span class='ti-label'>Feeds</span><div class='ti-feeds'>" + "".join(rows) + "</div>"
-
 from core.trades import fmt_when
 from ui.charts import render_chart, render_forecast_chart
 from ui.nav import pick_from_strip
@@ -238,7 +215,7 @@ except Exception as e:  # noqa: BLE001 - derived fields are optional
     st.sidebar.caption(f"Derived futures fields unavailable: {e}")
 
 st.sidebar.markdown("---")
-st.sidebar.markdown(_data_status_html(m), unsafe_allow_html=True)
+st.sidebar.markdown(panels.data_status_html(m), unsafe_allow_html=True)
 with st.sidebar:
     # a ticking component, not a rendered string: the page only redraws on a rerun
     components.html(panels.clock_html(dark), height=48)
@@ -931,7 +908,7 @@ if screen == "trap":
         try:
             panels.render(panels.trap_settled_html(settled, now_ms, labels))
         except Exception as e:  # noqa: BLE001
-            st.warning(f"Settled traps could not be drawn: {e}")
+            st.warning(f"Settled traps could not be drawn: {type(e).__name__}: {e}")
     st.caption("A trap is declared when its five sub-agents score 60 or more, the Head calls it engineered, and "
                "the category desk does not read the move as an authentic break. It is invalidated when the "
                "break proves real and played out when price returns inside value. Nothing expires on a clock.")
@@ -1062,11 +1039,6 @@ if screen == "trade":
         "Enter a position and it is evaluated, pinned and tracked until you kill it. Levels are computed in "
         "code first; ten sub-agents, the four category heads and the TRAP head are consulted second. Cards "
         "live in the database and survive a refresh and a redeploy."))
-
-    try:
-        panels.render(panels.master_lanes_html(analyses, m, now_ms))
-    except Exception as e:  # noqa: BLE001
-        st.warning(f"Master trade lanes unavailable: {e}")
 
     spot = _trade_price()
     with st.form("new_trade", clear_on_submit=False, border=False):
@@ -1459,10 +1431,6 @@ if screen == "qf":
             if _qf_audit_card:
                 panels.render(_qf_audit_card)
             panels.render(panels.qf_directive_html(_qf_plan))
-            try:
-                panels.render(panels.master_lanes_html(analyses, m, now_ms))
-            except Exception as _e:  # noqa: BLE001
-                _qf_problem = _qf_problem or f"Master trade lanes unavailable: {_e}"
             panels.render(panels.qf_timeline_html(_qf_plan, now_ms, _h1))
         # the raw data and audit drawer, closed by default
         with st.expander("Raw data & audit (odds, record, levels, the lean, the schedule, the bot's messages, JSON payload)",
@@ -1500,5 +1468,5 @@ if screen == "qf":
 
 # ---------- phone footer: the feed list, which lives in the folded-away sidebar on a desktop ----------
 with st.container(key="ti_mobile_foot"):
-    panels.render(_data_status_html(m))
+    panels.render(panels.data_status_html(m))
     st.caption("The ledger persists in SQLite; on Streamlit Cloud it resets on reboot.")
