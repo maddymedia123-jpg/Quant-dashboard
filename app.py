@@ -218,16 +218,23 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
-@st.cache_data(ttl=60, show_spinner=False)
-def _load_snapshot(bucket_ms: int):
+@st.cache_resource(ttl=60, show_spinner=False)
+def _load_snapshot_cached(bucket_ms: int):
     return _call_snapshot_loader(bucket_ms)
+
+
+def _load_snapshot(bucket_ms: int):
+    return _load_snapshot_cached(bucket_ms)
+
+
+_load_snapshot.clear = _load_snapshot_cached.clear  # type: ignore[attr-defined]
 
 
 def _snapshot(force: bool = False) -> tuple:
     step = 60_000
     bucket = (_now_ms() // step) * step
     if force:
-        _load_snapshot.clear()
+        _load_snapshot_cached.clear()
         bucket = _now_ms()
         st.session_state["snap_bucket"] = bucket
     elif "snap_bucket" not in st.session_state:
