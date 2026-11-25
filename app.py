@@ -1477,7 +1477,5 @@ if screen == "qf":
 
 # ---------- phone footer: the feed list, which lives in the folded-away sidebar on a desktop ----------
 with st.container(key="ti_mobile_foot"):
-    with st.container(key="ti_mobile_foot"):
     panels.render(panels.data_status_html(m))
-    st.caption("The ledger persists in SQLite; on Streamlit Cloud it resets on reboot.")
     st.caption("The ledger persists in SQLite; on Streamlit Cloud it resets on reboot.")
