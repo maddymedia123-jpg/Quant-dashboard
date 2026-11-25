@@ -88,6 +88,56 @@ NAV_CAPTIONS = [sub for _kind, _key, _label, sub in NAV]
 NAV_BY_LABEL = {label: (kind, key) for (kind, key, label, _sub) in NAV}
 DESK_INDEX = {key: i + 1 for i, key in enumerate(CATEGORIES)}
 
+_FALLBACK_CSS = """
+<style>
+.ti-kicker { font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.75; font-weight: 600; }
+.ti-label { display: block; font-size: 0.72rem; letter-spacing: 0.06em; text-transform: uppercase; opacity: 0.7; margin: 0.35rem 0 0.2rem; }
+.ti-card { border: 1px solid rgba(128,128,128,0.28); border-radius: 6px; padding: 0.85rem 1rem; margin-bottom: 0.8rem; position: relative; }
+.ti-card.up { border-left: 3px solid #16a34a; }
+.ti-card.down { border-left: 3px solid #dc2626; }
+.ti-card.warn { border-left: 3px solid #d97706; }
+.ti-gamma { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; padding: 0.65rem 0.9rem; border: 1px solid rgba(128,128,128,0.28); border-radius: 6px; margin-bottom: 0.85rem; }
+.ti-hero { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; margin-bottom: 0.6rem; }
+.ti-row-rule { padding: 0.55rem 0; border-bottom: 1px solid rgba(128,128,128,0.18); }
+.ti-row-rule:last-child { border-bottom: none; }
+.ti-split { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; }
+.ti-chip { display: inline-block; padding: 0.12rem 0.45rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600; background: rgba(128,128,128,0.16); }
+.ti-chip.up { background: rgba(22,163,74,0.18); color: #16a34a; }
+.ti-chip.down { background: rgba(220,38,38,0.18); color: #dc2626; }
+.ti-chip.warn { background: rgba(217,119,6,0.18); color: #d97706; }
+.ti-top { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: baseline; }
+.ti-top-price { font-size: 1.35rem; font-weight: 700; }
+.ti-top-chg.up { color: #16a34a; font-weight: 600; }
+.ti-top-chg.down { color: #dc2626; font-weight: 600; }
+.ti-top-upd { font-size: 0.82rem; opacity: 0.7; }
+.ti-feeds { display: flex; flex-direction: column; gap: 0.25rem; }
+.ti-feed { display: flex; align-items: center; gap: 0.45rem; font-size: 0.82rem; }
+.ti-feed .dot { width: 7px; height: 7px; border-radius: 50%; background: #16a34a; display: inline-block; }
+.ti-feed.off .dot { background: #dc2626; }
+.ti-feed .src { margin-left: auto; opacity: 0.7; font-size: 0.75rem; }
+.muted { opacity: 0.72; }
+</style>
+"""
+
+
+def _build_css(dark: bool, signal: bool) -> str:
+    for fn_name in ("css", "build_css", "get_css", "stylesheet", "styles"):
+        fn = getattr(theme, fn_name, None)
+        if callable(fn):
+            try:
+                out = fn(dark, signal)
+            except TypeError:
+                try:
+                    out = fn(dark=dark, signal=signal)
+                except TypeError:
+                    try:
+                        out = fn(dark)
+                    except TypeError:
+                        out = fn()
+            if isinstance(out, str) and out.strip():
+                return out if "<style" in out else f"<style>{out}</style>"
+    return _FALLBACK_CSS
+
 
 def _candidate_modules():
     mods = []
@@ -211,7 +261,7 @@ def _call_snapshot_loader(bucket_ms: int):
 
 
 def _inject_css(dark: bool, signal: bool) -> None:
-    st.markdown(theme.css(dark, signal), unsafe_allow_html=True)
+    st.markdown(_build_css(dark, signal), unsafe_allow_html=True)
 
 
 def _now_ms() -> int:
