@@ -1,1472 +1,403 @@
-"""Trap Intelligence - BTC market-surveillance terminal."""
+"""Streamlit entrypoint for TRAP INTELLIGENCE."""
 from __future__ import annotations
 
-import asyncio
-from dataclasses import replace
-import html
-import json
-import os
-import time
-from datetime import datetime, timezone
-
-import pathlib
+import logging
 import sys
-import types
+import time
+from pathlib import Path
 
-import pandas as pd
-import streamlit as st
-import streamlit.components.v1 as components
+ROOT = Path(__file__).resolve().parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
+import streamlit as st  # noqa: E402
+import streamlit.components.v1 as components  # noqa: E402
 
-def _drop_stale_modules() -> None:
-    """Streamlit Cloud re-runs a freshly pulled app.py inside the process that loaded the previous revision,
-    so `core.*` and `ui.*` stay in memory at their old versions. A name added in the new revision then fails
-    to import (ImportError on ui.theme.md_safe, AttributeError on panels.patterns_html, a Store missing new
-    methods) until someone reboots the app. When any project source file has changed since this process
-    loaded it, drop those modules and the caches built from them, so the imports below load the new code."""
-    root = pathlib.Path(__file__).resolve().parent
-    fingerprint = max(p.stat().st_mtime for pkg in ("core", "ui") for p in (root / pkg).rglob("*.py"))
-    deploy = sys.modules.setdefault("_ti_deploy", types.ModuleType("_ti_deploy"))
-    previous = getattr(deploy, "fingerprint", None)
-    deploy.fingerprint = fingerprint
-    if previous is None or previous == fingerprint:
-        return                        # first run in this process, or nothing changed: nothing can be stale
-    for name in [n for n in sys.modules if n.split(".")[0] in ("core", "ui")]:
-        del sys.modules[name]
-    st.cache_data.clear()             # cached objects were built by the old code too
-    st.cache_resource.clear()
+from core import alert_state, accuracy, audit, history, qf_alerts, quant_forecast, store, traps  # noqa: E402
+from core.agents import handshake, recon_profiles, runner, war_room  # noqa: E402
+from core.agents.types import LLMConfig  # noqa: E402
+from core.config import CATEGORIES, CATEGORY_LABELS, CATEGORY_TIMEFRAMES  # noqa: E402
+from core.data import fetch_all  # noqa: E402
+from core.indicators import category as cat_ind  # noqa: E402
+from core.indicators import desk_derivs, trade_map  # noqa: E402
+from core.trades import fmt_when  # noqa: E402
+from ui import charts, panels, theme  # noqa: E402
 
+log = logging.getLogger("trap_intelligence")
 
-_drop_stale_modules()
+st.set_page_config(page_title="TRAP INTELLIGENCE", page_icon="◆", layout="wide",
+                   initial_sidebar_state="expanded")
 
-from core.accuracy import (  # noqa: E402
-    majority_direction, mode_scorecard, record_report, summary,
+MAX_TRADES = 20
+NAV = (
+    *[("desk", k, CATEGORY_LABELS[k], f"{CATEGORY_TIMEFRAMES[k][0]} chart · {CATEGORY_TIMEFRAMES[k][1]} ctx")
+      for k in CATEGORIES],
+    ("traps", "traps", "TRAP intelligence", "Sweep, anchored traps, watch list"),
+    ("trade", "trade", "Active trade", "Positions, stops and targets"),
+    ("director", "director", "Director report", "Run Analysis to generate"),
+    ("macro", "macro", "Macro & news", "Headlines, gold, rates, odds"),
+    ("qf", "qf", "Quant forecast", "Today's 24h plan, audited live"),
 )
-from core.agents.one_agent import client_for as one_agent_client, run_one_agent_sync  # noqa: E402
-from core.agents.llm import LLMClient
-from core.agents.report import to_markdown
-from core.agents.runner import run_pipeline_sync
-from core.agents.settings import load_settings
-from core.agents.judge import Judge
-from core.agents.deck import sub_agent_deck
-from core.agents.trap_desk import judge_candidate, record
-from core.agents.trade_desk import judge_trade
-from core.alerts import Dispatcher
-from core import trades
-from core.trade_plan import deterministic_plan
-from core.traps import desk_timeframes, find_candidates, tf_label
-from core.agents.live_recon import build_state, run_live_recon
-from core.agents import handshake
-from core.agents.recon_profiles import LIVE, PROFILES
-from core import live_accuracy, live_anchor, pipeline
-from core.config import CATEGORIES, CHART_VIEWS, MACRO_EVENTS, TTL
-from core.data.market import assemble, load_context, load_spot
-from core.derived import enrich_dominance, enrich_futures, record_dominance, record_sample
-from core.indicators import desk_derivs
-from core.indicators.category import analyze_category
-from core.indicators.early_warning import early_warnings
-from core.indicators.forecast import desk_forecast
-from core.store import TURSO_KEYS, Store, find_turso
-from core.indicators.trade_map import map_trade
-from ui import panels
-from core.trades import fmt_when
-from ui.charts import render_chart, render_forecast_chart
-from ui.nav import pick_from_strip
-from ui.theme import inject_css, kpi_strip, md_safe
+NAV_LABELS = [label for _kind, _key, label, _sub in NAV]
+NAV_CAPTIONS = [sub for _kind, _key, _label, sub in NAV]
+NAV_BY_LABEL = {label: (kind, key) for (kind, key, label, _sub) in NAV}
+DESK_INDEX = {key: i + 1 for i, key in enumerate(CATEGORIES)}
 
-st.set_page_config(page_title="Trap Intelligence | BTC", layout="wide", initial_sidebar_state="auto")
 
+def _inject_css(dark: bool, signal: bool) -> None:
+    st.markdown(theme.css(dark, signal), unsafe_allow_html=True)
 
-@st.cache_data(ttl=TTL["spot"], show_spinner=False)
-def _spot():
-    return load_spot()
 
+def _now_ms() -> int:
+    return int(time.time() * 1000)
 
-@st.cache_data(ttl=TTL["context"], show_spinner=False)
-def _context():
-    return load_context()
 
+@st.cache_data(ttl=60, show_spinner=False)
+def _load_snapshot(bucket_ms: int):
+    return fetch_all(now_ms=bucket_ms)
 
-# Streamlit Cloud reloads the script on deploy but keeps cached resources, so a Store built from the
-# previous revision survives and is missing whatever that revision did not have. Keying the cache on a
-# version makes a deploy that changes core.store hand back a fresh Store instead of a stale one.
-STORE_VERSION = 10   # bump whenever core.store gains tables or methods, or changes how it matches rows
 
-
-def _turso_secrets() -> dict[str, str]:
-    """The Turso settings from Streamlit's secrets, wherever they were pasted (core.store.find_turso)."""
-    try:
-        return find_turso(dict(st.secrets))
-    except Exception:  # noqa: BLE001 - no secrets file
-        return {}
-
-
-def _export_turso() -> None:
-    """core.store reads Turso's settings from the environment, as the worker gets them from its .env."""
-    for k, v in _turso_secrets().items():
-        os.environ.setdefault(k, v)
-
-
-@st.cache_resource(show_spinner=False)
-def _store(version: int = STORE_VERSION):
-    _export_turso()
-    return Store()
-
-
-def _live_store():
-    """A Store that definitely understands the current schema, even behind a stale cache.
-
-    The version has to be passed, not defaulted: Streamlit hashes the arguments a call actually makes, so
-    `_store()` produced a cache key that never mentioned STORE_VERSION and a bump changed nothing. The
-    hasattr probe stays as a second line of defence for a revision that forgets to bump."""
-    s = _store(STORE_VERSION)
-    if not hasattr(s, "put_qf_plan"):   # cached from an older revision
-        _drop_store(s)
-        s = _store(STORE_VERSION)
-    # the store is built once per process: one opened before the Turso secrets were saved stays on the
-    # local file until a reboot. Secrets present now but missing when it opened: open it again, once.
-    if (getattr(s, "backend", "") == "sqlite" and str(getattr(s, "turso_note", "") or "").startswith("not set")
-            and len(_turso_secrets()) == len(TURSO_KEYS)):
-        _drop_store(s)
-        s = _store(STORE_VERSION)
-    try:
-        s.sync(min_gap_s=30)                   # what the worker wrote; at most one pull per 30 s (Turso sync budget)
-    except Exception as e:  # noqa: BLE001 - a missed sync shows slightly older rows, never a blank page
-        st.sidebar.caption(f"Store sync skipped this refresh: {e}")
-    return s
-
-
-def _drop_store(s) -> None:
-    """Close the connection before dropping the cache entry, or each deploy leaks an open sqlite file."""
-    try:
-        s.close()
-    except Exception:  # noqa: BLE001 - a store we are throwing away must not break the page
-        pass
-    _store.clear()
-
-
-# ---------- sidebar ----------
-st.session_state.setdefault("dark", False)
-st.session_state.setdefault("signal", False)
-
-st.sidebar.markdown("<p class='ti-title'>Trap Intelligence</p><p class='ti-sub'>BTC market-surveillance terminal</p>", unsafe_allow_html=True)
-# filled once the desks have a read; created here so it sits at the top of the rail
-rail_slot = st.sidebar.container()
-dark = st.sidebar.toggle("Dark mode", value=st.session_state["dark"])
-st.session_state["dark"] = dark
-# the design is monochrome by default (hollow steel up, solid ink down); this restores green and red
-signal = st.sidebar.toggle("Signal colours", value=st.session_state["signal"],
-                           help="Green and red for up and down, instead of the monochrome steel and ink.")
-st.session_state["signal"] = signal
-inject_css(dark, signal)
-top = st.container()
-with top:
-    _price_col, _auto_col, _refresh_col, _run_col = st.columns([4.2, 3, 1.5, 1.7], vertical_alignment="bottom")
-price_slot = _price_col.empty()
-# the dealer gamma regime: the market condition every desk below trades inside
-gamma_slot = st.empty()
-# phones get the screens as a strip under the header (the rail is hidden in the collapsed sidebar there)
-nav_slot = top.container(key="ti_mobile_nav")
-
-if _refresh_col.button("Refresh data", width="stretch"):
-    _spot.clear()
-    _context.clear()
-    st.rerun()
-
-AUTO_OPTIONS = (0, 30, 60, 120)
-st.session_state.setdefault("auto_refresh", 0)
-auto_every = _auto_col.segmented_control(
-    "Auto-refresh", AUTO_OPTIONS, default=st.session_state["auto_refresh"], key="auto_refresh_ctl",
-    format_func=lambda v: "Off" if v == 0 else f"{v}s",
-    help="Reruns the page on a timer. Data caches still apply (spot 25s, context 120s), so this adds no API load.",
-) or 0
-st.session_state["auto_refresh"] = auto_every
-st.session_state["last_full_run_ms"] = int(time.time() * 1000)
-
-if auto_every:
-    @st.fragment(run_every=f"{auto_every}s")
-    def _auto_tick():
-        elapsed = int(time.time() * 1000) - st.session_state.get("last_full_run_ms", 0)
-        if elapsed >= auto_every * 1000 - 500:
-            st.rerun(scope="app")
-        st.caption(f"Auto-refresh every {auto_every}s · last full update {elapsed // 1000}s ago")
-
-    with st.sidebar:
-        _auto_tick()
-settings = load_settings()
-st.session_state.setdefault("trap_report", None)
-run_clicked = _run_col.button(
-    "Run Analysis", type="primary", width="stretch", disabled=settings is None,
-    help=(f"1-agent Director report: one call on {settings.director_model} reading the whole state. The "
-          "Director report screen can also run the 15-agent pipeline, or both on the same snapshot."
-          if settings else "Add GEMINI_API_KEY or OPENROUTER_API_KEY to .streamlit/secrets.toml (or Streamlit Cloud Secrets) to enable."),
-)
-
-with st.spinner("Loading market data"):
-    m = assemble(_spot(), _context())
-try:
-    _store_early = _live_store()
-    _now_early = int(time.time() * 1000)
-    record_sample(_store_early, m.futures, _now_early)
-    record_dominance(_store_early, m.dominance, _now_early)
-    m = m.model_copy(update={"futures": enrich_futures(_store_early, m.futures, _now_early),
-                             "dominance": enrich_dominance(_store_early, m.dominance, _now_early)})
-except Exception as e:  # noqa: BLE001 - derived fields are optional
-    st.sidebar.caption(f"Derived futures fields unavailable: {e}")
-
-st.sidebar.markdown("---")
-st.sidebar.markdown(panels.data_status_html(m), unsafe_allow_html=True)
-with st.sidebar:
-    # a ticking component, not a rendered string: the page only redraws on a rerun
-    components.html(panels.clock_html(dark), height=48)
-st.sidebar.caption(f"Updated {fmt_when(int(m.generated_at.timestamp() * 1000), seconds=True)} · spot {TTL['spot']}s · context {TTL['context']}s")
-
-# ---------- analyses ----------
-analyses = {}
-if m.spot.available:
-    for key, cat in CATEGORIES.items():
-        a = analyze_category(cat, m.spot.frames, m.futures)
-        if a is not None:
-            analyses[key] = a
-store = _live_store()
-now_ms = int(time.time() * 1000)
-
-def _macro_event_now(m, now_ms: int, profile=LIVE) -> str | None:
-    """A high-impact USD release landing inside this category's candle, for the side-note check."""
-    if not m.calendar.available:
-        return None
-    due = m.calendar.upcoming(now_ms, profile.window_close(now_ms) - now_ms)
-    return due[0].get("title") if due else None
-
-
-def sweep_plan() -> list[tuple[str, str]]:
-    """Which desk judges which timeframe, so a trap is scanned once rather than once per desk.
-
-    The desks' timeframes overlap (Live reads 15m/1h/4h, Intraday 1h/4h/1d, Weekly 4h/1d/1w, Monthly
-    1d/1w/1M), and scanning per desk found the same shape twice, paid for two judgements of it, and
-    anchored two rows for one raid. A timeframe belongs to the first desk that reads it - the shortest
-    horizon that can see the level, and so the desk that will act on it soonest - which gives 15m/1h/4h
-    to Live, 1d to Intraday, 1w to Weekly and the monthly candle to Monthly. Every desk still shows every
-    trap on the timeframes it reads."""
-    plan, claimed = [], set()
-    for cat, profile in PROFILES.items():
-        for tf in profile.timeframes:
-            if tf not in claimed:
-                claimed.add(tf)
-                plan.append((cat, tf))
-    return plan
-
-
-def run_trap_sweep() -> None:
-    """Scan every timeframe once, then judge the strongest candidate on each desk that owns one.
-
-    The scan is free arithmetic; only the strongest candidate per owning desk goes to the agents. Each
-    desk's result is committed to session state as it completes, so a failure part-way through keeps the
-    desks that already succeeded - their traps are in the database by then either way."""
-    run_ms = int(time.time() * 1000)          # not the page-load time: the judgements take round-trips
-    results: list[dict] = []
-    st.session_state["trap_sweep"] = {"at": run_ms, "results": results, "complete": False}
-    plan = sweep_plan()
-    with st.status("TRAP desk: sweeping every timeframe...", expanded=False) as status:
-        try:
-            judge = Judge(settings, typesafe_key=settings.typesafe_key, llm=LLMClient(settings))
-            for cat, timeframes in _grouped(plan):
-                profile = PROFILES[cat]
-                state = _desk_state(cat, _data_stamp())
-                price = m.spot.last
-                candidates = find_candidates(state, timeframes)
-                entry = {"category": cat, "timeframes": timeframes, "candidates": candidates,
-                         "verdict": None}
-                results.append(entry)
-                if not candidates:
-                    continue
-                verdict = asyncio.run(judge_candidate(judge, state, candidates[0], profile))
-                entry["verdict"] = verdict
-                trap_id = record(store, verdict, cat, int(time.time() * 1000))
-                if trap_id is not None:
-                    c = verdict.candidate
-                    store.add_side_note(
-                        profile.window_open(run_ms), run_ms, "TRAP", f"trap:{trap_id}",
-                        f"TRAP desk: {c.label} anchored at {c.level:,.0f} on the {tf_label(c.timeframe)} chart.",
-                        f"Invalidated at {c.invalidation:,.0f}; pays off at {c.plays_out:,.0f}. "
-                        + "; ".join(c.evidence), price, category=cat)
-            declared = sum(1 for r in results if r["verdict"] is not None and r["verdict"].declared)
-            watching = sum(len(r["candidates"]) for r in results)
-            st.session_state["trap_sweep"]["complete"] = True
-            status.update(label=f"Sweep complete - {declared} declared, {watching} candidate(s) on watch",
-                          state="complete")
-        except Exception as e:  # noqa: BLE001 - a sweep failure must not crash the page
-            done = sum(1 for r in results if r["verdict"] is not None)
-            status.update(label=f"Trap sweep failed after {done} desk(s): {type(e).__name__}: {e}",
-                          state="error")
-            st.error(f"The trap sweep stopped after {done} desk(s): {e}. Any trap already declared is "
-                     "in the ledger below; the desks that did not run are missing from it.")
-
-
-def _grouped(plan: list[tuple[str, str]]) -> list[tuple[str, tuple[str, ...]]]:
-    """The plan as one entry per desk, so each desk's state is built and judged once."""
-    out: dict[str, list[str]] = {}
-    for cat, tf in plan:
-        out.setdefault(cat, []).append(tf)
-    return [(cat, tuple(tfs)) for cat, tfs in out.items()]
-
-
-def run_war_room(profile) -> None:
-    """Both teams and the trap audit for one category, then anchor or append side notes."""
-    with st.status(f"{profile.label} war room: both teams and the trap audit...", expanded=False) as status:
-        try:
-            judge = Judge(settings, typesafe_key=settings.typesafe_key, llm=LLMClient(settings))
-            recon = asyncio.run(run_live_recon(judge, m, analyses, profile=profile))
-            run_ms = int(time.time() * 1000)
-            # the cross-desk handshake: ask the other three heads before conviction is final
-            try:
-                recon = handshake.apply(recon, handshake.consult(store, profile.category, recon.bias, run_ms))
-            except Exception as e:  # noqa: BLE001 - an unreadable ledger leaves the war room's own conviction
-                recon = replace(recon, notes=tuple(recon.notes) + (f"Cross-desk handshake unavailable: {e}",))
-            published = live_anchor.publish(store, recon, run_ms, price=m.spot.last,
-                                            macro_event=_macro_event_now(m, run_ms, profile), profile=profile)
-            if published.anchored:
-                # and the other direction: desks this verdict now opposes get a side note
-                try:
-                    handshake.notify(store, profile.category, recon.bias, run_ms, price=m.spot.last)
-                except Exception as e:  # noqa: BLE001
-                    st.warning(f"Could not notify the other desks: {e}")
-            st.session_state["recon"][profile.category] = (recon, published)
-            label = (f"Anchored the {profile.window_label} summary" if published.anchored else
-                     f"Summary held; {len(published.appended)} side note(s) appended")
-            status.update(label=f"{label} - {recon.bias} via {judge.provider}", state="complete")
-        except Exception as e:  # noqa: BLE001 - never crash the page on a judge failure
-            status.update(label=f"War room failed: {e}", state="error")
-
-
-# ---------- run analysis ----------
-# Two pipelines write the same report, plan as numbers included: the 1-agent Director (one call) and the classic
-# 15-agent chain. "both" runs them on this one snapshot, so the compare view sets like against like.
-if not isinstance(st.session_state.get("director_reports"), dict):
-    st.session_state["director_reports"] = {}
-_director_mode = "1-agent" if run_clicked else st.session_state.pop("director_pending", None)
-
-
-def _keep_report(rep) -> None:
-    st.session_state["director_reports"][rep.mode] = rep
-    st.session_state["trap_report"] = rep
-    intraday_a = analyses.get("intraday")
-    record_report(store, rep, m.spot.last or next(iter(analyses.values())).price,
-                  intraday_a.vol.sigma_pct if intraday_a else None, majority_direction(analyses), now_ms)
-
-
-if _director_mode and settings is not None and analyses:
-    snapshot_id = f"S-{m.generated_at:%Y%m%d-%H%M%S}"
-    modes = ("1-agent", "15-agent") if _director_mode == "both" else (_director_mode,)
-    for mode in modes:
-        if mode == "1-agent":
-            with st.status(f"1-agent Director on {settings.director_model}: one call reading the whole state...",
-                           expanded=False) as status:
-                try:
-                    rep = run_one_agent_sync(one_agent_client(settings), m, analyses, settings.director_model,
-                                             panels.raw_metrics_rows(m), snapshot_id)
-                    if rep.director is None:
-                        status.update(label=f"1-agent Director failed: {rep.runs[0].error}", state="error")
-                    else:
-                        _keep_report(rep)
-                        status.update(label=f"1-agent report {rep.report_id} ready in {rep.wall_time_s:.0f}s "
-                                            f"on {rep.runs[0].model}", state="complete")
-                except Exception as e:  # noqa: BLE001 - never crash the page on an LLM failure
-                    status.update(label=f"1-agent Director failed: {e}", state="error")
-            continue
-        with st.status("Running the 15-agent pipeline...", expanded=True) as status:
-            lines = st.empty()
-            seen: dict[str, str] = {}
-
-            def _progress(agent_id: str, state: str) -> None:
-                seen[agent_id] = state
-                done = sum(1 for v in seen.values() if v in ("ok", "done", "failed", "error"))
-                lines.markdown(f"<p>{done} of {len(seen)} agents answered. Specialists run in parallel; the desks, "
-                               "the accuracy agent and the Director follow.</p><div class='ti-agents'>"
-                               + "".join(f"<div><strong>{html.escape(k)}</strong><span class='muted'>"
-                                         f"{html.escape(str(v))}</span></div>" for k, v in seen.items())
-                               + "</div>", unsafe_allow_html=True)
-
-            try:
-                rep = run_pipeline_sync(LLMClient(settings), m, analyses, settings,
-                                        raw_metrics=panels.raw_metrics_rows(m), progress=_progress)
-                rep.snapshot_id = snapshot_id
-                _keep_report(rep)
-                status.update(label=f"15-agent report {rep.report_id} ready in {rep.wall_time_s:.0f}s",
-                              state="complete", expanded=False)
-            except Exception as e:  # noqa: BLE001 - never crash the page on an LLM failure
-                status.update(label=f"15-agent pipeline failed: {e}", state="error")
-    st.rerun()
-
-# ---------- war rooms ----------
-if not isinstance(st.session_state.get("recon"), dict):
-    st.session_state["recon"] = {}
-
-report = st.session_state.get("trap_report")
-
-# ---------- anchoring + accuracy ----------
-# The same pass the 24/7 worker runs each minute (core.pipeline): anchor each desk, score what is due,
-# settle the traps price has answered, score the war-room windows whose candle closed.
-classification = report.director.trap_classification if (report is not None and report.director is not None) else None
-st.session_state.setdefault("trap_sweep", None)
-_ledger = pipeline.ledger(store, m, analyses, now_ms, classification)
-verdicts = _ledger.verdicts
-for _t in _ledger.settled:
-    st.sidebar.caption(f"TRAP: {_t['side']} {_t['timeframe']} {_t['status'].replace('_', ' ')}")
-for _p in _ledger.problems:
-    st.warning(f"Ledger step unavailable this refresh ({_p}).")
-if not (m.spot.last or analyses) and store.traps(status="active", limit=1):
-    # silence here would leave anchored traps rendering as live with no hint that nothing is
-    # checking them against price any more
-    st.warning("No price this refresh, so anchored traps were not checked for settlement. "
-               "The levels below are as of the last successful refresh.")
-
-st.sidebar.markdown(f"<span class='ti-chip'>ledger: {store.path}</span>", unsafe_allow_html=True)
-if store.backend == "turso":
-    st.sidebar.caption("Anchors, accuracy and alerts are shared with the 24/7 worker in Turso.")
-else:
-    _seen = _turso_secrets()
-    st.sidebar.caption(
-        "Anchors and accuracy persist in a local SQLite file, which resets on every deploy. Turso: "
-        + html.escape(str(getattr(store, "turso_note", "") or "not configured")) + ". Secrets seen: "
-        + ", ".join(f"{k} {'yes' if k in _seen else 'no'}" for k in TURSO_KEYS) + ".")
-
-# ---------- top bar ----------
-_live_a = analyses.get("live")
-price_slot.markdown(panels.top_bar_html(
-    m.spot.last if m.spot.last is not None else (_live_a.price if _live_a else None),
-    _live_a.price_change_24h_pct if _live_a else None,
-    f"Updated {fmt_when(int(m.generated_at.timestamp() * 1000), seconds=True)}", m.spot.symbol),
-    unsafe_allow_html=True)
-# on a desk the bar shows that desk's own gamma (its expiries only); on an engine screen, the 30-day chain
-_bar_desk = st.session_state.get("screen", "live")
-_bar_desk = _bar_desk if _bar_desk in CATEGORIES else None
-gamma_slot.markdown(panels.gamma_bar_html(desk_derivs.gamma_for(_bar_desk, m), m.spot.last,
-                                          CATEGORIES[_bar_desk].label if _bar_desk else ""),
-                    unsafe_allow_html=True)
-if not m.spot.available:
-    st.error(f"Price data unavailable from {m.spot.source}: {m.spot.error}. Nothing to analyse.")
-
-# ---------- the rail: four desks, then four engines; only the open screen renders ----------
-ENGINES = {"trap": "TRAP Intelligence", "trade": "Active Trade", "director": "Director report", "macro": "Macro & News",
-           "qf": "Quant Forecast"}
-SCREENS = list(CATEGORIES) + list(ENGINES)
-_labels = {**{k: c.label for k, c in CATEGORIES.items()}, **ENGINES}
-_captions = ([panels.rail_read(verdicts.get(k), analyses.get(k)) for k in CATEGORIES]
-             + ["Sweep, anchored traps, watch list", "Positions, stops and targets",
-                f"Report {report.report_id}" if report is not None else "Run Analysis to generate",
-                "Headlines, gold, rates, odds", "Today's 24h plan, audited live"])
-st.session_state.setdefault("screen", SCREENS[0])
-
-
-def _from_rail():
-    st.session_state["screen_nav"] = st.session_state["screen"]
-
-
-def _from_strip():
-    st.session_state["screen"], st.session_state["screen_nav"] = pick_from_strip(
-        st.session_state["screen"], st.session_state.get("screen_nav"))
-
-
-st.session_state.setdefault("screen_nav", st.session_state["screen"])
-with nav_slot:
-    st.pills("Screen", SCREENS, format_func=_labels.get, key="screen_nav", on_change=_from_strip,
-             label_visibility="collapsed")
-with rail_slot:
-    screen = st.radio("Desks", SCREENS, format_func=_labels.get, captions=_captions, key="screen",
-                      on_change=_from_rail)
-    panels.render(panels.rail_style_html(
-        [panels.rail_tone(verdicts.get(k), analyses.get(k)) for k in CATEGORIES],
-        [CATEGORIES[k].chart_tf for k in CATEGORIES], dark, signal))
-
-
-def _data_stamp() -> str:
-    """A fingerprint of the snapshot this run is rendering.
-
-    `_desk_state` reads module globals that are rebound on every script run, so keying its cache on the
-    clock alone handed back a state built from an older snapshot: after a manual Refresh the header
-    showed the new price while the volatility, structure and liquidity panels - and the trap scan -
-    still read the old one. Keying on the data means the cache follows the snapshot, not the minute."""
-    last = getattr(m.spot, "last", None)
-    stamps = [str(last)]
-    for tf in ("15m", "1h", "4h", "12h", "1d", "3d", "0.5w", "1w", "2w", "1M", "3M"):
-        df = m.spot.frames.get(tf)
-        stamps.append(str(int(df["timestamp"].iloc[-1])) if df is not None and not df.empty else "-")
-    return "|".join(stamps)
-
-
-@st.cache_data(ttl=TTL["spot"], show_spinner=False)
-def _desk_state(category: str, data_stamp: str) -> dict:
-    """The very state the desk's judges are handed, so the screen and the scorecard cannot drift
-    apart. Cached per desk per snapshot; a war-room run builds its own state at the moment it runs."""
-    return build_state(m, analyses, now_ms, PROFILES[category])
-
-
-PROTOCOLS = ("Volatility", "Structure", "Liquidity", "Quant matrix")
-
-
-def _open_screen(screen: str) -> None:
-    """Jump to a screen from inside another one; the rail and the phone strip follow."""
-    st.session_state["screen"] = st.session_state["screen_nav"] = screen
-
-
-@st.cache_data(ttl=TTL["spot"], show_spinner=False)
-def _desk_view(category: str, view_tf: str, data_stamp: str):
-    """The desk's chart on the chosen candle (his Main Chart View), cached per snapshot like the rest."""
-    from core.indicators.category import view_analysis
-    return view_analysis(CATEGORIES[category], view_tf, m.spot.frames, m.futures, analyses[category])
-
-
-@st.cache_data(ttl=TTL["spot"], show_spinner=False)
-def _desk_cascade(category: str, data_stamp: str):
-    """The desk's cascade, cached per snapshot like the judges' state, and built by the same function."""
-    from core.indicators.cascade import classify
-    return classify(m.spot.frames, *PROFILES[category].cascade)
-
-
-@st.cache_data(ttl=TTL["spot"], show_spinner=False)
-def _desk_breaks(category: str, data_stamp: str):
-    """Qualified value-area breaks on the desk's own 1H/4H/1D, the same reads the judges get."""
-    from core.indicators.vwap_break import read_all
-    return read_all(m.spot.frames, PROFILES[category].timeframes)
-
-
-@st.cache_data(ttl=TTL["spot"], show_spinner=False)
-def _event_reads(data_stamp: str):
-    """Positioning into and reactions to this week's high-impact USD prints, the same read the judges get."""
-    from core.indicators.event_trap import read_all
-    return read_all(m.spot.frames.get("1h"), m.calendar.events if m.calendar.available else [], now_ms)
-
-
-@st.cache_data(ttl=900, show_spinner=False)
-def _sine_read(quarter: int, data_stamp: str):
-    """The experimental sine card: the warning off the regular 15m feed, the live record off a paged history
-    reaching back to the go-live date (the feed keeps three weeks). Recomputed once per 15m candle."""
-    from core.data.gate_candles import fetch_15m_since
-    from core.data.market import _offline
-    from core.indicators import sine_wave as sw
-    feed = m.spot.frames.get("15m")
-    hist = None if _offline() else fetch_15m_since(sw.GO_LIVE_MS - 2 * 86_400_000, now_ms)
-    note = "" if hist is not None else "The full history did not load, so the record covers the last three weeks only."
-    warning, ny_now = sw.current(feed, now_ms)
-    return warning, ny_now, sw.live_record(hist if hist is not None else feed, now_ms), note
-
-
-@st.cache_data(ttl=TTL["spot"], show_spinner=False)
-def _desk_harmonics(category: str, data_stamp: str):
-    """Harmonics on the desk's own 1H/4H/1D, with the gamma levels they may sit on."""
-    from core.indicators.harmonics import find_all
-    return find_all(m.spot.frames, PROFILES[category].timeframes, desk_derivs.gamma_for(category, m))
-
-
-def _desk_evidence(category: str, data_stamp: str):
-    """What the summary's confluence gate reads: the desk's harmonics, its break reads, its liquidity,
-    this week's prints and the dollar and yields - each the cached read the cards above already show."""
-    from core.agents.context import _rates
-    from core.confluence import HIGHER, Evidence
-    # the higher-timeframe bar reads the levels of the desks above this one (Weekly, Monthly), never its own
-    htf = tuple((f"{k} level", float(lv.price)) for k in HIGHER.get(category, ()) if analyses.get(k) is not None
-                for lv in analyses[k].levels)
-    try:
-        own = desk_derivs.read(category, m, now_ms)
-    except Exception:  # noqa: BLE001 - the gate then reads the derivatives the summary passes, or none
-        own = None
-    desk = analyses.get(category)
-    return Evidence(harmonics=tuple(h for found in _desk_harmonics(category, data_stamp).values() for h in found),
-                    htf_levels=htf, derivs=own,
-                    fear_greed=m.sentiment.fear_greed if m.sentiment.available else None,
-                    price_change_24h_pct=desk.price_change_24h_pct if desk is not None else None,
-                    oi_history=tuple(desk_derivs.oi_history(m)),
-                    breaks=tuple(_desk_breaks(category, data_stamp).values()),
-                    liquidity=_desk_state(category, data_stamp).get("liquidity"),
-                    prints=tuple(_event_reads(data_stamp)),
-                    rates=_rates(m),
-                    futures=m.futures if m.futures.available else None,
-                    liq_levels=m.liq_levels.to_state() if m.liq_levels.available else None)
-
-
-def render_protocols(profile) -> None:
-    """The deterministic reads - volatility, structure, liquidity - and each sub-agent's own deck, one at
-    a time behind a switch, as the design lays them out."""
-    try:
-        state = _desk_state(profile.category, _data_stamp())
-    except Exception as e:  # noqa: BLE001 - a protocol failure must not blank the tab
-        st.warning(f"Protocols unavailable this refresh: {e}")
-        return
-    # every trap on a timeframe this desk reads, not only the ones it declared itself - except the
-    # short-horizon (15m/1h) traps, which only the Live desk sees (v22 Section 1.4, owner 4 Nov)
-    try:
-        rows = store.traps(timeframes=desk_timeframes(profile.category, profile.timeframes), status="active")
-    except Exception as e:  # noqa: BLE001 - the ledger must not blank the tab
-        rows = []
-        st.warning(f"Trap ledger unavailable: {e}")
-    if rows:
-        # rendered outside the query's guard: a warning that vanishes silently is worse than none, so a
-        # row that will not render is reported as a broken row rather than as no trap at all
-        try:
-            warning = panels.trap_warning_html(rows, now_ms)
-            if warning:
-                panels.render(warning)
-                st.button("Open TRAP desk →", key=f"open_trap_{profile.category}", on_click=_open_screen,
-                          args=("trap",))
-        except Exception as e:  # noqa: BLE001
-            st.error(f"{len(rows)} trap(s) are anchored on this desk but could not be drawn "
-                     f"({type(e).__name__}: {e}). Treat the levels as live and check the TRAP tab.")
-    panels.render(panels.section_head_html("Protocols"))
-    head, pick = st.columns([3, 2], vertical_alignment="bottom")
-    head.markdown("<h2 class='ti-h2'>Deterministic reads</h2>", unsafe_allow_html=True)
-    key = f"proto_{profile.category}"
-    st.session_state.setdefault(key, PROTOCOLS[0])
-    choice = pick.segmented_control("Protocol", PROTOCOLS, key=key, label_visibility="collapsed") or PROTOCOLS[0]
-    if choice == "Volatility":
-        panels.render(panels.vol_matrix_html(state.get("volatility", {})))
-    elif choice == "Structure":
-        panels.render(panels.smc_html(state.get("smc", {})))
-    elif choice == "Liquidity":
-        panels.render(panels.liquidity_html(state.get("liquidity", {})))
+def _snapshot(force: bool = False) -> tuple:
+    step = 60_000
+    bucket = (_now_ms() // step) * step
+    if force:
+        _load_snapshot.clear()
+        bucket = _now_ms()
+        st.session_state["snap_bucket"] = bucket
+    elif "snap_bucket" not in st.session_state:
+        st.session_state["snap_bucket"] = bucket
     else:
-        panels.render(panels.agent_matrix_html(sub_agent_deck(state, profile),
-                                               f"Institutional quantitative matrix — {profile.label} sub-agents"))
+        bucket = st.session_state["snap_bucket"]
+    return _load_snapshot(bucket)
 
 
-def render_war_room(profile) -> None:
-    """A category's anchored summary, both teams, the trap audit, the side notes and the accuracy report."""
-    cat = profile.category
-    panels.render(panels.section_head_html("War room"))
-    head, btn = st.columns([3, 1], vertical_alignment="bottom")
-    head.markdown(f"<h2 class='ti-h2'>{profile.label} war room</h2>", unsafe_allow_html=True)
-    if btn.button(f"Run {profile.label} war room", key=f"war_room_{cat}", disabled=settings is None,
-                  width="stretch",
-                  help=f"Eleven agents on {', '.join(profile.timeframes)} over the next {profile.horizon}."):
-        run_war_room(profile)
-        st.rerun()
-    st.caption("Five bullish and five bearish domain agents score a 100-point checklist; the Head consults a "
-               "trap agent before publishing. A direction needs a 10-point lead.")
+def _compute_analyses(m) -> dict:
+    out = {}
+    for key in CATEGORIES:
+        try:
+            out[key] = cat_ind.analyze(key, m)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("analysis failed for %s: %s", key, exc)
+            out[key] = None
+    return out
 
-    w_open, w_close = profile.window_open(now_ms), profile.window_close(now_ms)
+
+def _sync_accuracy(m, analyses: dict, now_ms: int) -> dict:
     try:
-        row = store.get_live_anchor(w_open, category=cat)
-        notes = store.side_notes(w_open, category=cat) if row else []
-    except Exception as e:  # noqa: BLE001 - the ledger must never blank the tab
-        st.warning(f"Anchor ledger unavailable: {e}")
-        return
-    try:
-        accuracy = panels.accuracy_report_html(live_accuracy.diagnose(store, profile))
-    except Exception as e:  # noqa: BLE001 - the audit must never blank the tab
-        accuracy = None
-        st.warning(f"Accuracy audit unavailable: {e}")
-
-    pair = st.session_state["recon"].get(cat)
-    recon = pair[0] if pair and pair[1].window_open_ms == w_open else None
-    anchored_now = bool(recon is not None and pair[1].anchored)
-    closes = datetime.fromtimestamp(w_close / 1000, timezone.utc)
-    closes_txt = fmt_when(w_close)
-    if row is None:
-        panels.render(panels.card_html(
-            f"{profile.window_title} anchored summary",
-            f"<p class='muted'>Nothing anchored for the current {profile.window_label} candle yet. Run the "
-            f"{profile.label} war room to publish the summary for the window closing {closes_txt}. "
-            "It then stays pinned until that close; re-runs only add side notes.</p>"))
-        if accuracy:
-            panels.render(accuracy)
-        return
-
-    payload = row["payload"]
-    panels.render(panels.anchored_summary_html(payload, w_close, now_ms, anchored_now, profile))
-    # the teams as pinned; an interim re-run this session shows its own scorecards instead, labelled so
-    c1, c2 = st.columns(2, gap="large")
-    with c1:
-        panels.render(panels.team_html(recon.bull) if recon else panels.payload_team_html("bullish", payload))
-    with c2:
-        panels.render(panels.team_html(recon.bear) if recon else panels.payload_team_html("bearish", payload))
-    t1, t2, t3 = st.columns(3, gap="large")
-    with t1:
-        panels.render(panels.war_room_html(recon) if recon else panels.trap_audit_html(
-            payload.get("trap"), payload.get("trap_probabilities") or {}, bool(payload.get("consulted")),
-            payload.get("override"), None if payload.get("trap") or payload.get("trap_probabilities") else
-            "the trap agent did not answer in the pinned run"))
-    with t2:
-        panels.render(panels.side_notes_html(notes))
-    with t3:
-        if accuracy:
-            panels.render(accuracy)
-    if recon is not None:
-        st.caption(f"{'Pinned' if anchored_now else 'Interim'} run {fmt_when(int(recon.generated_at.timestamp() * 1000), seconds=True)} · "
-                   f"{recon.bull.provider or 'n/a'} · {recon.prompt_tokens + recon.completion_tokens:,} tokens")
+        accuracy.record_calls(m, analyses, now_ms)
+        accuracy.score_due(m, now_ms)
+        return accuracy.summary()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("accuracy ledger failed: %s", exc)
+        return {"total_scored": 0, "open_calls": 0, "by_category": {},
+                "by_classification_24h": {}, "by_classification_7d": {}, "recent_calls": []}
 
 
-def category_tab(key):
-    with st.container():
+def _llm_config_from_env() -> LLMConfig | None:
+    import os
+    for provider, env_key, default_model in (
+        ("openrouter", "OPENROUTER_API_KEY", "deepseek/deepseek-chat-v3-0324:free"),
+        ("groq", "GROQ_API_KEY", "llama-3.3-70b-versatile"),
+        ("gemini", "GEMINI_API_KEY", "gemini-2.5-flash"),
+    ):
+        key = (os.environ.get(env_key) or "").strip()
+        if key:
+            return LLMConfig(provider=provider, api_key=key, model=default_model)
+    return None
+
+
+def _render_sidebar(m, analyses: dict, now_ms: int) -> tuple[bool, bool, str, bool]:
+    if "dark_mode" not in st.session_state:
+        st.session_state["dark_mode"] = False
+    if "signal_colours" not in st.session_state:
+        st.session_state["signal_colours"] = False
+
+    st.sidebar.markdown("<span class='ti-kicker'>TRAP INTELLIGENCE</span>", unsafe_allow_html=True)
+    st.sidebar.caption("BTC market-surveillance terminal")
+
+    dark = st.sidebar.toggle("Dark mode", key="dark_mode")
+    signal = st.sidebar.toggle("Signal colours", key="signal_colours",
+                               help="Green/red for moves and bullish/bearish; steel and amber otherwise.")
+    _inject_css(dark, signal)
+
+    tones, tfs = [], []
+    for key in CATEGORIES:
         a = analyses.get(key)
-        if a is None:
-            st.info(f"Not enough {CATEGORIES[key].chart_tf} history to analyse this category.")
-            return
-        panels.render(panels.desk_hero_html(SCREENS.index(key) + 1, PROFILES[key], CATEGORIES[key], now_ms))
-        # the desk's own-window derivatives: the strip, the deck and the summary all read this one
-        try:
-            _own = desk_derivs.read(key, m, now_ms)
-        except Exception:  # noqa: BLE001 - the strip falls back to the 24h snapshot, labelled 24h
-            _own = None
-        kpi_strip(panels.kpis_for(a, m, _own))
-        # his weekend microstructure modifier: flagged on every desk while it applies
-        try:
-            from core.indicators.weekend import read as _weekend_read
-            _wk_card = panels.weekend_html(_weekend_read(now_ms))
-            if _wk_card:
-                panels.render(_wk_card)
-        except Exception as e:  # noqa: BLE001
-            st.warning(f"Weekend flag unavailable: {e}")
-        # the cascade sits in the quick read: bias above, the anchor, the engine below
-        try:
-            v_ = verdicts.get(key)
-            panels.render(panels.cascade_html(
-                _desk_cascade(key, _data_stamp()),
-                invalidation=v_.anchored.invalidation if v_ is not None else None, price=a.price))
-        except Exception as e:  # noqa: BLE001 - a cascade failure must not blank the desk
-            st.warning(f"Timeframe cascade unavailable this refresh: {e}")
-        try:
-            _breaks = _desk_breaks(key, _data_stamp())
-            if _breaks:
-                panels.render(panels.value_breaks_html(_breaks))
-        except Exception as e:  # noqa: BLE001 - nor may a break read
-            st.warning(f"Value-area breaks unavailable this refresh: {e}")
-        try:
-            _harm = _desk_harmonics(key, _data_stamp())
-            if _harm:
-                panels.render(panels.harmonics_html(_harm))
-        except Exception as e:  # noqa: BLE001
-            st.warning(f"Harmonic scan unavailable this refresh: {e}")
-        # his Section 5.3: the data-versus-candle anomaly trap, from the same evidence the summary's gate reads
-        try:
-            from core.indicators.anomaly_trap import from_evidence
-            _trap = from_evidence(_desk_evidence(key, _data_stamp()), a.chart_tf, now_ms)
-            if _trap is not None:
-                panels.render(panels.anomaly_trap_html(_trap))
-        except Exception as e:  # noqa: BLE001 - a trap read must not blank the desk
-            st.warning(f"Anomaly trap read unavailable this refresh: {e}")
-        if key == "live":
-            # experimental and labelled so: tracked live from its go-live date, never fed to agents or alerts
-            try:
-                panels.render(panels.sine_experimental_html(*_sine_read(now_ms // 900_000, _data_stamp())))
-            except Exception as e:  # noqa: BLE001
-                st.warning(f"Sine wave card unavailable this refresh: {e}")
-        if key in ("weekly", "monthly"):
-            last_sig = store.last_signal(key, before_ms=now_ms)
-            banner = panels.early_warning_html(early_warnings(a, m.futures, last_sig["squeeze_score"] if last_sig else None))
-            if banner:
-                panels.render(banner)
-        # the chart and the call it supports sit side by side, as the design draws them
-        c_chart, c_dir = st.columns([2, 1], gap="large")
-        with c_chart:
-            with st.container(key="ti_chart"):
-                # his Section 3 Main Chart View: the desk's own candle by default, one coarser view a
-                # click away; the call on the right and everything below stay on the desk's candle
-                views = CHART_VIEWS[key]
-                view_tf = st.segmented_control("Chart candle", list(views), default=views[0],
-                                               key=f"chart_view_{key}", label_visibility="collapsed") or views[0]
-                try:
-                    view = _desk_view(key, view_tf, _data_stamp())
-                except Exception as e:  # noqa: BLE001 - a view failure must not blank the chart
-                    view = None
-                    st.warning(f"{view_tf} view unavailable this refresh: {e}")
-                if view is None:
-                    if view_tf != a.chart_tf:
-                        st.caption(f"Not enough {view_tf} candles for that view yet; showing the {a.chart_tf} chart.")
-                    view = a
-                panels.render(panels.chart_head_html(view, signal, m.spot.symbol, call_tf=a.chart_tf))
-                render_chart(view, dark, height=480, signal=signal)
-        with c_dir:
-            v = verdicts.get(key)
-            panels.render(panels.anchored_direction_html(a, v, now_ms) if v else panels.direction_html(a))
-        # his Section 8: one clean forecast pane per desk - the median path, its range and its odds
-        fcast, record = desk_forecast(a, desk_derivs.gamma_for(key, m),
-                                      m.spot.frames.get(a.chart_tf))
-        render_forecast_chart(a, fcast, dark, height=340, signal=signal)
-        panels.render(panels.forecast_html(fcast, record, a.vol.horizon_label))
-        if fcast.available and fcast.end_low and fcast.end_high and a.price:
-            # one range on the desk: everything below (plain read, volatility card, summary) quotes the
-            # forecast's 68% range - the one with a track record - instead of a second, simpler estimate
-            a = replace(a, vol=replace(a.vol, exp_low=fcast.end_low, exp_high=fcast.end_high,
-                                       sigma_pct=(fcast.end_high - fcast.end_low) / 2 / a.price * 100))
+        tones.append(panels.rail_tone(None, a))
+        tfs.append(CATEGORY_TIMEFRAMES[key][0])
+    extra = len(NAV) - len(CATEGORIES)
+    tones.extend(["neutral"] * extra)
+    tfs.extend([""] * extra)
+
+    st.sidebar.markdown("<span class='ti-label'>Desks & Engines</span>", unsafe_allow_html=True)
+    st.sidebar.markdown(panels.rail_style_html(tones, tfs, dark, signal), unsafe_allow_html=True)
+    choice = st.sidebar.radio(
+        "Navigate",
+        NAV_LABELS,
+        captions=NAV_CAPTIONS,
+        label_visibility="collapsed",
+    )
+
+    st.sidebar.markdown("---")
+    try:
+        st.sidebar.markdown(panels.data_status_html(m), unsafe_allow_html=True)
+    except Exception as exc:  # noqa: BLE001
+        st.sidebar.caption(f"Feed status unavailable: {exc}")
+
+    st.sidebar.markdown("---")
+    with st.sidebar:
+        components.html(panels.clock_html(dark), height=54)
+
+    force_refresh = False
+    if st.sidebar.button("Force fresh snapshot", use_container_width=True):
+        force_refresh = True
+    return dark, signal, choice, force_refresh
+
+
+def _render_topbar(m, now_ms: int) -> bool:
+    c1, c2, c3 = st.columns([5, 2, 2])
+    price = getattr(m.spot, "last", None)
+    chg = getattr(m.spot, "change_24h_pct", None)
+    updated = f"Updated {fmt_when(now_ms)}"
+    symbol = getattr(m.spot, "symbol", None)
+    with c1:
+        panels.render(panels.top_bar_html(price, chg, updated, symbol))
+    refresh_clicked = False
+    with c2:
+        if st.button("REFRESH DATA", use_container_width=True):
+            refresh_clicked = True
+    with c3:
+        run_clicked = st.button("RUN ANALYSIS", type="primary", use_container_width=True)
+    if run_clicked:
+        st.session_state["run_analysis_requested"] = True
+    return refresh_clicked
+
+
+def _render_desk(key: str, m, analyses: dict, now_ms: int, dark: bool, signal: bool) -> None:
+    a = analyses.get(key)
+    if a is None:
+        st.warning(f"No analysis available for {CATEGORY_LABELS[key]}.")
+        return
+    profile = recon_profiles.FOR_CATEGORY.get(key) or recon_profiles.LIVE
+    panels.render(panels.desk_hero_html(DESK_INDEX[key], profile, a, now_ms))
+    gamma = desk_derivs.gamma_for(key, m)
+    panels.render(panels.gamma_bar_html(gamma, getattr(m.spot, "last", None), CATEGORY_LABELS[key]))
+
+    fg = getattr(m.sentiment, "fear_greed", None)
+    derivs = desk_derivs.read(key, m, now_ms)
+
+    left, right = st.columns([7, 5], gap="large")
+    with left:
+        panels.render(panels.chart_head_html(a, signal=signal, symbol=getattr(m.spot, "symbol", None)))
+        st.plotly_chart(charts.price_chart(a, dark=dark, signal=signal), use_container_width=True, config={"displayModeBar": False})
         panels.render(panels.layman_html(a))
-        c1, c2 = st.columns(2, gap="large")
-        with c1:
-            panels.render(panels.patterns_html(a))
-            panels.render(panels.divergence_html(a))
-        with c2:
-            panels.render(panels.fib_html(a))
-            panels.render(panels.volatility_html(a))
-        profile = PROFILES.get(key)
-        if profile is not None:
-            render_protocols(profile)
-            render_war_room(profile)
-        panels.render(panels.agent_summary_html(a, report))
-        # a print inside the five-day window is part of every desk's trade: shown when there is something to read
+        panels.render(panels.patterns_html(a))
+        panels.render(panels.divergence_html(a))
+    with right:
+        panels.render(panels.direction_html(a))
+        panels.render(panels.volatility_html(a))
+        panels.render(panels.fib_html(a))
+
+    st.markdown("---")
+    panels.render(panels.layman_summary_html(a, CATEGORY_LABELS[key], derivs, fg, now_ms))
+
+
+def _render_traps(m, analyses: dict, now_ms: int) -> None:
+    panels.render(panels.engine_hero_html(
+        5, "TRAP Intelligence",
+        "Sweep timeframes for engineered bull/bear traps, monitor anchored traps, and review settled history."
+    ))
+    gamma = desk_derivs.gamma_for(None, m)
+    panels.render(panels.gamma_bar_html(gamma, getattr(m.spot, "last", None)))
+
+    rows = traps.all_traps()
+    candidates = st.session_state.get("trap_candidates") or []
+    swept_ms = st.session_state.get("trap_swept_ms")
+    judged = st.session_state.get("trap_judged") or []
+    settled = [r for r in rows if r.get("status") != "active"][:12]
+    plan = traps.sweep_plan()
+
+    if st.button("Sweep timeframes now", use_container_width=False):
         try:
-            _active = [r for r in _event_reads(_data_stamp()) if r.state in panels.ACTIVE_EVENT_STATES]
-            if _active:
-                panels.render(panels.event_traps_html(_active, now_ms))
-        except Exception as e:  # noqa: BLE001
-            st.warning(f"Event traps unavailable: {e}")
-        if key in ("weekly", "monthly"):
-            panels.render(panels.calendar_html(m, now_ms))
-            # weekly positioning belongs on the weekly and monthly view only: it is three to ten days
-            # old in normal operation, which is meaningless against a four-hour or 24-hour horizon
-            try:
-                panels.render(panels.cot_html(m.cot, now_ms))
-            except Exception as e:  # noqa: BLE001
-                st.warning(f"Positioning report unavailable: {e}")
-            # daily on-chain flows: like COT, too slow for the four-hour and 24-hour desks
-            try:
-                from core.indicators.exchange_flows import read as read_flows
-                _d1 = m.spot.frames.get("1d")
-                panels.render(panels.exchange_flows_html(read_flows(
-                    m.exchange_flows, now_ms,
-                    list(zip(_d1["timestamp"].astype("int64"), _d1["close"].astype(float))) if _d1 is not None else None)))
-            except Exception as e:  # noqa: BLE001
-                st.warning(f"Exchange flows unavailable: {e}")
-        # his Section 9: every desk ends with the same standardized summary, gated by seven confluences
-        try:
-            _ev = _desk_evidence(key, _data_stamp())
-        except Exception as e:  # noqa: BLE001 - a missing feed is a family that says nothing, not a blank desk
-            st.warning(f"Confluence evidence incomplete this refresh: {e}")
-            _ev = None
-        panels.render(panels.layman_summary_html(a, CATEGORIES[key].label, _own,
-                                                 m.sentiment.fear_greed if m.sentiment.available else None,
-                                                 now_ms, _ev))
+            candidates, judged = traps.scan_and_judge(m, analyses, now_ms)
+            swept_ms = now_ms
+            st.session_state["trap_candidates"] = candidates
+            st.session_state["trap_swept_ms"] = swept_ms
+            st.session_state["trap_judged"] = judged
+            rows = traps.all_traps()
+            settled = [r for r in rows if r.get("status") != "active"][:12]
+        except Exception as exc:  # noqa: BLE001
+            st.error(f"Sweep failed: {exc}")
+
+    panels.render(panels.trap_console_html(rows, candidates, now_ms, CATEGORY_LABELS, settled, swept_ms, plan))
+    active = [r for r in rows if r.get("status") == "active"]
+    price_now = getattr(m.spot, "last", None)
+    if active:
+        for r in active:
+            panels.render(panels.trap_card_html(r, now_ms, CATEGORY_LABELS.get(r.get("category", ""), ""), price_now))
+    panels.render(panels.trap_watch_html(candidates, now_ms, swept_ms, judged))
+    panels.render(panels.trap_settled_html(settled, now_ms, CATEGORY_LABELS))
 
 
-if screen in CATEGORIES:
-    category_tab(screen)
-
-# ---------- TRAP intelligence ----------
-if screen == "trap":
-    sweep = st.session_state.get("trap_sweep")
-    hero, act = st.columns([3, 1], vertical_alignment="bottom")
-    with hero:
-        panels.render(panels.engine_hero_html(
-            5, "TRAP Intelligence",
-            "The watchdog for engineered moves: fakeouts, swing failures and stop runs. Candidates are found "
-            "in code, then judged by ten sub-agents and a Head that consults the affected desk. A trap stays "
-            "anchored until price settles it."))
-    with act:
-        if st.button("Sweep every timeframe", key="trap_sweep_btn", type="primary", width="stretch",
-                     disabled=settings is None,
-                     help="Deterministic scan of every timeframe once; the strongest candidate on each "
-                          "owning desk goes to the agents."):
-            # deliberately no st.rerun(): it discards the status box, so a sweep that failed on desk three
-            # came back looking exactly like a page that had done nothing. The panels below render from
-            # session state in this same run.
-            run_trap_sweep()
-            sweep = st.session_state.get("trap_sweep")
-        st.caption((f"Last sweep {panels._trap_age(sweep['at'], now_ms)} ago" if sweep and sweep.get("at")
-                    else "Not swept this session") + " · at most six requests")
-
-    try:
-        # anchored traps are what a trader acts on, so they are never pushed off the list by newer
-        # settled ones: the two are queried separately rather than sliced out of one ordered list
-        active = store.traps(status="active", limit=25)
-        settled = [r for r in store.traps(limit=50) if r.get("status") != "active"][:6]
-    except Exception as e:  # noqa: BLE001 - never crash the tab on ledger trouble
-        active, settled = [], []
-        st.error(f"The trap ledger could not be read ({type(e).__name__}: {e}). "
-                 "Anchored traps are not shown below; do not read this as 'no traps'.")
-
-    labels = {k: c.label for k, c in CATEGORIES.items()}
-    watching = [c for r in (sweep or {}).get("results", []) for c in r["candidates"]]
-    try:
-        panels.render(panels.trap_console_html(active, watching, now_ms, labels, settled=settled,
-                                              swept_ms=(sweep or {}).get("at"), plan=sweep_plan()))
-    except Exception as e:  # noqa: BLE001
-        st.error(f"{len(active)} anchored trap(s) exist but the console could not be drawn "
-                 f"({type(e).__name__}: {e}).")
-
-    panels.render(panels.section_head_html("Anchored"))
-    if not active:
-        st.caption("Nothing anchored.")
-    _px = m.spot.last
-    cols = st.columns(2, gap="large")
-    for i, row in enumerate(active):
-        # per row, so one malformed trap cannot take the others off the screen with it
-        with cols[i % 2]:
-            try:
-                panels.render(panels.trap_card_html(row, now_ms, labels.get(row["category"], row["category"]), _px))
-            except Exception as e:  # noqa: BLE001
-                st.warning(f"Trap #{row.get('id', '?')} ({row.get('side', 'unknown')} on "
-                           f"{row.get('timeframe', '?')}) could not be drawn: {type(e).__name__}: {e}")
-
-    judged = []
-    for r in (sweep or {}).get("results", []):
-        v = r["verdict"]
-        if v is not None and not v.declared:
-            judged.append({"label": f"{labels[r['category']]} · {v.candidate.label} on {v.candidate.timeframe}",
-                           "score": v.score, "status": v.status, "why": " · ".join(v.notes[:2])})
-    w, se = st.columns(2, gap="large")
-    with w:
-        panels.render(panels.trap_watch_html(watching, now_ms, (sweep or {}).get("at"), judged))
-    with se:
-        try:
-            panels.render(panels.trap_settled_html(settled, now_ms, labels))
-        except Exception as e:  # noqa: BLE001
-            st.warning(f"Settled traps could not be drawn: {type(e).__name__}: {e}")
-    st.caption("A trap is declared when its five sub-agents score 60 or more, the Head calls it engineered, and "
-               "the category desk does not read the move as an authentic break. It is invalidated when the "
-               "break proves real and played out when price returns inside value. Nothing expires on a clock.")
-
-# ---------- active trade ----------
-def _secrets() -> dict:
-    """Streamlit secrets, or an empty mapping when there is no secrets file.
-
-    `hasattr(st, "secrets")` is always True - the attribute exists whether or not a file does - so the
-    old guard was dead and `dict(st.secrets)` raised on any deploy or fresh clone without one, aborting
-    the script mid-tab and taking every tab after it down with it. core/agents/settings.py already
-    handled this correctly; this is the same pattern."""
-    try:
-        return dict(st.secrets)
-    except Exception:  # noqa: BLE001 - not running under streamlit, or no secrets file
-        return {}
-
-
-def _trade_price() -> float | None:
-    return m.spot.last or (next(iter(analyses.values())).price if analyses else None)
-
-
-def build_trade_plan(asset: str, side: str, entry: float, given_stop: float | None, category: str) -> dict:
-    """Everything the card needs, computed once at open: the stop, the targets, the guardrail, the plan.
-
-    Deterministic first and agents second, so a card still carries its levels when the model is down."""
-    profile = PROFILES[category]
-    ltf, mtf, htf = profile.timeframes
-    state = _desk_state(category, _data_stamp())
-    run_ms = int(time.time() * 1000)
-    # the deterministic half lives in core.trade_plan, shared with the worker's master swing card
-    plan, stop, targets = deterministic_plan(store, state, m.spot.frames.get(mtf), side, entry, given_stop,
-                                             category, run_ms, gamma=desk_derivs.gamma_for(category, m), asset=asset)
-    atr = float(plan["atr"])
-
-    if settings is None:
-        plan["notes"] = ["No model provider is configured, so the ten sub-agents were not run. The levels "
-                         "above are deterministic and stand on their own."]
-        return plan, stop, targets
-
-    try:
-        judge = Judge(settings, typesafe_key=settings.typesafe_key, llm=LLMClient(settings))
-        verdict = asyncio.run(judge_trade(judge, state, side, entry, stop, targets, profile,
-                                         store=store, now_ms=run_ms, atr=atr))
-    except Exception as e:  # noqa: BLE001 - a card without a score is still a usable plan
-        plan["notes"] = [f"The trade desk could not be reached ({type(e).__name__}: {e}). The levels "
-                         "above are deterministic and stand on their own."]
-        return plan, stop, targets
-
-    plan.update({
-        "ok": verdict.ok, "score": verdict.score, "probability": verdict.probability,
-        "margin": verdict.margin, "for_points": verdict.for_points,
-        "against_points": verdict.against_points,
-        "for_domains": [{"key": d.key, "title": d.title, "points": d.points} for d in verdict.for_domains],
-        "against_domains": [{"key": d.key, "title": d.title, "points": d.points}
-                            for d in verdict.against_domains],
-        "head_call": verdict.head_call, "head_confidence": verdict.head_confidence,
-        "aligned": verdict.aligned,
-        "alignment": [{"category": a.category, "label": a.label, "bias": a.bias, "verdict": a.verdict,
-                       "note": a.note} for a in verdict.alignment],
-        "traps": [{"trap_id": t.trap_id, "side": t.side, "timeframe": t.timeframe, "level": t.level,
-                   "near": t.near, "distance": t.distance} for t in verdict.traps],
-        "notes": list(verdict.notes), "provider": verdict.provider,
-    })
-    return plan, stop, targets
-
-
-def _alerts_may_send() -> bool:
-    """Fixture data is not the market: a page running on the offline fixtures detects and logs alerts but
-    never sends them, so a local check (or a test) cannot push an invented move to a real channel."""
-    from core.data.market import _offline
-    return not _offline()
-
-
-def market_alert_pass() -> None:
-    """Plan alerts, held cascade alerts, TRAP calls and the Market Pulse: the same pass the 24/7 worker
-    runs (core.pipeline). With both running, the store's one-statement claim decides who sends."""
-    r = pipeline.market_alerts(store, m, analyses, now_ms, _secrets(), _alerts_may_send())
-    if r.problems:
-        st.session_state["market_alert_problem"] = r.problems[0]
-
-
-if m.spot.available:
-    try:
-        market_alert_pass()
-    except Exception as e:  # noqa: BLE001 - alerting must never blank the page
-        st.sidebar.caption(f"Market alerts unavailable this refresh: {e}")
-    if st.session_state.get("market_alert_problem"):
-        st.sidebar.caption(f"Alerts: {st.session_state.pop('market_alert_problem')}")
-
-
-def _trade_watch(category: str) -> dict | None:
-    """The desk's current read for the pre-invalidation check, from the cached desk state."""
-    try:
-        profile = PROFILES[category]
-        return trades.flow_and_walls(_desk_state(category, _data_stamp()), profile.timeframes[1],
-                                     desk_derivs.gamma_for(category, m))
-    except Exception:  # noqa: BLE001 - the check is extra; the stop and target alerts are not
-        return None
-
-
-def trade_alert_pass(row: dict, prog) -> None:
-    """Detect what has happened to a pinned trade, log it once, and push whatever a channel accepts."""
-    r = pipeline.trade_alerts(store, row, prog, now_ms, _secrets(), _alerts_may_send(),
-                              watch=_trade_watch(str(row.get("category") or "live")))
-    for note in r.problems[:1]:
-        st.caption(f"Alerts: {note}")
-
-
-@st.dialog("Kill this trade?")
-def _kill_dialog(row: dict, price_now) -> None:
-    st.markdown(f"<p>#{row['id']} {html.escape(str(row['side']))} {html.escape(str(row['asset']))} from "
-                f"${float(row['entry']):,.0f}. The card is unpinned and every alert for this position stops. "
-                "It moves to recently closed.</p>", unsafe_allow_html=True)
-    k1, k2 = st.columns(2)
-    if k1.button("Keep tracking", key=f"tr_keep_{row['id']}", width="stretch"):
-        st.session_state.pop("kill_pending", None)
-        st.rerun()
-    if k2.button("KILL", key=f"tr_kill_confirm_{row['id']}", type="primary", width="stretch"):
-        st.session_state.pop("kill_pending", None)
-        store.close_trade(row["id"], "killed by the trader", price_now, now_ms)
-        st.rerun()
-
-
-if screen == "trade":
+def _render_trade(m, analyses: dict, now_ms: int) -> None:
     panels.render(panels.engine_hero_html(
         6, "Active Trade",
-        "Enter a position and it is evaluated, pinned and tracked until you kill it. Levels are computed in "
-        "code first; ten sub-agents, the four category heads and the TRAP head are consulted second. Cards "
-        "live in the database and survive a refresh and a redeploy."))
+        "Enter a position and it is evaluated, pinned and tracked until you kill it. Levels are computed in code first; "
+        "ten sub-agents, the four category heads and the TRAP head are consulted second. Cards live in the database "
+        "and survive a refresh and a redeploy."
+    ))
+    gamma = desk_derivs.gamma_for(None, m)
+    panels.render(panels.gamma_bar_html(gamma, getattr(m.spot, "last", None)))
+    panels.render(panels.master_lanes_html(analyses, m, now_ms))
 
-    spot = _trade_price()
-    with st.form("new_trade", clear_on_submit=False, border=False):
-        st.markdown("<span class='ti-kicker'>Open a position</span>", unsafe_allow_html=True)
-        c1, c2, c3, c4 = st.columns([1.2, 1, 1, 1])
-        f_asset = c1.text_input("Asset", value="BTC/USDT")
-        f_side = c2.segmented_control("Direction", ["LONG", "SHORT"], default="LONG", key="tr_side") or "LONG"
-        f_entry = c3.number_input("Entry ($) · defaults to spot", value=float(round(spot or 0.0, 2)), step=10.0,
-                                  help="Where you actually got in.")
-        f_stop = c4.number_input("Stop loss ($) · 0 lets the desk place it", value=0.0, step=10.0,
-                                 help="Leave at 0 and the engine derives a structural stop.")
-        f_cat = st.segmented_control(
-            "Judge it over", list(PROFILES), default="live", key="tr_cat",
-            format_func=lambda k: f"{CATEGORIES[k].label} · {PROFILES[k].horizon}") or "live"
-        b_col, n_col = st.columns([1, 2], vertical_alignment="center")
-        opened = b_col.form_submit_button("Open and track this trade", type="primary", width="stretch",
-                                          disabled=not spot)
-        n_col.caption("Two batched requests plus one Head call.")
-    if opened:
-        if not f_entry:
-            st.error("An entry price is needed.")
-        else:
-            with st.status("Active trade desk: ten sub-agents and two consultations...", expanded=False) as s_:
-                try:
-                    plan, stop_v, _t = build_trade_plan(f_asset.strip() or "BTC/USDT", f_side,
-                                                        float(f_entry),
-                                                        float(f_stop) if f_stop else None, f_cat)
-                    tid = store.open_trade(opened_ms=int(time.time() * 1000), asset=plan["asset"],
-                                           side=f_side, entry=float(f_entry), stop=stop_v.stop,
-                                           given_stop=float(f_stop) if f_stop else None,
-                                           stop_verdict=stop_v.verdict, category=f_cat, plan=plan)
-                    s_.update(label=f"Trade #{tid} pinned", state="complete")
-                except Exception as e:  # noqa: BLE001 - a failed open must not blank the tab
-                    s_.update(label=f"Could not open the trade: {type(e).__name__}: {e}", state="error")
-                    st.error(f"The trade was not pinned: {e}")
+    st.subheader("Open a position")
+    spot_px = float(getattr(m.spot, "last", None) or 60000.0)
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        asset = st.text_input("Asset", value="BTC/USDT")
+    with c2:
+        side = st.selectbox("Direction", ["LONG", "SHORT"])
+    with c3:
+        entry = st.number_input("Entry ($) · defaults to spot", value=round(spot_px, 2), min_value=1.0, step=50.0)
+    with c4:
+        stop_in = st.number_input("Stop loss ($) · 0 lets the desk place it", value=0.0, min_value=0.0, step=50.0)
 
-    try:
-        open_trades = store.trades(status="open", limit=10)
-        # his Section 6: the desk-owned master swing card, when there is one, sits above the trader's own
-        open_trades.sort(key=lambda t: not (t.get("plan") or {}).get("master"))
-        closed_trades = store.trades(status="closed", limit=3)
-    except Exception as e:  # noqa: BLE001
-        open_trades, closed_trades = [], []
-        st.error(f"The trade ledger could not be read ({type(e).__name__}: {e}). "
-                 "Do not read this as 'no open positions'.")
+    horizon_key = st.radio(
+        "Judge it over",
+        ["live", "intraday", "weekly", "monthly"],
+        format_func=lambda k: {
+            "live": "Live Recon · four hours",
+            "intraday": "Intraday · 24 hours",
+            "weekly": "Weekly · seven days",
+            "monthly": "Monthly · 30 days",
+        }[k],
+        horizontal=True,
+    )
 
+    if st.button("Open and track this trade", type="primary"):
+        try:
+            tm = trade_map.build_trade_map(
+                m=m,
+                analyses=analyses,
+                category=horizon_key,
+                side=side,
+                entry=float(entry),
+                stop=float(stop_in) if stop_in > 0 else None,
+                leverage=5.0,
+            )
+            panels.render(panels.trade_result_html(tm))
+            st.session_state["last_trade_map"] = tm
+        except Exception as exc:  # noqa: BLE001
+            st.error(f"Could not evaluate trade: {exc}")
+
+    if "last_trade_map" in st.session_state:
+        panels.render(panels.trade_result_html(st.session_state["last_trade_map"]))
+
+    open_trades = store.open_trades()
     if not open_trades:
         st.caption("No position is being tracked. Open one above and it stays pinned here.")
-
-    price_now = _trade_price()
-    for row in open_trades:
-        plan = row.get("plan") or {}
-        target_objs = [trades.TimedTarget(t.get("name", ""), float(t.get("price") or 0.0),
-                                          str(t.get("basis") or ""), t.get("due_ms"),
-                                          float(t.get("reward_r") or 0.0), str(t.get("due_from") or ""))
-                       for t in plan.get("targets") or []]
-        prog = None
-        if price_now:
-            try:
-                prog = trades.progress(row["side"], float(row["entry"]), float(row["stop"]),
-                                       target_objs, float(price_now))
-            except Exception as e:  # noqa: BLE001
-                st.warning(f"Trade #{row['id']}: live numbers unavailable ({e}).")
-        try:
-            warnings = [str(e.get("headline") or "") for e in store.trade_events(trade_id=row["id"], limit=50)
-                        if e.get("kind") == "shift"][:3]
-        except Exception:  # noqa: BLE001 - the chips are extra
-            warnings = []
-        try:
-            panels.render(panels.trade_card_html(row, prog, now_ms, price_now, warnings=warnings))
-        except Exception as e:  # noqa: BLE001 - one bad card must not remove the others
-            st.error(f"Trade #{row['id']} ({row.get('asset')} {row.get('side')}) could not be drawn "
-                     f"({type(e).__name__}: {e}). Its levels: entry {row.get('entry')}, "
-                     f"stop {row.get('stop')}.")
-        if prog is not None:
-            try:
-                trade_alert_pass(row, prog)
-            except Exception as e:  # noqa: BLE001
-                st.caption(f"Alerts unavailable for #{row['id']}: {e}")
-
-        b1, b2, note, b3 = st.columns([1, 1, 2.2, 1], vertical_alignment="center")
-        note.caption("Live block refreshed "
-                     + (f"{panels._trap_age(row.get('refreshed_ms'), now_ms)} ago" if row.get("refreshed_ms")
-                        else "never - the numbers above are live on every rerun"))
-        if b1.button("Refresh", key=f"tr_refresh_{row['id']}", width="stretch",
-                     help="Updates the live numbers only. The thesis and the plan are not rewritten."):
-            store.touch_trade(row["id"], now_ms)
-            st.rerun()
-        if b2.button("Re-judge", key=f"tr_rejudge_{row['id']}", disabled=settings is None, width="stretch",
-                     help="Runs the ten sub-agents again and writes a new plan for this position."):
-            rejudged = False
-            with st.status("Re-judging the position...", expanded=False) as s2:
-                try:
-                    fresh_plan, fresh_stop, _ = build_trade_plan(
-                        row["asset"], row["side"], float(row["entry"]),
-                        row.get("given_stop"), row.get("category") or "live")
-                    # one transaction: opening then closing as two calls left two open rows for one
-                    # position when the close failed
-                    new_id = store.rejudge_trade(
-                        row["id"], opened_ms=int(time.time() * 1000), asset=row["asset"],
-                        side=row["side"], entry=float(row["entry"]), stop=fresh_stop.stop,
-                        given_stop=row.get("given_stop"), stop_verdict=fresh_stop.verdict,
-                        category=row.get("category") or "live", plan=fresh_plan)
-                    s2.update(label=f"Re-judged as #{new_id}", state="complete")
-                    rejudged = True
-                except Exception as e:  # noqa: BLE001
-                    s2.update(label=f"Could not re-judge: {type(e).__name__}: {e}", state="error")
-                    st.error(f"Trade #{row['id']} was NOT re-judged ({type(e).__name__}: {e}). The card "
-                             "below is still the plan it was opened with - the sub-agents did not run.")
-            # only on success: an unconditional rerun discards the status box, which is what made a
-            # failed re-judge look exactly like a successful one
-            if rejudged:
-                st.rerun()
-        if b3.button("KILL", key=f"tr_kill_{row['id']}", width="stretch",
-                     help="Unpins the card and stops every alert for this position."):
-            st.session_state["kill_pending"] = row["id"]
-        if st.session_state.get("kill_pending") == row["id"]:
-            # the design asks before it kills, in a dialog: a misclick must not unpin a live position
-            _kill_dialog(row, price_now)
-
-    if closed_trades:
-        with st.expander(f"Recently closed ({len(closed_trades)})", expanded=False):
-            for row in closed_trades:
-                try:
-                    panels.render(panels.closed_trade_html(row, now_ms))
-                except Exception as e:  # noqa: BLE001
-                    st.caption(f"#{row['id']} could not be drawn: {e}")
-
-    panels.render(panels.section_head_html("Leverage and liquidation stress-test"))
-    with st.expander("How much room a given leverage leaves before liquidation, against the structures on "
-                     "the 15m and 1h", expanded=False):
-        live_a, intraday_a = analyses.get("live"), analyses.get("intraday")
-        base = _trade_price() or (live_a.price if live_a else 0.0)
-        with st.form("stress_test"):
-            d1, d2, d3, d4, d5 = st.columns(5)
-            s_dir = d1.segmented_control("Direction", ["LONG", "SHORT"], default="LONG", key="st_dir") or "LONG"
-            s_entry = d2.number_input("Entry ($)", value=float(round(base, 2)), step=10.0, key="st_entry")
-            s_lev = d3.number_input("Leverage (x)", min_value=1.0, max_value=125.0, value=10.0, step=1.0,
-                                    key="st_lev")
-            s_sl = d4.number_input("Stop loss ($)", value=float(round(base * 0.98, 2)), step=10.0,
-                                   key="st_sl")
-            s_tp = d5.number_input("Take profit ($)", value=float(round(base * 1.04, 2)), step=10.0,
-                                   key="st_tp")
-            run_stress = st.form_submit_button("Run stress-test", width="stretch")
-        if run_stress:
-            try:
-                tm = map_trade({"dir": s_dir, "entry": s_entry, "lev": s_lev, "sl": s_sl, "tp": s_tp},
-                               live_a, intraday_a, m.futures)
-                panels.render(panels.trade_result_html(tm))
-            except Exception as e:  # noqa: BLE001 - the stress-test must not blank the tab
-                st.warning(f"Stress-test unavailable: {e}")
-
-    channels = Dispatcher(_secrets()).channels
-    ready = [c.name for c in channels if c.configured]
-    missing = [f"{c.name} ({c.reason})" for c in channels if not c.configured]
-    panels.render(panels.section_head_html("Alert channels"))
-    panels.render(panels.channels_html(channels))
-    st.caption("Cascade changes (A, B, C) on every desk and TRAP calls go to the same channels, while a page "
-               "is open.")
-    if ready and st.button("Send a test alert", key="alert_test"):
-        ok, problems = Dispatcher(_secrets()).send_test()
-        (st.success if ok else st.error)("Test alert delivered." if ok else
-                                         f"Test alert not delivered: {'; '.join(problems) or 'no channel accepted it'}")
-    st.caption(("Alerts go to: " + ", ".join(ready) + ". " if ready else "No alert channel is configured. ")
-               + "Not set up: " + "; ".join(missing)
-               + ". Alerts are detected and sent while this page is open - continuous background alerting "
-                 "needs a scheduled worker, which Streamlit Cloud does not provide.")
-
-# ---------- war room ----------
-if screen == "director":
-    labels = {k: c.label for k, c in CATEGORIES.items()}
-    tfs = {k: c.chart_tf for k, c in CATEGORIES.items()}
-    reports = dict(st.session_state.get("director_reports") or {})
-    if report is not None and report.mode not in reports:
-        reports[report.mode] = report          # a report from before this screen kept both
-    # the newest saved report of each pipeline, whoever ran it: one report for both readers, not one each
-    try:
-        from core.accuracy import stored_reports
-        for _mode, _rep in stored_reports(store).items():
-            _mine = reports.get(_mode)
-            if _mine is None or _rep.generated_at > _mine.generated_at:
-                reports[_mode] = _rep
-    except Exception as _e:  # noqa: BLE001 - the ledger being unreachable must not blank the tab
-        st.warning(f"Saved reports unavailable: {_e}")
-    panels.render(panels.engine_hero_html(
-        7, "Director report",
-        "Two ways to write the same report: one model reading the whole state (1-agent), or the classic chain "
-        "of fifteen. Run both on one snapshot to compare them, and the scorecard below keeps the score."))
-    b1, b2, b3 = st.columns(3)
-    _runs = (
-        (b1, "Run 1-agent (fast)", "1-agent", f"One call on {settings.director_model if settings else '-'}, about "
-                                              "a minute. Writes the plan as numbers the alerts watch."),
-        (b2, "Run 15-agent (classic)", "15-agent", "Fifteen calls, about four minutes. Writes the same numbers plan "
-                                                   "since 5 November."),
-        (b3, "Run both (compare)", "both", "Both on the same snapshot: sixteen calls, so about one comparison a "
-                                           "day on the free Gemini tier."),
-    )
-    for col, label, mode, tip in _runs:
-        if col.button(label, key=f"director_{mode}", width="stretch", disabled=settings is None or not analyses,
-                      type="primary" if mode == "1-agent" else "secondary", help=tip):
-            st.session_state["director_pending"] = mode
-            st.rerun()
-    if not settings:
-        st.caption("Add GEMINI_API_KEY or OPENROUTER_API_KEY to secrets to enable the reports.")
-
-    r1, r15 = reports.get("1-agent"), reports.get("15-agent")
-    if r1 is not None and r15 is not None:
-        panels.render(panels.compare_html(r1, r15))
-    shown = [r for r in (r1, r15) if r is not None]
-    if shown:
-        tabs = st.tabs([f"{r.mode} · {r.report_id}" for r in shown])
-        for tab, rep in zip(tabs, shown):
-            with tab:
-                age = panels._trap_age(int(rep.generated_at.timestamp() * 1000), now_ms)
-                st.caption(f"{panels.MODE_WORDS[rep.mode]}. Generated "
-                           f"{fmt_when(int(rep.generated_at.timestamp() * 1000))}, {age} ago.")
-                st.download_button("Download .md", to_markdown(rep), file_name=f"{rep.report_id}.md",
-                                   mime="text/markdown", key=f"dl_{rep.report_id}")
-                panels.render(panels.report_stats_html(rep))
-                panels.render(panels.director_html(rep))
-                if rep.plan is not None:
-                    panels.render(panels.plan_html(rep.plan))
-                panels.render(panels.cases_html(rep))
-                panels.render(panels.director_lists_html(rep))
-                panels.render(panels.section_head_html("Per desk"))
-                panels.render(panels.director_desks_html(rep, labels, tfs))
-                if rep.briefs:
-                    with st.expander(f"Specialist briefs ({len(rep.briefs)})"):
-                        panels.render(panels.briefs_html(rep))
     else:
-        panels.render(panels.card_html("Trap Intelligence Report",
-                                       "<p class='muted'>No report yet. Run 1-agent for the fast report, or Run "
-                                       "both to compare the two pipelines. Section 1, the raw metric snapshot, "
-                                       "is live below.</p>"))
-    try:
-        panels.render(panels.scorecard_html(mode_scorecard(store)))
-    except Exception as e:  # noqa: BLE001 - the scorecard must not blank the tab
-        st.warning(f"Scorecard unavailable: {e}")
-
-    left, right = st.columns(2, gap="large")
-    with left:
-        panels.render(panels.raw_metrics_html(panels.raw_metrics_rows(m)))
-    with right:
-        try:
-            panels.render(panels.accuracy_html(summary(store)))
-            log_rows = store.anchor_log(50)
-        except Exception as e:  # noqa: BLE001
-            st.warning(f"Accuracy ledger unavailable: {e}")
-            log_rows = []
-        with st.expander("Audit ledger — anchor changes (persistent)"):
-            panels.render(panels.anchor_audit_html(log_rows))
+        for t in open_trades[:MAX_TRADES]:
+            panels.render(panels.trade_card_html(t, now_ms=now_ms, price_now=getattr(m.spot, "last", None)))
 
 
-# ---------- macro and news engines (spec section 2) ----------
-if screen == "macro":
+def _render_director(m, analyses: dict, now_ms: int) -> None:
+    panels.render(panels.engine_hero_html(
+        7, "Director Report",
+        "Multi-agent synthesis across technicals, order flow, derivatives, and macro."
+    ))
+    report = st.session_state.get("latest_report") or store.latest_report()
+    if st.session_state.pop("run_analysis_requested", False):
+        cfg = _llm_config_from_env()
+        if cfg is None:
+            st.warning("No LLM API key configured in environment (OPENROUTER_API_KEY, GROQ_API_KEY, or GEMINI_API_KEY).")
+        else:
+            with st.spinner("Running multi-agent analysis..."):
+                try:
+                    report = runner.run_15_agent(cfg, m, analyses, now_ms=now_ms)
+                    st.session_state["latest_report"] = report
+                except Exception as exc:  # noqa: BLE001
+                    st.error(f"Analysis run failed: {exc}")
+
+    if report is None:
+        st.info("Run Analysis to generate a Director report.")
+        return
+
+    panels.render(panels.report_stats_html(report))
+    panels.render(panels.director_html(report))
+    panels.render(panels.director_lists_html(report))
+    panels.render(panels.director_desks_html(report, CATEGORY_LABELS, {k: CATEGORY_TIMEFRAMES[k][0] for k in CATEGORIES}))
+    panels.render(panels.briefs_html(report))
+
+
+def _render_macro(m, now_ms: int) -> None:
     panels.render(panels.engine_hero_html(
         8, "Macro & News",
-        "The global engines: publisher headlines, gold, rates, the economic calendar and what the prediction "
-        "markets are pricing. None of it is a read on one timeframe."))
+        "High-impact USD releases, gold, US rates, dollar index, yen carry, and headlines."
+    ))
+    c1, c2 = st.columns(2, gap="large")
+    with c1:
+        panels.render(panels.calendar_html(m, now_ms))
+        panels.render(panels.rates_html(getattr(m, "macro", None), now_ms))
+        panels.render(panels.dollar_html(getattr(m, "fx", None), getattr(m, "spot", None), now_ms))
+    with c2:
+        panels.render(panels.gold_html(getattr(m, "metals", None), now_ms))
+        panels.render(panels.yen_html(getattr(m, "fx", None), getattr(m, "macro", None), now_ms))
+        panels.render(panels.dominance_html(getattr(m, "dominance", None), now_ms))
+    panels.render(panels.news_html(getattr(m, "news", None), now_ms))
 
-    left, right = st.columns(2, gap="large")
-    with left:
-        try:
-            panels.render(panels.gold_html(m.metals, now_ms))
-        except Exception as e:  # noqa: BLE001 - one panel must not blank the tab
-            st.warning(f"Gold unavailable: {e}")
-    with right:
-        try:
-            panels.render(panels.calendar_html(m, now_ms))
-        except Exception as e:  # noqa: BLE001
-            st.warning(f"Calendar unavailable: {e}")
 
-    try:
-        panels.render(panels.rates_html(m.macro, now_ms))
-    except Exception as e:  # noqa: BLE001
-        st.warning(f"Rates unavailable: {e}")
-
-    # roadmap items 10 and 11: where crypto capital is rotating, the yen carry trade, the dollar index
-    dom_col, yen_col, dxy_col = st.columns(3, gap="large")
-    with dom_col:
-        try:
-            panels.render(panels.dominance_html(m.dominance, now_ms))
-        except Exception as e:  # noqa: BLE001
-            st.warning(f"Dominance unavailable: {e}")
-    with yen_col:
-        try:
-            panels.render(panels.yen_html(m.fx, m.macro, now_ms))
-        except Exception as e:  # noqa: BLE001
-            st.warning(f"USD/JPY unavailable: {e}")
-    with dxy_col:
-        try:
-            panels.render(panels.dollar_html(m.fx, m.spot, now_ms))
-        except Exception as e:  # noqa: BLE001
-            st.warning(f"Dollar index unavailable: {e}")
-
-    # the forecasting layer: positioning into each print, what the print did, and how fresh each story is
-    ev_col, nar_col = st.columns(2, gap="large")
-    with ev_col:
-        try:
-            panels.render(panels.event_traps_html(_event_reads(_data_stamp()), now_ms))
-        except Exception as e:  # noqa: BLE001
-            st.warning(f"Event traps unavailable: {e}")
-    with nar_col:
-        try:
-            from core.indicators.narratives import read as read_narratives
-            panels.render(panels.narratives_html(
-                read_narratives(m.news.headlines, now_ms) if m.news.available else []))
-        except Exception as e:  # noqa: BLE001
-            st.warning(f"Narratives unavailable: {e}")
-
-    n_news = len(getattr(m.news, "headlines", []) or []) if getattr(m.news, "available", False) else 0
-    panels.render(panels.section_head_html(f"Headlines · {n_news}"))
-    topics = panels.news_topics(m.news)
-    topic = st.pills("Topic", ["All"] + topics, default="All", key="news_topic", label_visibility="collapsed") \
-        if topics else "All"
-    try:
-        panels.render(panels.news_html(m.news, now_ms, limit=14, topic=None if topic in (None, "All") else topic))
-    except Exception as e:  # noqa: BLE001
-        st.error(f"The headline feed could not be drawn ({type(e).__name__}: {e}). "
-                 "Do not read this as 'no news'.")
-
-    panels.render(panels.section_head_html("Prediction markets"))
-    odds_asset = st.segmented_control("Prediction markets for", ["BTC", "ETH", "SOL", "Fed & macro", "All"],
-                                      default="BTC", key="odds_asset", label_visibility="collapsed") or "BTC"
-    _odds_key = {"All": None, "Fed & macro": "MACRO"}.get(odds_asset, odds_asset)
-    try:
-        panels.render(panels.predictions_html(m.predictions, now_ms, asset=_odds_key, limit=10))
-    except Exception as e:  # noqa: BLE001
-        st.error(f"The odds feed could not be drawn ({type(e).__name__}: {e}).")
-    st.caption("Data from Polymarket. Powered by VoxOdds, which scores whether each quote can be filled. A "
-               "probability on a market flagged fragile is a printed number, not a forecast.")
-
-# ---------- Quant Forecast: the day's computed plan, made and audited by the pass above ----------
-if screen == "qf":
-    from core import qf_alerts
-    from ui.charts import render_qf_chart
+def _render_qf(m, analyses: dict, now_ms: int) -> None:
     panels.render(panels.engine_hero_html(
         9, "Quant Forecast",
-        "The day's plan at 00:00 UTC (05:00 PKT): direction or range, the one-line directive, the low and high "
-        "with their times, the whole-day invalidation. Set your levels and walk away; the bot watches every "
-        "minute and lights up Scenario B if the day's structure breaks."))
-    _qf_day = qf_alerts.qf.day_start(now_ms)
-    _qf_today = store.qf_plans(_qf_day)
-    _qf_active = next((r for r in reversed(_qf_today) if r["status"] == "active"), None)
-    if _qf_active is None:
-        st.info("No plan for today yet: it needs a live price and about three weeks of hourly candles. "
-                "It is made on the next refresh that has both.")
-    else:
-        _qf_plan = _qf_active["payload"]
-        _h1 = m.spot.frames.get("1h")
-        _flow = m.taker_flow.frames if getattr(m.taker_flow, "available", False) else {}
-        _qf_problem = None
-        try:
-            _qf_audit = qf_alerts.audit(_qf_plan, m.spot.frames, _flow.get("15m"), now_ms)
-        except Exception as e:  # noqa: BLE001 - the plan still shows without its audit
-            _qf_audit = {"status": "on track", "cautions": [], "holds": []}
-            _qf_problem = f"Audit unavailable this refresh: {e}"
-        _qf_live = qf_alerts.live_record(store)
-        _qf_sent = store.market_alerts_keyed(f"qf:{_qf_day}:", limit=6)
-        # the main screen (Hammad, message 6): the pure-forecasting chart on the left - the morning plan stays
-        # on it; once that plan is voided, Scenario B lights up on a second chart below it - with the master
-        # overview, the timeline tree and the trade directive on the side; on a phone the panels follow
-        _qf_first = _qf_today[0]["payload"] if _qf_today else _qf_plan
-        _qf_scenario_b = _qf_plan["version"] >= 1 and _qf_first is not _qf_plan
-        _qf_main, _qf_side = st.columns([5, 3], gap="large")
-        with _qf_main:
-            if _h1 is not None:
-                with st.container(key="ti_chart_qf"):
-                    if _qf_scenario_b:
-                        st.caption(f"Scenario A · plan #{_qf_first['version']} · voided "
-                                   f"{qf_alerts.at_label(_qf_today[0].get('closed_ms') or now_ms)}")
-                        render_qf_chart(_qf_first, _h1, dark, height=380, signal=signal, now_ms=now_ms)
-                        st.caption(f"Scenario B · plan #{_qf_plan['version']} · active")
-                        render_qf_chart(_qf_plan, _h1, dark, height=380, signal=signal, now_ms=now_ms)
-                    else:
-                        render_qf_chart(_qf_plan, _h1, dark, height=560, signal=signal, now_ms=now_ms)
-        with _qf_side:
-            from core import qf_selfaudit, qf_weekly
-            try:
-                _qf_week = qf_weekly.ensure(store, analyses.get("weekly"), desk_derivs.gamma_for("weekly", m), now_ms, m.spot.last)
-            except Exception as _e:  # noqa: BLE001 - the week's note must not blank the screen
-                _qf_week, _qf_problem = None, _qf_problem or f"Monday plan unavailable: {_e}"
-            try:
-                _qf_self = qf_selfaudit.latest(store, now_ms)
-            except Exception as _e:  # noqa: BLE001
-                _qf_self, _qf_problem = None, _qf_problem or f"Self-audit unavailable: {_e}"
-            panels.render(panels.qf_monday_html(_qf_week))
-            panels.render(panels.qf_wire_html(_qf_plan, _qf_audit["status"], live=_qf_live))
-            _qf_audit_card = panels.qf_audit_html(_qf_self)
-            if _qf_audit_card:
-                panels.render(_qf_audit_card)
-            panels.render(panels.qf_directive_html(_qf_plan))
-            panels.render(panels.qf_timeline_html(_qf_plan, now_ms, _h1))
-        # the raw data and audit drawer, closed by default
-        with st.expander("Raw data & audit (odds, record, levels, the lean, the schedule, the bot's messages, JSON payload)",
-                         expanded=False):
-            if _qf_problem:
-                st.caption(_qf_problem)
-            panels.render(panels.qf_gameplan_html(_qf_plan, _qf_live))
-            panels.render(panels.qf_schedule_html(_qf_plan, now_ms))
-            _qf_book = store.book_report() if hasattr(store, "book_report") else None
-            panels.render(panels.qf_book_html(_qf_book, now_ms))
-            _c1, _c2 = st.columns(2, gap="large")
-            with _c1:
-                panels.render(panels.qf_levels_html(_qf_plan))
-            with _c2:
-                _qf_hist = [{**r, "day": r["day_ms"]} for r in store.qf_plans(limit=30)]
-                _bt = next((r["payload"].get("backtest") for r in _qf_today if r["payload"].get("backtest")), None)
-                panels.render(panels.qf_record_html(_bt, _qf_live, _qf_hist))
-            panels.render(panels.qf_status_html(_qf_audit["status"], [r["headline"] for r in _qf_sent], _qf_today))
-            from core import qf_payload
-            st.download_button("Download today's JSON payload (the agent's output schema)",
-                               data=json.dumps(qf_payload.payload(_qf_plan, _qf_audit["status"], _qf_today,
-                                                                  _qf_sent[0]["headline"] if _qf_sent else "",
-                                                                  _qf_live, now_ms, _h1, _qf_book,
-                                                                  week=_qf_week, self_audit=_qf_self), indent=1, ensure_ascii=False),
-                               file_name=f"quant-forecast-{_qf_day}-plan{_qf_plan['version']}.json",
-                               mime="application/json", key="qf_payload_dl")
-            st.caption("Alerts (Discord): the daily plan at 00:00 UTC (05:00 PKT) with the trade figures and the "
-                       "timeline; TIER 1 CAUTION when a 15-minute candle moves 2x its usual size against the plan or "
-                       "buyer/seller flow flips against it; TIER 2 MODEL HELD when half of a shock is taken back within "
-                       "the hour; TIER 3 INVALIDATED when the whole-day level is decisively breached (a 4-hour close, "
-                       "two hourly closes in a row, one violent hourly close, or a firm hourly close with the order flow "
-                       "behind it), with Scenario B; LOCKOUT MODE after the second failed plan. The target widens once "
-                       "when open interest or taker flow shows more force than the simulation gave it. The AI writes "
-                       "the words once per plan and never sets a number.")
+        "24-hour quantitative plan, volatility windows, timeline, and live self-audit."
+    ))
+    try:
+        plan = quant_forecast.ensure_plan(m, analyses, now_ms)
+        live = quant_forecast.live_state(plan, m, now_ms)
+        status, msgs = qf_alerts.evaluate(plan, live, m, now_ms)
+        panels.render(panels.qf_wire_html(plan, status=status, live=live))
+        panels.render(panels.qf_directive_html(plan))
+        panels.render(panels.qf_schedule_html(plan, now_ms))
+        panels.render(panels.qf_timeline_html(plan, now_ms))
+        panels.render(panels.qf_status_html(status, msgs, [plan]))
+    except Exception as exc:  # noqa: BLE001
+        st.error(f"Quant forecast unavailable: {exc}")
 
-# ---------- phone footer: the feed list, which lives in the folded-away sidebar on a desktop ----------
-with st.container(key="ti_mobile_foot"):
-    panels.render(panels.data_status_html(m))
-    st.caption("The ledger persists in SQLite; on Streamlit Cloud it resets on reboot.")
+
+def main() -> None:
+    now_ms = _now_ms()
+    m, _errs = _snapshot(force=False)
+    analyses = _compute_analyses(m)
+    _sync_accuracy(m, analyses, now_ms)
+
+    dark, signal, choice, force_refresh = _render_sidebar(m, analyses, now_ms)
+    if force_refresh:
+        m, _errs = _snapshot(force=True)
+        analyses = _compute_analyses(m)
+        now_ms = _now_ms()
+
+    top_refresh = _render_topbar(m, now_ms)
+    if top_refresh:
+        m, _errs = _snapshot(force=True)
+        analyses = _compute_analyses(m)
+        now_ms = _now_ms()
+        st.rerun()
+
+    kind, key = NAV_BY_LABEL[choice]
+    if kind == "desk":
+        _render_desk(key, m, analyses, now_ms, dark, signal)
+    elif kind == "traps":
+        _render_traps(m, analyses, now_ms)
+    elif kind == "trade":
+        _render_trade(m, analyses, now_ms)
+    elif kind == "director":
+        _render_director(m, analyses, now_ms)
+    elif kind == "macro":
+        _render_macro(m, now_ms)
+    elif kind == "qf":
+        _render_qf(m, analyses, now_ms)
+
+
+if __name__ == "__main__":
+    main()
