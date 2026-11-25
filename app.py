@@ -48,6 +48,18 @@ agents_types = _opt_import("core.agents.types")
 LLMConfig = getattr(agents_types, "LLMConfig", None) if agents_types else None
 trade_map = _opt_import("core.indicators.trade_map")
 
+# Optional desk indicator modules
+cascade_mod = _opt_import("core.indicators.cascade")
+forecast_mod = _opt_import("core.indicators.forecast")
+harmonics_mod = _opt_import("core.indicators.harmonics")
+liquidity_mod = _opt_import("core.indicators.liquidity")
+smc_mod = _opt_import("core.indicators.smc")
+value_breaks_mod = _opt_import("core.indicators.value_breaks")
+vol_matrix_mod = _opt_import("core.indicators.vol_matrix")
+weekend_mod = _opt_import("core.indicators.weekend")
+anomaly_mod = _opt_import("core.indicators.anomaly_traps")
+sine_mod = _opt_import("core.indicators.sine_wave")
+
 log = logging.getLogger("trap_intelligence")
 
 st.set_page_config(page_title="TRAP INTELLIGENCE", page_icon="◆", layout="wide",
@@ -141,13 +153,7 @@ def _get_store():
 
 
 def _render_html_frame(html_str: str, height: int = 54) -> None:
-    if hasattr(st, "iframe"):
-        try:
-            st.iframe(html_str, height=height)
-            return
-        except Exception:  # noqa: BLE001
-            pass
-    components.html(html_str, height=height)
+    components.html(html_str, height=height, scrolling=False)
 
 
 def _build_css(dark: bool, signal: bool) -> str:
@@ -167,76 +173,6 @@ def _build_css(dark: bool, signal: bool) -> str:
             if isinstance(out, str) and out.strip():
                 return out if "<style" in out else f"<style>{out}</style>"
     return _FALLBACK_CSS
-
-
-def _resolve_chart_fn():
-    preferred = (
-        "price_chart",
-        "desk_chart",
-        "category_chart",
-        "candlestick_chart",
-        "candle_chart",
-        "build_chart",
-        "make_chart",
-        "plot_chart",
-        "chart",
-        "render_chart",
-    )
-    for name in preferred:
-        fn = getattr(charts, name, None)
-        if callable(fn):
-            return fn
-    for name, obj in inspect.getmembers(charts, callable):
-        if name.startswith("_"):
-            continue
-        if getattr(obj, "__module__", "") == getattr(charts, "__name__", ""):
-            return obj
-    return None
-
-
-_CHART_FN = _resolve_chart_fn()
-
-
-def _render_desk_chart(chart_a: cat_ind.CategoryAnalysis, dark: bool, signal: bool) -> None:
-    if _CHART_FN is None:
-        st.info("Chart builder not found in ui.charts.")
-        return
-    sig = inspect.signature(_CHART_FN)
-    pos_args = []
-    kw_args = {}
-    for p in sig.parameters.values():
-        if p.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
-            continue
-        pname = p.name.lower()
-        if pname in ("a", "analysis", "cat_analysis", "category_analysis", "data"):
-            val = chart_a
-        elif pname == "dark":
-            val = dark
-        elif pname in ("signal", "signal_colours", "signal_colors"):
-            val = signal
-        elif pname == "height":
-            val = 460
-        elif p.default is not inspect.Parameter.empty:
-            continue
-        else:
-            val = None
-        if p.kind == inspect.Parameter.KEYWORD_ONLY:
-            kw_args[p.name] = val
-        else:
-            pos_args.append(val)
-
-    try:
-        out = _CHART_FN(*pos_args, **kw_args)
-    except TypeError:
-        try:
-            out = _CHART_FN(chart_a, dark=dark, signal=signal)
-        except TypeError:
-            out = _CHART_FN(chart_a)
-
-    if isinstance(out, str):
-        _render_html_frame(out, height=480)
-    elif out is not None:
-        st.plotly_chart(out, use_container_width=True, config={"displayModeBar": False})
 
 
 def _run_coro_sync(coro):
@@ -402,16 +338,18 @@ def _compute_analyses(m) -> dict[str, cat_ind.CategoryAnalysis | None]:
     return out
 
 
-def _run_pipeline_pass(store, m, analyses: dict, now_ms: int) -> None:
+def _run_pipeline_pass(store, m, analyses: dict, now_ms: int) -> dict:
     if store is None or core_pipeline is None:
-        return
+        return {}
     valid_analyses = {k: v for k, v in analyses.items() if v is not None}
     try:
         res = core_pipeline.ledger(store, m, valid_analyses, now_ms)
         for prob in res.problems:
             log.warning("pipeline %s", prob)
+        return res.verdicts or {}
     except Exception as exc:  # noqa: BLE001
         log.warning("pipeline ledger failed: %s", exc)
+        return {}
 
 
 def _llm_config_from_env():
@@ -429,7 +367,7 @@ def _llm_config_from_env():
     return None
 
 
-def _render_sidebar(m, analyses: dict) -> tuple[bool, bool, str, bool]:
+def _render_sidebar(m, analyses: dict, verdicts: dict) -> tuple[bool, bool, str, bool]:
     if "dark_mode" not in st.session_state:
         st.session_state["dark_mode"] = False
     if "signal_colours" not in st.session_state:
@@ -446,7 +384,8 @@ def _render_sidebar(m, analyses: dict) -> tuple[bool, bool, str, bool]:
     tones, tfs = [], []
     for key in CATEGORY_KEYS:
         a = analyses.get(key)
-        tones.append(panels.rail_tone(None, a))
+        v = verdicts.get(key)
+        tones.append(panels.rail_tone(v, a))
         tfs.append(CHART_VIEWS.get(key, CATEGORY_TIMEFRAMES[key])[0])
     extra = len(NAV) - len(CATEGORY_KEYS)
     tones.extend(["neutral"] * extra)
@@ -496,7 +435,56 @@ def _render_topbar(m, now_ms: int) -> bool:
     return refresh_clicked
 
 
-def _render_desk(key: str, m, analyses: dict, now_ms: int, dark: bool, signal: bool) -> None:
+def _render_kpi_strip(kpis: list[dict]) -> None:
+    if not kpis:
+        return
+    for start in range(0, len(kpis), 6):
+        chunk = kpis[start:start + 6]
+        cols = st.columns(len(chunk))
+        for col, item in zip(cols, chunk):
+            with col:
+                st.metric(
+                    label=str(item.get("label") or ""),
+                    value=str(item.get("value") or "—"),
+                    delta=item.get("delta"),
+                )
+
+
+def _compute_forecast(base_a: cat_ind.CategoryAnalysis, m, gamma: dict | None):
+    if forecast_mod is None:
+        return None
+    for fn_name in ("forecast_category", "build_forecast", "run_forecast", "forecast", "project"):
+        fn = getattr(forecast_mod, fn_name, None)
+        if not callable(fn):
+            continue
+        sig = inspect.signature(fn)
+        kwargs = {}
+        for p in sig.parameters.values():
+            if p.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+                continue
+            pname = p.name.lower()
+            if pname in ("a", "analysis"):
+                kwargs[p.name] = base_a
+            elif pname in ("m", "snapshot"):
+                kwargs[p.name] = m
+            elif pname == "gamma":
+                kwargs[p.name] = gamma
+            elif pname == "frames":
+                kwargs[p.name] = getattr(getattr(m, "spot", None), "frames", None) or {}
+        try:
+            return fn(**kwargs)
+        except Exception:  # noqa: BLE001
+            try:
+                return fn(base_a, m, gamma)
+            except Exception:  # noqa: BLE001
+                try:
+                    return fn(base_a)
+                except Exception:  # noqa: BLE001
+                    pass
+    return None
+
+
+def _render_desk(key: str, store, m, analyses: dict, verdicts: dict, now_ms: int, dark: bool, signal: bool) -> None:
     base_a = analyses.get(key)
     cat = CATEGORIES[key]
     if base_a is None:
@@ -507,8 +495,43 @@ def _render_desk(key: str, m, analyses: dict, now_ms: int, dark: bool, signal: b
     profile = for_cat.get(key) or getattr(recon_profiles, "LIVE", None)
     if profile is not None:
         panels.render(panels.desk_hero_html(DESK_INDEX[key], profile, base_a, now_ms))
+
+    # Top banners: weekend tape, active TRAP warnings, anomaly traps
+    if weekend_mod is not None and hasattr(weekend_mod, "classify"):
+        try:
+            w_banner = panels.weekend_html(weekend_mod.classify(now_ms))
+            if w_banner:
+                panels.render(w_banner)
+        except Exception:  # noqa: BLE001
+            pass
+
+    if store is not None and hasattr(store, "traps"):
+        try:
+            desk_tfs = set(profile.read_order) if profile is not None else {cat.chart_tf, cat.context_tf}
+            active_traps = [r for r in store.traps(limit=100)
+                            if r.get("status") == "active" and (not desk_tfs or r.get("timeframe") in desk_tfs)]
+            t_banner = panels.trap_warning_html(active_traps, now_ms)
+            if t_banner:
+                panels.render(t_banner)
+        except Exception:  # noqa: BLE001
+            pass
+
+    if anomaly_mod is not None and hasattr(anomaly_mod, "detect"):
+        try:
+            for at in anomaly_mod.detect(m, base_a) or []:
+                panels.render(panels.anomaly_trap_html(at))
+        except Exception:  # noqa: BLE001
+            pass
+
+    sq_banner = panels.squeeze_banner_html(base_a)
+    if sq_banner:
+        panels.render(sq_banner)
+
     gamma = desk_derivs.gamma_for(key, m)
     panels.render(panels.gamma_bar_html(gamma, getattr(m.spot, "last", None), cat.label))
+
+    derivs = desk_derivs.read(key, m, now_ms)
+    _render_kpi_strip(panels.kpis_for(base_a, m, derivs))
 
     views = CHART_VIEWS.get(key, (cat.chart_tf, cat.context_tf))
     view_tf = st.radio(
@@ -519,22 +542,111 @@ def _render_desk(key: str, m, analyses: dict, now_ms: int, dark: bool, signal: b
     )
     frames = getattr(getattr(m, "spot", None), "frames", None) or {}
     chart_a = cat_ind.view_analysis(cat, view_tf, frames, getattr(m, "futures", None), base_a) or base_a
-
+    fc = _compute_forecast(base_a, m, gamma)
     fg = getattr(m.sentiment, "fear_greed", None)
-    derivs = desk_derivs.read(key, m, now_ms)
 
     left, right = st.columns([7, 5], gap="large")
     with left:
         panels.render(panels.chart_head_html(chart_a, signal=signal, symbol=getattr(m.spot, "symbol", None),
                                            call_tf=cat.chart_tf))
-        _render_desk_chart(chart_a, dark=dark, signal=signal)
+        if fc is not None and getattr(fc, "available", False):
+            charts.render_projected_chart(chart_a, dark=dark, forecast=fc, gamma=gamma,
+                                          forecast_tf=cat.chart_tf, height=560, signal=signal)
+        else:
+            charts.render_chart(chart_a, dark=dark, height=560, signal=signal)
         panels.render(panels.layman_html(chart_a))
         panels.render(panels.patterns_html(chart_a))
         panels.render(panels.divergence_html(chart_a))
     with right:
-        panels.render(panels.direction_html(base_a))
+        verdict = verdicts.get(key)
+        if verdict is not None:
+            panels.render(panels.anchored_direction_html(base_a, verdict, now_ms))
+        else:
+            panels.render(panels.direction_html(base_a))
         panels.render(panels.volatility_html(base_a))
         panels.render(panels.fib_html(chart_a))
+
+    # Timeframe cascade
+    if cascade_mod is not None and profile is not None and hasattr(cascade_mod, "classify"):
+        try:
+            bias_tf, anchor_tf, engine_tfs = profile.cascade
+            c_state = cascade_mod.classify(frames, bias_tf, anchor_tf, engine_tfs)
+            inval = verdicts[key].anchored.invalidation if verdicts.get(key) is not None else base_a.direction.invalidation
+            panels.render(panels.cascade_html(c_state, invalidation=inval, price=base_a.price))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("cascade panel failed for %s: %s", key, exc)
+
+    # Forecast path table
+    if fc is not None:
+        try:
+            panels.render(panels.forecast_html(fc, None, cat.horizon_label))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("forecast panel failed for %s: %s", key, exc)
+
+    # Multi-timeframe structure, liquidity & volatility matrices
+    read_tfs = list(profile.read_order) if profile is not None else [cat.chart_tf, cat.context_tf]
+    c_a, c_b = st.columns(2, gap="large")
+    with c_a:
+        if smc_mod is not None:
+            for fn_name in ("analyze_multi", "scan_timeframes", "read_timeframes", "by_timeframe"):
+                fn = getattr(smc_mod, fn_name, None)
+                if callable(fn):
+                    try:
+                        panels.render(panels.smc_html(fn(frames, read_tfs)))
+                    except Exception:  # noqa: BLE001
+                        pass
+                    break
+        if harmonics_mod is not None:
+            for fn_name in ("scan_timeframes", "detect_multi", "find_harmonics", "by_timeframe"):
+                fn = getattr(harmonics_mod, fn_name, None)
+                if callable(fn):
+                    try:
+                        panels.render(panels.harmonics_html(fn(frames, read_tfs)))
+                    except Exception:  # noqa: BLE001
+                        pass
+                    break
+    with c_b:
+        if liquidity_mod is not None:
+            for fn_name in ("analyze_multi", "scan_timeframes", "read_timeframes", "by_timeframe"):
+                fn = getattr(liquidity_mod, fn_name, None)
+                if callable(fn):
+                    try:
+                        panels.render(panels.liquidity_html(fn(m, read_tfs)))
+                    except Exception:  # noqa: BLE001
+                        try:
+                            panels.render(panels.liquidity_html(fn(frames, read_tfs)))
+                        except Exception:  # noqa: BLE001
+                            pass
+                    break
+        if value_breaks_mod is not None:
+            for fn_name in ("scan_timeframes", "read_timeframes", "by_timeframe"):
+                fn = getattr(value_breaks_mod, fn_name, None)
+                if callable(fn):
+                    try:
+                        panels.render(panels.value_breaks_html(fn(frames, read_tfs)))
+                    except Exception:  # noqa: BLE001
+                        pass
+                    break
+
+    if vol_matrix_mod is not None:
+        for fn_name in ("build_matrix", "scan_timeframes", "vol_matrix", "by_timeframe"):
+            fn = getattr(vol_matrix_mod, fn_name, None)
+            if callable(fn):
+                try:
+                    panels.render(panels.vol_matrix_html(fn(m, read_tfs)))
+                except Exception:  # noqa: BLE001
+                    try:
+                        panels.render(panels.vol_matrix_html(fn(frames, read_tfs)))
+                    except Exception:  # noqa: BLE001
+                        pass
+                break
+
+    if key == "live" and sine_mod is not None and hasattr(sine_mod, "evaluate"):
+        try:
+            warn, ny_now, rec = sine_mod.evaluate(store, frames, now_ms)
+            panels.render(panels.sine_experimental_html(warn, ny_now, rec))
+        except Exception:  # noqa: BLE001
+            pass
 
     st.markdown("---")
     panels.render(panels.layman_summary_html(base_a, cat.label, derivs, fg, now_ms))
@@ -689,6 +801,11 @@ def _render_director(store, m, analyses: dict, now_ms: int) -> None:
 
     if report is None:
         st.info("Run Analysis to generate a Director report.")
+        if accuracy is not None and hasattr(accuracy, "summary") and store is not None:
+            try:
+                panels.render(panels.accuracy_html(accuracy.summary(store)))
+            except Exception:  # noqa: BLE001
+                pass
         return
 
     panels.render(panels.report_stats_html(report))
@@ -696,6 +813,11 @@ def _render_director(store, m, analyses: dict, now_ms: int) -> None:
     panels.render(panels.director_lists_html(report))
     panels.render(panels.director_desks_html(report, CATEGORY_LABELS, {k: c.chart_tf for k, c in CATEGORIES.items()}))
     panels.render(panels.briefs_html(report))
+    if accuracy is not None and hasattr(accuracy, "summary") and store is not None:
+        try:
+            panels.render(panels.accuracy_html(accuracy.summary(store)))
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def _render_macro(m, now_ms: int) -> None:
@@ -731,9 +853,12 @@ def _render_qf(store, m, analyses: dict, now_ms: int) -> None:
         live = quant_forecast.live_state(plan, m, now_ms)
         status, msgs = qf_alerts.evaluate(plan, live, m, now_ms)
         panels.render(panels.qf_wire_html(plan, status=status, live=live))
+        h1 = (getattr(getattr(m, "spot", None), "frames", None) or {}).get("1h")
+        if h1 is not None and len(h1):
+            charts.render_qf_chart(plan, h1, dark=True, height=520, signal=True, now_ms=now_ms)
         panels.render(panels.qf_directive_html(plan))
         panels.render(panels.qf_schedule_html(plan, now_ms))
-        panels.render(panels.qf_timeline_html(plan, now_ms))
+        panels.render(panels.qf_timeline_html(plan, now_ms, h1))
         panels.render(panels.qf_status_html(status, msgs, [plan]))
     except Exception as exc:  # noqa: BLE001
         st.error(f"Quant forecast unavailable: {exc}")
@@ -744,24 +869,26 @@ def main() -> None:
     store = _get_store()
     m, _errs = _snapshot(force=False)
     analyses = _compute_analyses(m)
-    _run_pipeline_pass(store, m, analyses, now_ms)
+    verdicts = _run_pipeline_pass(store, m, analyses, now_ms)
 
-    dark, signal, choice, force_refresh = _render_sidebar(m, analyses)
+    dark, signal, choice, force_refresh = _render_sidebar(m, analyses, verdicts)
     if force_refresh:
         m, _errs = _snapshot(force=True)
         analyses = _compute_analyses(m)
         now_ms = _now_ms()
+        verdicts = _run_pipeline_pass(store, m, analyses, now_ms)
 
     top_refresh = _render_topbar(m, now_ms)
     if top_refresh:
         m, _errs = _snapshot(force=True)
         analyses = _compute_analyses(m)
         now_ms = _now_ms()
+        verdicts = _run_pipeline_pass(store, m, analyses, now_ms)
         st.rerun()
 
     kind, key = NAV_BY_LABEL[choice]
     if kind == "desk":
-        _render_desk(key, m, analyses, now_ms, dark, signal)
+        _render_desk(key, store, m, analyses, verdicts, now_ms, dark, signal)
     elif kind == "traps":
         _render_traps(store, m, analyses, now_ms)
     elif kind == "trade":
