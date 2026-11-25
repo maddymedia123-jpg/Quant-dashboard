@@ -63,13 +63,35 @@ core_pipeline = _opt_import("core.pipeline")
 accuracy = _opt_import("core.accuracy")
 qf_alerts = _opt_import("core.qf_alerts")
 quant_forecast = _opt_import("core.quant_forecast")
-store = _opt_import("core.store")
+_raw_store = _opt_import("core.store")
 traps = _opt_import("core.traps")
 recon_profiles = _opt_import("core.agents.recon_profiles")
 runner = _opt_import("core.agents.runner")
 agents_types = _opt_import("core.agents.types")
 LLMConfig = getattr(agents_types, "LLMConfig", None) if agents_types else None
 trade_map = _opt_import("core.indicators.trade_map")
+
+
+class _StoreProxy:
+    """Forwards to core.store while supplying missing ledger/table attributes safely."""
+
+    def __init__(self, inner):
+        self._inner = inner
+        self.calls: list = []
+
+    def __getattr__(self, name: str):
+        if self._inner is not None and hasattr(self._inner, name):
+            return getattr(self._inner, name)
+        if name in ("calls", "all_calls", "recent_calls", "open_calls"):
+            return []
+        if name.startswith(("list_", "get_", "load_", "fetch_", "all_")):
+            return lambda *_a, **_kw: []
+        if name.startswith(("save_", "record_", "insert_", "update_", "delete_", "close_", "prune_", "sync_")):
+            return lambda *_a, **_kw: None
+        raise AttributeError(f"'_StoreProxy' object has no attribute '{name}'")
+
+
+store = _StoreProxy(_raw_store) if _raw_store is not None else None
 
 log = logging.getLogger("trap_intelligence")
 
@@ -121,6 +143,16 @@ _FALLBACK_CSS = """
 .muted { opacity: 0.72; }
 </style>
 """
+
+
+def _render_html_frame(html_str: str, height: int = 54) -> None:
+    if hasattr(st, "iframe"):
+        try:
+            st.iframe(html_str, height=height)
+            return
+        except Exception:  # noqa: BLE001
+            pass
+    components.html(html_str, height=height)
 
 
 def _build_css(dark: bool, signal: bool) -> str:
@@ -381,19 +413,66 @@ def _resolve_category_analyzer():
 _CAT_ANALYZER = _resolve_category_analyzer()
 
 
-def _compute_analyses(m) -> dict:
+def _invoke_category_analyzer(fn, key: str, m, now_ms: int):
+    sig = inspect.signature(fn)
+    params = sig.parameters
+    pos_args = []
+    kw_args = {}
+
+    for p in params.values():
+        if p.kind == inspect.Parameter.VAR_POSITIONAL:
+            continue
+        if p.kind == inspect.Parameter.VAR_KEYWORD:
+            continue
+        pname = p.name.lower()
+        if pname in ("category", "cat", "key", "desk", "horizon"):
+            val = key
+        elif pname in ("m", "snap", "snapshot", "market", "data"):
+            val = m
+        elif pname in ("now_ms", "ts_ms", "timestamp_ms", "now"):
+            val = now_ms
+        elif pname in ("store", "db"):
+            val = store
+        elif pname in ("cfg", "config", "settings", "opts", "options", "params"):
+            val = {}
+        elif p.default is not inspect.Parameter.empty:
+            continue
+        else:
+            val = key if len(pos_args) == 0 else (m if len(pos_args) == 1 else now_ms)
+
+        if p.kind == inspect.Parameter.KEYWORD_ONLY:
+            kw_args[p.name] = val
+        else:
+            pos_args.append(val)
+
+    return fn(*pos_args, **kw_args)
+
+
+def _compute_analyses(m, now_ms: int) -> dict:
     out = {}
     if _CAT_ANALYZER is None:
         log.warning("No analyzer callable found in core.indicators.category")
         return {k: None for k in CATEGORIES}
     for key in CATEGORIES:
         try:
-            out[key] = _CAT_ANALYZER(key, m)
+            out[key] = _invoke_category_analyzer(_CAT_ANALYZER, key, m, now_ms)
         except TypeError:
-            try:
-                out[key] = _CAT_ANALYZER(m, key)
-            except Exception as exc:  # noqa: BLE001
-                log.warning("analysis failed for %s: %s", key, exc)
+            for fallback_call in (
+                lambda: _CAT_ANALYZER(key, m, now_ms),
+                lambda: _CAT_ANALYZER(key, m, {}),
+                lambda: _CAT_ANALYZER(key, m),
+                lambda: _CAT_ANALYZER(m, key),
+            ):
+                try:
+                    out[key] = fallback_call()
+                    break
+                except TypeError:
+                    continue
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("analysis failed for %s: %s", key, exc)
+                    out[key] = None
+                    break
+            else:
                 out[key] = None
         except Exception as exc:  # noqa: BLE001
             log.warning("analysis failed for %s: %s", key, exc)
@@ -490,7 +569,7 @@ def _render_sidebar(m, analyses: dict, now_ms: int) -> tuple[bool, bool, str, bo
 
     st.sidebar.markdown("---")
     with st.sidebar:
-        components.html(panels.clock_html(dark), height=54)
+        _render_html_frame(panels.clock_html(dark), height=54)
 
     force_refresh = False
     if st.sidebar.button("Force fresh snapshot", use_container_width=True):
@@ -728,19 +807,19 @@ def _render_qf(m, analyses: dict, now_ms: int) -> None:
 def main() -> None:
     now_ms = _now_ms()
     m, _errs = _snapshot(force=False)
-    analyses = _compute_analyses(m)
+    analyses = _compute_analyses(m, now_ms)
     _sync_accuracy(m, analyses, now_ms)
 
     dark, signal, choice, force_refresh = _render_sidebar(m, analyses, now_ms)
     if force_refresh:
         m, _errs = _snapshot(force=True)
-        analyses = _compute_analyses(m)
+        analyses = _compute_analyses(m, now_ms)
         now_ms = _now_ms()
 
     top_refresh = _render_topbar(m, now_ms)
     if top_refresh:
         m, _errs = _snapshot(force=True)
-        analyses = _compute_analyses(m)
+        analyses = _compute_analyses(m, now_ms)
         now_ms = _now_ms()
         st.rerun()
 
