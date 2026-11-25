@@ -492,6 +492,38 @@ def _compute_analyses(m, now_ms: int) -> dict:
     return out
 
 
+def _call_summary(summary_fn, now_ms: int) -> dict:
+    empty = {"total_scored": 0, "open_calls": 0, "by_category": {},
+             "by_classification_24h": {}, "by_classification_7d": {}, "recent_calls": []}
+    sig = inspect.signature(summary_fn)
+    params = list(sig.parameters.values())
+    has_varargs = any(p.kind == inspect.Parameter.VAR_POSITIONAL for p in params)
+    pos_params = [
+        p for p in params
+        if p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+    ]
+
+    candidates = []
+    if has_varargs or len(pos_params) >= 2:
+        candidates.append(lambda: summary_fn(store, now_ms))
+        candidates.append(lambda: summary_fn(now_ms, store))
+    if has_varargs or len(pos_params) >= 1:
+        candidates.append(lambda: summary_fn(store))
+        candidates.append(lambda: summary_fn(now_ms))
+    candidates.append(lambda: summary_fn())
+
+    for call in candidates:
+        try:
+            res = call()
+            if isinstance(res, dict):
+                return res
+            if res is not None:
+                return empty
+        except TypeError:
+            continue
+    return summary_fn(store)
+
+
 def _sync_accuracy(m, analyses: dict, now_ms: int) -> dict:
     empty = {"total_scored": 0, "open_calls": 0, "by_category": {},
              "by_classification_24h": {}, "by_classification_7d": {}, "recent_calls": []}
@@ -499,20 +531,27 @@ def _sync_accuracy(m, analyses: dict, now_ms: int) -> dict:
         return empty
     try:
         if hasattr(accuracy, "record_calls"):
-            try:
-                accuracy.record_calls(m, analyses, now_ms, store)
-            except TypeError:
-                accuracy.record_calls(m, analyses, now_ms)
+            for call in (
+                lambda: accuracy.record_calls(m, analyses, now_ms, store),
+                lambda: accuracy.record_calls(m, analyses, now_ms),
+            ):
+                try:
+                    call()
+                    break
+                except TypeError:
+                    continue
         if hasattr(accuracy, "score_due"):
-            try:
-                accuracy.score_due(m, now_ms, store)
-            except TypeError:
-                accuracy.score_due(m, now_ms)
+            for call in (
+                lambda: accuracy.score_due(m, now_ms, store),
+                lambda: accuracy.score_due(m, now_ms),
+            ):
+                try:
+                    call()
+                    break
+                except TypeError:
+                    continue
         if hasattr(accuracy, "summary"):
-            try:
-                return accuracy.summary(store)
-            except TypeError:
-                return accuracy.summary()
+            return _call_summary(accuracy.summary, now_ms)
     except Exception as exc:  # noqa: BLE001
         log.warning("accuracy ledger failed: %s", exc)
     return empty
@@ -604,6 +643,8 @@ def _render_desk(key: str, m, analyses: dict, now_ms: int, dark: bool, signal: b
     a = analyses.get(key)
     if a is None:
         st.warning(f"No analysis available for {CATEGORY_LABELS[key]}.")
+        frames = getattr(getattr(m, "spot", None), "frames", None) or {}
+        st.caption(f"Snapshot spot={getattr(getattr(m, 'spot', None), 'last', None)}, frames={list(frames.keys())}")
         return
     for_cat = getattr(recon_profiles, "FOR_CATEGORY", None) or {}
     profile = for_cat.get(key) or getattr(recon_profiles, "LIVE", None)
