@@ -941,4 +941,564 @@ def _secrets() -> dict:
     """Streamlit secrets, or an empty mapping when there is no secrets file.
 
     `hasattr(st, "secrets")` is always True - the attribute exists whether or not a file does - so the
-    old guard was dead and `dict(st.secrets
+    old guard was dead and `dict(st.secrets)` raised on any deploy or fresh clone without one, aborting
+    the script mid-tab and taking every tab after it down with it. core/agents/settings.py already
+    handled this correctly; this is the same pattern."""
+    try:
+        return dict(st.secrets)
+    except Exception:  # noqa: BLE001 - not running under streamlit, or no secrets file
+        return {}
+
+
+def _trade_price() -> float | None:
+    return m.spot.last or (next(iter(analyses.values())).price if analyses else None)
+
+
+def build_trade_plan(asset: str, side: str, entry: float, given_stop: float | None, category: str) -> dict:
+    """Everything the card needs, computed once at open: the stop, the targets, the guardrail, the plan.
+
+    Deterministic first and agents second, so a card still carries its levels when the model is down."""
+    profile = PROFILES[category]
+    ltf, mtf, htf = profile.timeframes
+    state = _desk_state(category, _data_stamp())
+    run_ms = int(time.time() * 1000)
+    # the deterministic half lives in core.trade_plan, shared with the worker's master swing card
+    plan, stop, targets = deterministic_plan(store, state, m.spot.frames.get(mtf), side, entry, given_stop,
+                                             category, run_ms, gamma=desk_derivs.gamma_for(category, m), asset=asset)
+    atr = float(plan["atr"])
+
+    if settings is None:
+        plan["notes"] = ["No model provider is configured, so the ten sub-agents were not run. The levels "
+                         "above are deterministic and stand on their own."]
+        return plan, stop, targets
+
+    try:
+        judge = Judge(settings, typesafe_key=settings.typesafe_key, llm=LLMClient(settings))
+        verdict = asyncio.run(judge_trade(judge, state, side, entry, stop, targets, profile,
+                                         store=store, now_ms=run_ms, atr=atr))
+    except Exception as e:  # noqa: BLE001 - a card without a score is still a usable plan
+        plan["notes"] = [f"The trade desk could not be reached ({type(e).__name__}: {e}). The levels "
+                         "above are deterministic and stand on their own."]
+        return plan, stop, targets
+
+    plan.update({
+        "ok": verdict.ok, "score": verdict.score, "probability": verdict.probability,
+        "margin": verdict.margin, "for_points": verdict.for_points,
+        "against_points": verdict.against_points,
+        "for_domains": [{"key": d.key, "title": d.title, "points": d.points} for d in verdict.for_domains],
+        "against_domains": [{"key": d.key, "title": d.title, "points": d.points}
+                            for d in verdict.against_domains],
+        "head_call": verdict.head_call, "head_confidence": verdict.head_confidence,
+        "aligned": verdict.aligned,
+        "alignment": [{"category": a.category, "label": a.label, "bias": a.bias, "verdict": a.verdict,
+                       "note": a.note} for a in verdict.alignment],
+        "traps": [{"trap_id": t.trap_id, "side": t.side, "timeframe": t.timeframe, "level": t.level,
+                   "near": t.near, "distance": t.distance} for t in verdict.traps],
+        "notes": list(verdict.notes), "provider": verdict.provider,
+    })
+    return plan, stop, targets
+
+
+def _alerts_may_send() -> bool:
+    """Fixture data is not the market: a page running on the offline fixtures detects and logs alerts but
+    never sends them, so a local check (or a test) cannot push an invented move to a real channel."""
+    from core.data.market import _offline
+    return not _offline()
+
+
+def market_alert_pass() -> None:
+    """Plan alerts, held cascade alerts, TRAP calls and the Market Pulse: the same pass the 24/7 worker
+    runs (core.pipeline). With both running, the store's one-statement claim decides who sends."""
+    r = pipeline.market_alerts(store, m, analyses, now_ms, _secrets(), _alerts_may_send())
+    if r.problems:
+        st.session_state["market_alert_problem"] = r.problems[0]
+
+
+if m.spot.available:
+    try:
+        market_alert_pass()
+    except Exception as e:  # noqa: BLE001 - alerting must never blank the page
+        st.sidebar.caption(f"Market alerts unavailable this refresh: {e}")
+    if st.session_state.get("market_alert_problem"):
+        st.sidebar.caption(f"Alerts: {st.session_state.pop('market_alert_problem')}")
+
+
+def _trade_watch(category: str) -> dict | None:
+    """The desk's current read for the pre-invalidation check, from the cached desk state."""
+    try:
+        profile = PROFILES[category]
+        return trades.flow_and_walls(_desk_state(category, _data_stamp()), profile.timeframes[1],
+                                     desk_derivs.gamma_for(category, m))
+    except Exception:  # noqa: BLE001 - the check is extra; the stop and target alerts are not
+        return None
+
+
+def trade_alert_pass(row: dict, prog) -> None:
+    """Detect what has happened to a pinned trade, log it once, and push whatever a channel accepts."""
+    r = pipeline.trade_alerts(store, row, prog, now_ms, _secrets(), _alerts_may_send(),
+                              watch=_trade_watch(str(row.get("category") or "live")))
+    for note in r.problems[:1]:
+        st.caption(f"Alerts: {note}")
+
+
+@st.dialog("Kill this trade?")
+def _kill_dialog(row: dict, price_now) -> None:
+    st.markdown(f"<p>#{row['id']} {html.escape(str(row['side']))} {html.escape(str(row['asset']))} from "
+                f"${float(row['entry']):,.0f}. The card is unpinned and every alert for this position stops. "
+                "It moves to recently closed.</p>", unsafe_allow_html=True)
+    k1, k2 = st.columns(2)
+    if k1.button("Keep tracking", key=f"tr_keep_{row['id']}", width="stretch"):
+        st.session_state.pop("kill_pending", None)
+        st.rerun()
+    if k2.button("KILL", key=f"tr_kill_confirm_{row['id']}", type="primary", width="stretch"):
+        st.session_state.pop("kill_pending", None)
+        store.close_trade(row["id"], "killed by the trader", price_now, now_ms)
+        st.rerun()
+
+
+if screen == "trade":
+    panels.render(panels.engine_hero_html(
+        6, "Active Trade",
+        "Enter a position and it is evaluated, pinned and tracked until you kill it. Levels are computed in "
+        "code first; ten sub-agents, the four category heads and the TRAP head are consulted second. Cards "
+        "live in the database and survive a refresh and a redeploy."))
+
+    try:
+        panels.render(panels.master_lanes_html(analyses, m, now_ms))
+    except Exception as e:  # noqa: BLE001
+        st.warning(f"Master trade lanes unavailable: {e}")
+
+    spot = _trade_price()
+    with st.form("new_trade", clear_on_submit=False, border=False):
+        st.markdown("<span class='ti-kicker'>Open a position</span>", unsafe_allow_html=True)
+        c1, c2, c3, c4 = st.columns([1.2, 1, 1, 1])
+        f_asset = c1.text_input("Asset", value="BTC/USDT")
+        f_side = c2.segmented_control("Direction", ["LONG", "SHORT"], default="LONG", key="tr_side") or "LONG"
+        f_entry = c3.number_input("Entry ($) · defaults to spot", value=float(round(spot or 0.0, 2)), step=10.0,
+                                  help="Where you actually got in.")
+        f_stop = c4.number_input("Stop loss ($) · 0 lets the desk place it", value=0.0, step=10.0,
+                                 help="Leave at 0 and the engine derives a structural stop.")
+        f_cat = st.segmented_control(
+            "Judge it over", list(PROFILES), default="live", key="tr_cat",
+            format_func=lambda k: f"{CATEGORIES[k].label} · {PROFILES[k].horizon}") or "live"
+        b_col, n_col = st.columns([1, 2], vertical_alignment="center")
+        opened = b_col.form_submit_button("Open and track this trade", type="primary", width="stretch",
+                                          disabled=not spot)
+        n_col.caption("Two batched requests plus one Head call.")
+    if opened:
+        if not f_entry:
+            st.error("An entry price is needed.")
+        else:
+            with st.status("Active trade desk: ten sub-agents and two consultations...", expanded=False) as s_:
+                try:
+                    plan, stop_v, _t = build_trade_plan(f_asset.strip() or "BTC/USDT", f_side,
+                                                        float(f_entry),
+                                                        float(f_stop) if f_stop else None, f_cat)
+                    tid = store.open_trade(opened_ms=int(time.time() * 1000), asset=plan["asset"],
+                                           side=f_side, entry=float(f_entry), stop=stop_v.stop,
+                                           given_stop=float(f_stop) if f_stop else None,
+                                           stop_verdict=stop_v.verdict, category=f_cat, plan=plan)
+                    s_.update(label=f"Trade #{tid} pinned", state="complete")
+                except Exception as e:  # noqa: BLE001 - a failed open must not blank the tab
+                    s_.update(label=f"Could not open the trade: {type(e).__name__}: {e}", state="error")
+                    st.error(f"The trade was not pinned: {e}")
+
+    try:
+        open_trades = store.trades(status="open", limit=10)
+        # his Section 6: the desk-owned master swing card, when there is one, sits above the trader's own
+        open_trades.sort(key=lambda t: not (t.get("plan") or {}).get("master"))
+        closed_trades = store.trades(status="closed", limit=3)
+    except Exception as e:  # noqa: BLE001
+        open_trades, closed_trades = [], []
+        st.error(f"The trade ledger could not be read ({type(e).__name__}: {e}). "
+                 "Do not read this as 'no open positions'.")
+
+    if not open_trades:
+        st.caption("No position is being tracked. Open one above and it stays pinned here.")
+
+    price_now = _trade_price()
+    for row in open_trades:
+        plan = row.get("plan") or {}
+        target_objs = [trades.TimedTarget(t.get("name", ""), float(t.get("price") or 0.0),
+                                          str(t.get("basis") or ""), t.get("due_ms"),
+                                          float(t.get("reward_r") or 0.0), str(t.get("due_from") or ""))
+                       for t in plan.get("targets") or []]
+        prog = None
+        if price_now:
+            try:
+                prog = trades.progress(row["side"], float(row["entry"]), float(row["stop"]),
+                                       target_objs, float(price_now))
+            except Exception as e:  # noqa: BLE001
+                st.warning(f"Trade #{row['id']}: live numbers unavailable ({e}).")
+        try:
+            warnings = [str(e.get("headline") or "") for e in store.trade_events(trade_id=row["id"], limit=50)
+                        if e.get("kind") == "shift"][:3]
+        except Exception:  # noqa: BLE001 - the chips are extra
+            warnings = []
+        try:
+            panels.render(panels.trade_card_html(row, prog, now_ms, price_now, warnings=warnings))
+        except Exception as e:  # noqa: BLE001 - one bad card must not remove the others
+            st.error(f"Trade #{row['id']} ({row.get('asset')} {row.get('side')}) could not be drawn "
+                     f"({type(e).__name__}: {e}). Its levels: entry {row.get('entry')}, "
+                     f"stop {row.get('stop')}.")
+        if prog is not None:
+            try:
+                trade_alert_pass(row, prog)
+            except Exception as e:  # noqa: BLE001
+                st.caption(f"Alerts unavailable for #{row['id']}: {e}")
+
+        b1, b2, note, b3 = st.columns([1, 1, 2.2, 1], vertical_alignment="center")
+        note.caption("Live block refreshed "
+                     + (f"{panels._trap_age(row.get('refreshed_ms'), now_ms)} ago" if row.get("refreshed_ms")
+                        else "never - the numbers above are live on every rerun"))
+        if b1.button("Refresh", key=f"tr_refresh_{row['id']}", width="stretch",
+                     help="Updates the live numbers only. The thesis and the plan are not rewritten."):
+            store.touch_trade(row["id"], now_ms)
+            st.rerun()
+        if b2.button("Re-judge", key=f"tr_rejudge_{row['id']}", disabled=settings is None, width="stretch",
+                     help="Runs the ten sub-agents again and writes a new plan for this position."):
+            rejudged = False
+            with st.status("Re-judging the position...", expanded=False) as s2:
+                try:
+                    fresh_plan, fresh_stop, _ = build_trade_plan(
+                        row["asset"], row["side"], float(row["entry"]),
+                        row.get("given_stop"), row.get("category") or "live")
+                    # one transaction: opening then closing as two calls left two open rows for one
+                    # position when the close failed
+                    new_id = store.rejudge_trade(
+                        row["id"], opened_ms=int(time.time() * 1000), asset=row["asset"],
+                        side=row["side"], entry=float(row["entry"]), stop=fresh_stop.stop,
+                        given_stop=row.get("given_stop"), stop_verdict=fresh_stop.verdict,
+                        category=row.get("category") or "live", plan=fresh_plan)
+                    s2.update(label=f"Re-judged as #{new_id}", state="complete")
+                    rejudged = True
+                except Exception as e:  # noqa: BLE001
+                    s2.update(label=f"Could not re-judge: {type(e).__name__}: {e}", state="error")
+                    st.error(f"Trade #{row['id']} was NOT re-judged ({type(e).__name__}: {e}). The card "
+                             "below is still the plan it was opened with - the sub-agents did not run.")
+            # only on success: an unconditional rerun discards the status box, which is what made a
+            # failed re-judge look exactly like a successful one
+            if rejudged:
+                st.rerun()
+        if b3.button("KILL", key=f"tr_kill_{row['id']}", width="stretch",
+                     help="Unpins the card and stops every alert for this position."):
+            st.session_state["kill_pending"] = row["id"]
+        if st.session_state.get("kill_pending") == row["id"]:
+            # the design asks before it kills, in a dialog: a misclick must not unpin a live position
+            _kill_dialog(row, price_now)
+
+    if closed_trades:
+        with st.expander(f"Recently closed ({len(closed_trades)})", expanded=False):
+            for row in closed_trades:
+                try:
+                    panels.render(panels.closed_trade_html(row, now_ms))
+                except Exception as e:  # noqa: BLE001
+                    st.caption(f"#{row['id']} could not be drawn: {e}")
+
+    panels.render(panels.section_head_html("Leverage and liquidation stress-test"))
+    with st.expander("How much room a given leverage leaves before liquidation, against the structures on "
+                     "the 15m and 1h", expanded=False):
+        live_a, intraday_a = analyses.get("live"), analyses.get("intraday")
+        base = _trade_price() or (live_a.price if live_a else 0.0)
+        with st.form("stress_test"):
+            d1, d2, d3, d4, d5 = st.columns(5)
+            s_dir = d1.segmented_control("Direction", ["LONG", "SHORT"], default="LONG", key="st_dir") or "LONG"
+            s_entry = d2.number_input("Entry ($)", value=float(round(base, 2)), step=10.0, key="st_entry")
+            s_lev = d3.number_input("Leverage (x)", min_value=1.0, max_value=125.0, value=10.0, step=1.0,
+                                    key="st_lev")
+            s_sl = d4.number_input("Stop loss ($)", value=float(round(base * 0.98, 2)), step=10.0,
+                                   key="st_sl")
+            s_tp = d5.number_input("Take profit ($)", value=float(round(base * 1.04, 2)), step=10.0,
+                                   key="st_tp")
+            run_stress = st.form_submit_button("Run stress-test", width="stretch")
+        if run_stress:
+            try:
+                tm = map_trade({"dir": s_dir, "entry": s_entry, "lev": s_lev, "sl": s_sl, "tp": s_tp},
+                               live_a, intraday_a, m.futures)
+                panels.render(panels.trade_result_html(tm))
+            except Exception as e:  # noqa: BLE001 - the stress-test must not blank the tab
+                st.warning(f"Stress-test unavailable: {e}")
+
+    channels = Dispatcher(_secrets()).channels
+    ready = [c.name for c in channels if c.configured]
+    missing = [f"{c.name} ({c.reason})" for c in channels if not c.configured]
+    panels.render(panels.section_head_html("Alert channels"))
+    panels.render(panels.channels_html(channels))
+    st.caption("Cascade changes (A, B, C) on every desk and TRAP calls go to the same channels, while a page "
+               "is open.")
+    if ready and st.button("Send a test alert", key="alert_test"):
+        ok, problems = Dispatcher(_secrets()).send_test()
+        (st.success if ok else st.error)("Test alert delivered." if ok else
+                                         f"Test alert not delivered: {'; '.join(problems) or 'no channel accepted it'}")
+    st.caption(("Alerts go to: " + ", ".join(ready) + ". " if ready else "No alert channel is configured. ")
+               + "Not set up: " + "; ".join(missing)
+               + ". Alerts are detected and sent while this page is open - continuous background alerting "
+                 "needs a scheduled worker, which Streamlit Cloud does not provide.")
+
+# ---------- war room ----------
+if screen == "director":
+    labels = {k: c.label for k, c in CATEGORIES.items()}
+    tfs = {k: c.chart_tf for k, c in CATEGORIES.items()}
+    reports = dict(st.session_state.get("director_reports") or {})
+    if report is not None and report.mode not in reports:
+        reports[report.mode] = report          # a report from before this screen kept both
+    # the newest saved report of each pipeline, whoever ran it: one report for both readers, not one each
+    try:
+        from core.accuracy import stored_reports
+        for _mode, _rep in stored_reports(store).items():
+            _mine = reports.get(_mode)
+            if _mine is None or _rep.generated_at > _mine.generated_at:
+                reports[_mode] = _rep
+    except Exception as _e:  # noqa: BLE001 - the ledger being unreachable must not blank the tab
+        st.warning(f"Saved reports unavailable: {_e}")
+    panels.render(panels.engine_hero_html(
+        7, "Director report",
+        "Two ways to write the same report: one model reading the whole state (1-agent), or the classic chain "
+        "of fifteen. Run both on one snapshot to compare them, and the scorecard below keeps the score."))
+    b1, b2, b3 = st.columns(3)
+    _runs = (
+        (b1, "Run 1-agent (fast)", "1-agent", f"One call on {settings.director_model if settings else '-'}, about "
+                                              "a minute. Writes the plan as numbers the alerts watch."),
+        (b2, "Run 15-agent (classic)", "15-agent", "Fifteen calls, about four minutes. Writes the same numbers plan "
+                                                   "since 5 November."),
+        (b3, "Run both (compare)", "both", "Both on the same snapshot: sixteen calls, so about one comparison a "
+                                           "day on the free Gemini tier."),
+    )
+    for col, label, mode, tip in _runs:
+        if col.button(label, key=f"director_{mode}", width="stretch", disabled=settings is None or not analyses,
+                      type="primary" if mode == "1-agent" else "secondary", help=tip):
+            st.session_state["director_pending"] = mode
+            st.rerun()
+    if not settings:
+        st.caption("Add GEMINI_API_KEY or OPENROUTER_API_KEY to secrets to enable the reports.")
+
+    r1, r15 = reports.get("1-agent"), reports.get("15-agent")
+    if r1 is not None and r15 is not None:
+        panels.render(panels.compare_html(r1, r15))
+    shown = [r for r in (r1, r15) if r is not None]
+    if shown:
+        tabs = st.tabs([f"{r.mode} · {r.report_id}" for r in shown])
+        for tab, rep in zip(tabs, shown):
+            with tab:
+                age = panels._trap_age(int(rep.generated_at.timestamp() * 1000), now_ms)
+                st.caption(f"{panels.MODE_WORDS[rep.mode]}. Generated "
+                           f"{fmt_when(int(rep.generated_at.timestamp() * 1000))}, {age} ago.")
+                st.download_button("Download .md", to_markdown(rep), file_name=f"{rep.report_id}.md",
+                                   mime="text/markdown", key=f"dl_{rep.report_id}")
+                panels.render(panels.report_stats_html(rep))
+                panels.render(panels.director_html(rep))
+                if rep.plan is not None:
+                    panels.render(panels.plan_html(rep.plan))
+                panels.render(panels.cases_html(rep))
+                panels.render(panels.director_lists_html(rep))
+                panels.render(panels.section_head_html("Per desk"))
+                panels.render(panels.director_desks_html(rep, labels, tfs))
+                if rep.briefs:
+                    with st.expander(f"Specialist briefs ({len(rep.briefs)})"):
+                        panels.render(panels.briefs_html(rep))
+    else:
+        panels.render(panels.card_html("Trap Intelligence Report",
+                                       "<p class='muted'>No report yet. Run 1-agent for the fast report, or Run "
+                                       "both to compare the two pipelines. Section 1, the raw metric snapshot, "
+                                       "is live below.</p>"))
+    try:
+        panels.render(panels.scorecard_html(mode_scorecard(store)))
+    except Exception as e:  # noqa: BLE001 - the scorecard must not blank the tab
+        st.warning(f"Scorecard unavailable: {e}")
+
+    left, right = st.columns(2, gap="large")
+    with left:
+        panels.render(panels.raw_metrics_html(panels.raw_metrics_rows(m)))
+    with right:
+        try:
+            panels.render(panels.accuracy_html(summary(store)))
+            log_rows = store.anchor_log(50)
+        except Exception as e:  # noqa: BLE001
+            st.warning(f"Accuracy ledger unavailable: {e}")
+            log_rows = []
+        with st.expander("Audit ledger — anchor changes (persistent)"):
+            panels.render(panels.anchor_audit_html(log_rows))
+
+
+# ---------- macro and news engines (spec section 2) ----------
+if screen == "macro":
+    panels.render(panels.engine_hero_html(
+        8, "Macro & News",
+        "The global engines: publisher headlines, gold, rates, the economic calendar and what the prediction "
+        "markets are pricing. None of it is a read on one timeframe."))
+
+    left, right = st.columns(2, gap="large")
+    with left:
+        try:
+            panels.render(panels.gold_html(m.metals, now_ms))
+        except Exception as e:  # noqa: BLE001 - one panel must not blank the tab
+            st.warning(f"Gold unavailable: {e}")
+    with right:
+        try:
+            panels.render(panels.calendar_html(m, now_ms))
+        except Exception as e:  # noqa: BLE001
+            st.warning(f"Calendar unavailable: {e}")
+
+    try:
+        panels.render(panels.rates_html(m.macro, now_ms))
+    except Exception as e:  # noqa: BLE001
+        st.warning(f"Rates unavailable: {e}")
+
+    # roadmap items 10 and 11: where crypto capital is rotating, the yen carry trade, the dollar index
+    dom_col, yen_col, dxy_col = st.columns(3, gap="large")
+    with dom_col:
+        try:
+            panels.render(panels.dominance_html(m.dominance, now_ms))
+        except Exception as e:  # noqa: BLE001
+            st.warning(f"Dominance unavailable: {e}")
+    with yen_col:
+        try:
+            panels.render(panels.yen_html(m.fx, m.macro, now_ms))
+        except Exception as e:  # noqa: BLE001
+            st.warning(f"USD/JPY unavailable: {e}")
+    with dxy_col:
+        try:
+            panels.render(panels.dollar_html(m.fx, m.spot, now_ms))
+        except Exception as e:  # noqa: BLE001
+            st.warning(f"Dollar index unavailable: {e}")
+
+    # the forecasting layer: positioning into each print, what the print did, and how fresh each story is
+    ev_col, nar_col = st.columns(2, gap="large")
+    with ev_col:
+        try:
+            panels.render(panels.event_traps_html(_event_reads(_data_stamp()), now_ms))
+        except Exception as e:  # noqa: BLE001
+            st.warning(f"Event traps unavailable: {e}")
+    with nar_col:
+        try:
+            from core.indicators.narratives import read as read_narratives
+            panels.render(panels.narratives_html(
+                read_narratives(m.news.headlines, now_ms) if m.news.available else []))
+        except Exception as e:  # noqa: BLE001
+            st.warning(f"Narratives unavailable: {e}")
+
+    n_news = len(getattr(m.news, "headlines", []) or []) if getattr(m.news, "available", False) else 0
+    panels.render(panels.section_head_html(f"Headlines · {n_news}"))
+    topics = panels.news_topics(m.news)
+    topic = st.pills("Topic", ["All"] + topics, default="All", key="news_topic", label_visibility="collapsed") \
+        if topics else "All"
+    try:
+        panels.render(panels.news_html(m.news, now_ms, limit=14, topic=None if topic in (None, "All") else topic))
+    except Exception as e:  # noqa: BLE001
+        st.error(f"The headline feed could not be drawn ({type(e).__name__}: {e}). "
+                 "Do not read this as 'no news'.")
+
+    panels.render(panels.section_head_html("Prediction markets"))
+    odds_asset = st.segmented_control("Prediction markets for", ["BTC", "ETH", "SOL", "Fed & macro", "All"],
+                                      default="BTC", key="odds_asset", label_visibility="collapsed") or "BTC"
+    _odds_key = {"All": None, "Fed & macro": "MACRO"}.get(odds_asset, odds_asset)
+    try:
+        panels.render(panels.predictions_html(m.predictions, now_ms, asset=_odds_key, limit=10))
+    except Exception as e:  # noqa: BLE001
+        st.error(f"The odds feed could not be drawn ({type(e).__name__}: {e}).")
+    st.caption("Data from Polymarket. Powered by VoxOdds, which scores whether each quote can be filled. A "
+               "probability on a market flagged fragile is a printed number, not a forecast.")
+
+# ---------- Quant Forecast: the day's computed plan, made and audited by the pass above ----------
+if screen == "qf":
+    from core import qf_alerts
+    from ui.charts import render_qf_chart
+    panels.render(panels.engine_hero_html(
+        9, "Quant Forecast",
+        "The day's plan at 00:00 UTC (05:00 PKT): direction or range, the one-line directive, the low and high "
+        "with their times, the whole-day invalidation. Set your levels and walk away; the bot watches every "
+        "minute and lights up Scenario B if the day's structure breaks."))
+    _qf_day = qf_alerts.qf.day_start(now_ms)
+    _qf_today = store.qf_plans(_qf_day)
+    _qf_active = next((r for r in reversed(_qf_today) if r["status"] == "active"), None)
+    if _qf_active is None:
+        st.info("No plan for today yet: it needs a live price and about three weeks of hourly candles. "
+                "It is made on the next refresh that has both.")
+    else:
+        _qf_plan = _qf_active["payload"]
+        _h1 = m.spot.frames.get("1h")
+        _flow = m.taker_flow.frames if getattr(m.taker_flow, "available", False) else {}
+        _qf_problem = None
+        try:
+            _qf_audit = qf_alerts.audit(_qf_plan, m.spot.frames, _flow.get("15m"), now_ms)
+        except Exception as e:  # noqa: BLE001 - the plan still shows without its audit
+            _qf_audit = {"status": "on track", "cautions": [], "holds": []}
+            _qf_problem = f"Audit unavailable this refresh: {e}"
+        _qf_live = qf_alerts.live_record(store)
+        _qf_sent = store.market_alerts_keyed(f"qf:{_qf_day}:", limit=6)
+        # the main screen (Hammad, message 6): the pure-forecasting chart on the left - the morning plan stays
+        # on it; once that plan is voided, Scenario B lights up on a second chart below it - with the master
+        # overview, the timeline tree and the trade directive on the side; on a phone the panels follow
+        _qf_first = _qf_today[0]["payload"] if _qf_today else _qf_plan
+        _qf_scenario_b = _qf_plan["version"] >= 1 and _qf_first is not _qf_plan
+        _qf_main, _qf_side = st.columns([5, 3], gap="large")
+        with _qf_main:
+            if _h1 is not None:
+                with st.container(key="ti_chart_qf"):
+                    if _qf_scenario_b:
+                        st.caption(f"Scenario A · plan #{_qf_first['version']} · voided "
+                                   f"{qf_alerts.at_label(_qf_today[0].get('closed_ms') or now_ms)}")
+                        render_qf_chart(_qf_first, _h1, dark, height=380, signal=signal, now_ms=now_ms)
+                        st.caption(f"Scenario B · plan #{_qf_plan['version']} · active")
+                        render_qf_chart(_qf_plan, _h1, dark, height=380, signal=signal, now_ms=now_ms)
+                    else:
+                        render_qf_chart(_qf_plan, _h1, dark, height=560, signal=signal, now_ms=now_ms)
+        with _qf_side:
+            from core import qf_selfaudit, qf_weekly
+            try:
+                _qf_week = qf_weekly.ensure(store, analyses.get("weekly"), desk_derivs.gamma_for("weekly", m), now_ms, m.spot.last)
+            except Exception as _e:  # noqa: BLE001 - the week's note must not blank the screen
+                _qf_week, _qf_problem = None, _qf_problem or f"Monday plan unavailable: {_e}"
+            try:
+                _qf_self = qf_selfaudit.latest(store, now_ms)
+            except Exception as _e:  # noqa: BLE001
+                _qf_self, _qf_problem = None, _qf_problem or f"Self-audit unavailable: {_e}"
+            panels.render(panels.qf_monday_html(_qf_week))
+            panels.render(panels.qf_wire_html(_qf_plan, _qf_audit["status"], live=_qf_live))
+            _qf_audit_card = panels.qf_audit_html(_qf_self)
+            if _qf_audit_card:
+                panels.render(_qf_audit_card)
+            panels.render(panels.qf_directive_html(_qf_plan))
+            try:
+                panels.render(panels.master_lanes_html(analyses, m, now_ms))
+            except Exception as _e:  # noqa: BLE001
+                _qf_problem = _qf_problem or f"Master trade lanes unavailable: {_e}"
+            panels.render(panels.qf_timeline_html(_qf_plan, now_ms, _h1))
+        # the raw data and audit drawer, closed by default
+        with st.expander("Raw data & audit (odds, record, levels, the lean, the schedule, the bot's messages, JSON payload)",
+                         expanded=False):
+            if _qf_problem:
+                st.caption(_qf_problem)
+            panels.render(panels.qf_gameplan_html(_qf_plan, _qf_live))
+            panels.render(panels.qf_schedule_html(_qf_plan, now_ms))
+            _qf_book = store.book_report() if hasattr(store, "book_report") else None
+            panels.render(panels.qf_book_html(_qf_book, now_ms))
+            _c1, _c2 = st.columns(2, gap="large")
+            with _c1:
+                panels.render(panels.qf_levels_html(_qf_plan))
+            with _c2:
+                _qf_hist = [{**r, "day": r["day_ms"]} for r in store.qf_plans(limit=30)]
+                _bt = next((r["payload"].get("backtest") for r in _qf_today if r["payload"].get("backtest")), None)
+                panels.render(panels.qf_record_html(_bt, _qf_live, _qf_hist))
+            panels.render(panels.qf_status_html(_qf_audit["status"], [r["headline"] for r in _qf_sent], _qf_today))
+            from core import qf_payload
+            st.download_button("Download today's JSON payload (the agent's output schema)",
+                               data=json.dumps(qf_payload.payload(_qf_plan, _qf_audit["status"], _qf_today,
+                                                                  _qf_sent[0]["headline"] if _qf_sent else "",
+                                                                  _qf_live, now_ms, _h1, _qf_book,
+                                                                  week=_qf_week, self_audit=_qf_self), indent=1, ensure_ascii=False),
+                               file_name=f"quant-forecast-{_qf_day}-plan{_qf_plan['version']}.json",
+                               mime="application/json", key="qf_payload_dl")
+            st.caption("Alerts (Discord): the daily plan at 00:00 UTC (05:00 PKT) with the trade figures and the "
+                       "timeline; TIER 1 CAUTION when a 15-minute candle moves 2x its usual size against the plan or "
+                       "buyer/seller flow flips against it; TIER 2 MODEL HELD when half of a shock is taken back within "
+                       "the hour; TIER 3 INVALIDATED when the whole-day level is decisively breached (a 4-hour close, "
+                       "two hourly closes in a row, one violent hourly close, or a firm hourly close with the order flow "
+                       "behind it), with Scenario B; LOCKOUT MODE after the second failed plan. The target widens once "
+                       "when open interest or taker flow shows more force than the simulation gave it. The AI writes "
+                       "the words once per plan and never sets a number.")
+
+# ---------- phone footer: the feed list, which lives in the folded-away sidebar on a desktop ----------
+with st.container(key="ti_mobile_foot"):
+    panels.render(_data_status_html(m))
+    st.caption("The ledger persists in SQLite; on Streamlit Cloud it resets on reboot.")
