@@ -11,6 +11,7 @@ LONG, SHORT, NONE = "LONG", "SHORT", "NONE"
 class PreemptiveSignal:
     available: bool = True
     defcon_1: bool = False
+    watch_alert: bool = False
     direction: str = NONE          # "LONG" | "SHORT" | "NONE"
     pull_velocity: float = 0.0     # 0.0 to 100.0
     structural_failure_probability: float | None = None  # 0.0 to 1.0
@@ -29,6 +30,7 @@ class GravityRead:
     failure_prob: float     # 0.0 to 100.0
     compression_score: float  # 0.0 to 100.0
     defcon_1: bool
+    watch_alert: bool
     target_zone: tuple[float, float] | None
     invalidation: float | None
     reason: str
@@ -90,7 +92,6 @@ def evaluate(
     fund = _safe_float(funding_rate) or 0.0
     abs_drop = max(0.0, min(1.0, _safe_float(absorption_drop) or 0.0))
 
-    # 1. Range & ATR compression before breakout/breakdown candle close
     compression = 0.0
     if frame is not None and not getattr(frame, "empty", True) and len(frame) >= 6:
         recent = frame.tail(min(len(frame), 12))
@@ -102,7 +103,6 @@ def evaluate(
             if atr_val and atr_val > 0 and (atr_val / px) * 100.0 < 0.50:
                 compression = min(100.0, compression + 15.0)
 
-    # 2. Crowded leverage / absorption exhaustion bias
     leverage_heat = min(100.0, abs(oi_pct) * 9.0 + abs(fund) * 55_000.0)
     side = "NEUTRAL"
     if fund > 0.00015 or (absorption_side or "").upper() in ("BID", "BUY", "LONG_TRAP"):
@@ -110,7 +110,6 @@ def evaluate(
     elif fund < -0.0001 or (absorption_side or "").upper() in ("ASK", "SELL", "SHORT_TRAP"):
         side = "LONG"
 
-    # 3. Liquidation pool or unmitigated FVG magnet zone
     target_zone: tuple[float, float] | None = None
     invalidation: float | None = None
     liq_dict = liq_levels or {}
@@ -144,12 +143,16 @@ def evaluate(
         1,
     )
 
-    # Preemptive trigger before lagging candle-close confirmation
     defcon_1 = bool(
         side in ("LONG", "SHORT")
         and compression >= 50.0
         and failure_prob >= 58.0
         and pull_velocity >= 52.0
+    )
+    watch_alert = bool(
+        side in ("LONG", "SHORT")
+        and not defcon_1
+        and (compression >= 40.0 or pull_velocity >= 42.0 or failure_prob >= 45.0)
     )
 
     if side == "NEUTRAL":
@@ -158,6 +161,11 @@ def evaluate(
         reason = (
             f"PREEMPTIVE DEFCON-1 ({side}): {compression:.0f}/100 coil with {failure_prob:.0f}% "
             f"failure risk and {pull_velocity:.0f} magnet velocity ahead of {bar_minutes}m close."
+        )
+    elif watch_alert:
+        reason = (
+            f"PREEMPTIVE WATCH ({side}): building {compression:.0f}/100 compression, "
+            f"{pull_velocity:.0f} magnet velocity, and {failure_prob:.0f}% sweep risk on {bar_minutes}m window."
         )
     else:
         reason = (
@@ -171,6 +179,7 @@ def evaluate(
         failure_prob=failure_prob,
         compression_score=round(compression, 1),
         defcon_1=defcon_1,
+        watch_alert=watch_alert,
         target_zone=target_zone,
         invalidation=invalidation,
         reason=reason,
@@ -187,6 +196,7 @@ def to_preemptive_signal(
     return PreemptiveSignal(
         available=True,
         defcon_1=read.defcon_1,
+        watch_alert=read.watch_alert,
         direction=read.direction if read.direction in (LONG, SHORT) else NONE,
         pull_velocity=read.pull_velocity,
         structural_failure_probability=round(read.failure_prob / 100.0, 4),
