@@ -14,7 +14,6 @@ if str(ROOT) not in sys.path:
 import streamlit as st  # noqa: E402
 import streamlit.components.v1 as components  # noqa: E402
 
-from core.config import CATEGORIES, CATEGORY_LABELS, CATEGORY_TIMEFRAMES  # noqa: E402
 from core.data import fetch_all  # noqa: E402
 from core.indicators import category as cat_ind  # noqa: E402
 from core.indicators import desk_derivs  # noqa: E402
@@ -28,6 +27,31 @@ def _opt_import(module_path: str):
     except Exception:  # noqa: BLE001
         return None
 
+
+_cfg = _opt_import("core.config")
+_DEFAULT_CATEGORIES = ("live", "intraday", "weekly", "monthly")
+_DEFAULT_LABELS = {
+    "live": "Live Recon",
+    "intraday": "Intraday",
+    "weekly": "Weekly",
+    "monthly": "Monthly",
+}
+_DEFAULT_TIMEFRAMES = {
+    "live": ("1h", "4h"),
+    "intraday": ("4h", "1d"),
+    "weekly": ("1d", "1w"),
+    "monthly": ("1w", "1M"),
+}
+
+CATEGORIES = tuple(getattr(_cfg, "CATEGORIES", None) or _DEFAULT_CATEGORIES)
+_raw_labels = getattr(_cfg, "CATEGORY_LABELS", None)
+CATEGORY_LABELS = dict(_raw_labels) if isinstance(_raw_labels, dict) and _raw_labels else dict(_DEFAULT_LABELS)
+_raw_tfs = getattr(_cfg, "CATEGORY_TIMEFRAMES", None)
+CATEGORY_TIMEFRAMES = dict(_raw_tfs) if isinstance(_raw_tfs, dict) and _raw_tfs else dict(_DEFAULT_TIMEFRAMES)
+
+for _k in CATEGORIES:
+    CATEGORY_LABELS.setdefault(_k, _k.replace("_", " ").title())
+    CATEGORY_TIMEFRAMES.setdefault(_k, ("1h", "4h"))
 
 accuracy = _opt_import("core.accuracy")
 qf_alerts = _opt_import("core.qf_alerts")
