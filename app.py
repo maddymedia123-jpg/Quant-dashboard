@@ -59,6 +59,7 @@ for _k in CATEGORIES:
     CATEGORY_TIMEFRAMES.setdefault(_k, ("1h", "4h"))
 
 core_data = _opt_import("core.data")
+core_pipeline = _opt_import("core.pipeline")
 accuracy = _opt_import("core.accuracy")
 qf_alerts = _opt_import("core.qf_alerts")
 quant_forecast = _opt_import("core.quant_forecast")
@@ -174,6 +175,8 @@ def _candidate_modules():
                 m = _opt_import(mod_name)
                 if m is not None:
                     mods.append(m)
+    if core_pipeline is not None:
+        mods.append(core_pipeline)
     return mods
 
 
@@ -185,6 +188,8 @@ def _resolve_snapshot_loader():
         "get_snapshot",
         "build_snapshot",
         "collect_snapshot",
+        "gather_snapshot",
+        "fetch_market_snapshot",
         "fetch",
         "load_all",
         "collect",
@@ -198,8 +203,8 @@ def _resolve_snapshot_loader():
                 return fn
     for mod in mods:
         for name, obj in inspect.getmembers(mod, callable):
-            if not name.startswith("_") and name.startswith(("fetch", "load", "get", "collect", "build")):
-                if "snapshot" in name or "market" in name or "all" in name or "data" in name:
+            if not name.startswith("_") and name.startswith(("fetch", "load", "get", "collect", "build", "gather")):
+                if "snapshot" in name or "market" in name or "all" in name:
                     return obj
     return None
 
@@ -252,32 +257,49 @@ def _fallback_snapshot(bucket_ms: int):
     ), ["Using fallback snapshot: no snapshot loader discovered in core.data"]
 
 
+def _invoke_loader_smart(fn, bucket_ms: int):
+    sig = inspect.signature(fn)
+    params = sig.parameters
+    kwargs = {}
+
+    if "now_ms" in params:
+        kwargs["now_ms"] = bucket_ms
+    elif "ts_ms" in params:
+        kwargs["ts_ms"] = bucket_ms
+    elif "timestamp_ms" in params:
+        kwargs["timestamp_ms"] = bucket_ms
+
+    for p in params.values():
+        if p.name in kwargs:
+            continue
+        if p.default is not inspect.Parameter.empty:
+            continue
+        if p.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+            continue
+        pname = p.name.lower()
+        ann = str(p.annotation).lower() if p.annotation is not inspect.Parameter.empty else ""
+        if "dict" in ann or "mapping" in ann or any(k in pname for k in ("cfg", "config", "settings", "opts", "options", "params", "secrets", "env")):
+            kwargs[p.name] = {}
+        elif "int" in ann or "ms" in pname or "time" in pname:
+            kwargs[p.name] = bucket_ms
+        elif "str" in ann or "symbol" in pname:
+            kwargs[p.name] = "BTC/USDT"
+        elif "bool" in ann:
+            kwargs[p.name] = False
+
+    return fn(**kwargs)
+
+
 def _call_snapshot_loader(bucket_ms: int):
     if _SNAPSHOT_LOADER is None:
         return _fallback_snapshot(bucket_ms)
     try:
-        sig = inspect.signature(_SNAPSHOT_LOADER)
-        params = sig.parameters
-        if "now_ms" in params:
-            res = _SNAPSHOT_LOADER(now_ms=bucket_ms)
-        else:
-            pos_params = [
-                p for p in params.values()
-                if p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
-            ]
-            req_pos = [p for p in pos_params if p.default is inspect.Parameter.empty]
-            if len(req_pos) >= 1 or len(pos_params) >= 1:
-                res = _SNAPSHOT_LOADER(bucket_ms)
-            else:
-                res = _SNAPSHOT_LOADER()
-    except (TypeError, ValueError):
+        res = _invoke_loader_smart(_SNAPSHOT_LOADER, bucket_ms)
+    except Exception:  # noqa: BLE001
         try:
+            res = _SNAPSHOT_LOADER()
+        except Exception:  # noqa: BLE001
             res = _SNAPSHOT_LOADER(now_ms=bucket_ms)
-        except TypeError:
-            try:
-                res = _SNAPSHOT_LOADER(bucket_ms)
-            except TypeError:
-                res = _SNAPSHOT_LOADER()
 
     if inspect.isawaitable(res):
         res = _run_coro_sync(res)
@@ -323,32 +345,94 @@ def _snapshot(force: bool = False) -> tuple:
     return _load_snapshot(bucket)
 
 
+def _resolve_category_analyzer():
+    for name in (
+        "analyze",
+        "analyze_category",
+        "build_category",
+        "run_category",
+        "compute_category",
+        "evaluate_category",
+        "compute",
+        "evaluate",
+        "run",
+        "build",
+    ):
+        fn = getattr(cat_ind, name, None)
+        if callable(fn):
+            return fn
+    for name, obj in inspect.getmembers(cat_ind, callable):
+        if name.startswith("_"):
+            continue
+        if getattr(obj, "__module__", "") != getattr(cat_ind, "__name__", ""):
+            continue
+        try:
+            params = [
+                p for p in inspect.signature(obj).parameters.values()
+                if p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+            ]
+            if len(params) >= 2:
+                return obj
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+_CAT_ANALYZER = _resolve_category_analyzer()
+
+
 def _compute_analyses(m) -> dict:
     out = {}
+    if _CAT_ANALYZER is None:
+        log.warning("No analyzer callable found in core.indicators.category")
+        return {k: None for k in CATEGORIES}
     for key in CATEGORIES:
         try:
-            out[key] = cat_ind.analyze(key, m)
+            out[key] = _CAT_ANALYZER(key, m)
+        except TypeError:
+            try:
+                out[key] = _CAT_ANALYZER(m, key)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("analysis failed for %s: %s", key, exc)
+                out[key] = None
         except Exception as exc:  # noqa: BLE001
             log.warning("analysis failed for %s: %s", key, exc)
             out[key] = None
     return out
 
 
+def _call_with_optional_store(fn, *args):
+    try:
+        params = inspect.signature(fn).parameters
+        if "store" in params and store is not None:
+            return fn(*args, store=store)
+        req = [
+            p for p in params.values()
+            if p.default is inspect.Parameter.empty
+            and p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+        ]
+        if len(req) == len(args) + 1 and store is not None:
+            return fn(*args, store)
+    except (TypeError, ValueError):
+        pass
+    return fn(*args)
+
+
 def _sync_accuracy(m, analyses: dict, now_ms: int) -> dict:
+    empty = {"total_scored": 0, "open_calls": 0, "by_category": {},
+             "by_classification_24h": {}, "by_classification_7d": {}, "recent_calls": []}
     if accuracy is None:
-        return {"total_scored": 0, "open_calls": 0, "by_category": {},
-                "by_classification_24h": {}, "by_classification_7d": {}, "recent_calls": []}
+        return empty
     try:
         if hasattr(accuracy, "record_calls"):
-            accuracy.record_calls(m, analyses, now_ms)
+            _call_with_optional_store(accuracy.record_calls, m, analyses, now_ms)
         if hasattr(accuracy, "score_due"):
-            accuracy.score_due(m, now_ms)
+            _call_with_optional_store(accuracy.score_due, m, now_ms)
         if hasattr(accuracy, "summary"):
-            return accuracy.summary()
+            return _call_with_optional_store(accuracy.summary)
     except Exception as exc:  # noqa: BLE001
         log.warning("accuracy ledger failed: %s", exc)
-    return {"total_scored": 0, "open_calls": 0, "by_category": {},
-            "by_classification_24h": {}, "by_classification_7d": {}, "recent_calls": []}
+    return empty
 
 
 def _llm_config_from_env():
