@@ -17,13 +17,13 @@ class Category:
 
 # The master framework's desks. Each charts one candle size below the candle it is anchored to, and
 # forecasts that many chart candles ahead, so the forecast always spans exactly the anchored window:
-#   Live Recon  - 1h chart, 4 x 1h  = the 4-hour candle it is pinned to
-#   Intraday    - 4h chart, 6 x 4h  = the daily candle
-#   Weekly      - 1D chart, 7 x 1D  = the weekly candle (Mon 00:00 UTC to Sunday close)
-#   Monthly     - 1W chart, 4 x 1W  = the monthly candle
+#   Live Recon  - 1h chart, 4 x 1h   = the 4-hour candle it is pinned to
+#   Intraday    - 12h chart, 2 x 12h = the daily candle (24h horizon)
+#   Weekly      - 1D chart, 7 x 1D   = the weekly candle (Mon 00:00 UTC to Sunday close)
+#   Monthly     - 1W chart, 4 x 1W   = the monthly candle
 CATEGORIES: dict[str, Category] = {
     "live": Category("live", "Live Recon", "1h", "4h", 4, "next 4h"),
-    "intraday": Category("intraday", "Intraday", "4h", "1d", 6, "next 24h"),
+    "intraday": Category("intraday", "Intraday", "12h", "1d", 2, "next 24h"),
     "weekly": Category("weekly", "Weekly", "1d", "1w", 7, "next 7 days"),
     "monthly": Category("monthly", "Monthly", "1w", "1M", 4, "next month"),
 }
@@ -32,8 +32,8 @@ CATEGORIES: dict[str, Category] = {
 # coarser view a switch away. The call, the forecast, the summary and every read stay on the default;
 # only the candles drawn, and the overlays read on them, change (core.indicators.category.view_analysis).
 # Live Recon draws the 4-hour chart by default, as his table reads ("Main Chart View: 4-Hour Chart"); the
-# 1h, which its call is made on, is the other view. The other desks default to their own candle.
-CHART_VIEWS: dict[str, tuple[str, str]] = {"live": ("4h", "1h"), "intraday": ("4h", "1d"),
+# 1h, which its call is made on, is the other view. Intraday defaults to 12h with 1d a switch away.
+CHART_VIEWS: dict[str, tuple[str, str]] = {"live": ("4h", "1h"), "intraday": ("12h", "1d"),
                                           "weekly": ("1d", "3d"), "monthly": ("1w", "2w")}
 # Every candle size the snapshot can carry, shortest first: the next one up is a view's context.
 TF_LADDER: tuple[str, ...] = ("15m", "1h", "4h", "12h", "1d", "3d", "0.5w", "1w", "2w", "1M", "3M")
@@ -93,7 +93,7 @@ DESKS = {
     "live_recon": {"label": "LIVE RECON", "primary_anchor": "4h", "monitor_tf": "1h",
                    "cascade_order": ["15m", "1h", "4h"], "horizon_label": "Next 4 Hours", "window_hours": 4},
     "live": {"label": "LIVE RECON", "horizon_label": "Next 4 Hours", "window_hours": 4},
-    "intraday": {"label": "INTRADAY", "primary_anchor": "1d", "monitor_tf": "4h",
+    "intraday": {"label": "INTRADAY", "primary_anchor": "1d", "monitor_tf": "12h",
                  "cascade_order": ["4h", "12h", "24h", "1d"], "horizon_label": "Next 24 Hours",
                  "window_hours": 24, "master_tier": "INTRADAY / SWING MASTER",
                  "move_context": "BTC price move: $1,000-$3,000+"},
