@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib
+import inspect
 import logging
 import sys
 import time
@@ -14,7 +15,6 @@ if str(ROOT) not in sys.path:
 import streamlit as st  # noqa: E402
 import streamlit.components.v1 as components  # noqa: E402
 
-from core.data import fetch_all  # noqa: E402
 from core.indicators import category as cat_ind  # noqa: E402
 from core.indicators import desk_derivs  # noqa: E402
 from core.trades import fmt_when  # noqa: E402
@@ -53,6 +53,7 @@ for _k in CATEGORIES:
     CATEGORY_LABELS.setdefault(_k, _k.replace("_", " ").title())
     CATEGORY_TIMEFRAMES.setdefault(_k, ("1h", "4h"))
 
+core_data = _opt_import("core.data")
 accuracy = _opt_import("core.accuracy")
 qf_alerts = _opt_import("core.qf_alerts")
 quant_forecast = _opt_import("core.quant_forecast")
@@ -85,6 +86,66 @@ NAV_BY_LABEL = {label: (kind, key) for (kind, key, label, _sub) in NAV}
 DESK_INDEX = {key: i + 1 for i, key in enumerate(CATEGORIES)}
 
 
+def _resolve_snapshot_loader():
+    if core_data is None:
+        return None
+    preferred = (
+        "fetch_all",
+        "fetch_snapshot",
+        "load_snapshot",
+        "get_snapshot",
+        "fetch",
+        "load_all",
+        "collect",
+        "snapshot",
+    )
+    for name in preferred:
+        fn = getattr(core_data, name, None)
+        if callable(fn):
+            return fn
+    for name, obj in inspect.getmembers(core_data, callable):
+        if not name.startswith("_") and name.startswith(("fetch", "load", "get", "collect")):
+            return obj
+    return None
+
+
+_SNAPSHOT_LOADER = _resolve_snapshot_loader()
+
+
+def _call_snapshot_loader(bucket_ms: int):
+    if _SNAPSHOT_LOADER is None:
+        raise ImportError("No snapshot loader function found in core.data")
+    try:
+        sig = inspect.signature(_SNAPSHOT_LOADER)
+        params = sig.parameters
+        if "now_ms" in params:
+            res = _SNAPSHOT_LOADER(now_ms=bucket_ms)
+        else:
+            pos_params = [
+                p for p in params.values()
+                if p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+            ]
+            req_pos = [p for p in pos_params if p.default is inspect.Parameter.empty]
+            if len(req_pos) >= 1:
+                res = _SNAPSHOT_LOADER(bucket_ms)
+            elif len(pos_params) >= 1:
+                res = _SNAPSHOT_LOADER(bucket_ms)
+            else:
+                res = _SNAPSHOT_LOADER()
+    except (TypeError, ValueError):
+        try:
+            res = _SNAPSHOT_LOADER(now_ms=bucket_ms)
+        except TypeError:
+            try:
+                res = _SNAPSHOT_LOADER(bucket_ms)
+            except TypeError:
+                res = _SNAPSHOT_LOADER()
+
+    if isinstance(res, tuple) and len(res) == 2 and hasattr(res[0], "spot"):
+        return res
+    return res, []
+
+
 def _inject_css(dark: bool, signal: bool) -> None:
     st.markdown(theme.css(dark, signal), unsafe_allow_html=True)
 
@@ -95,7 +156,7 @@ def _now_ms() -> int:
 
 @st.cache_data(ttl=60, show_spinner=False)
 def _load_snapshot(bucket_ms: int):
-    return fetch_all(now_ms=bucket_ms)
+    return _call_snapshot_loader(bucket_ms)
 
 
 def _snapshot(force: bool = False) -> tuple:
