@@ -415,37 +415,48 @@ _CAT_ANALYZER = _resolve_category_analyzer()
 
 def _invoke_category_analyzer(fn, key: str, m, now_ms: int):
     sig = inspect.signature(fn)
-    params = sig.parameters
-    pos_args = []
-    kw_args = {}
+    params = list(sig.parameters.values())
+    pos_params = [
+        p for p in params
+        if p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+    ]
 
-    for p in params.values():
-        if p.kind == inspect.Parameter.VAR_POSITIONAL:
-            continue
-        if p.kind == inspect.Parameter.VAR_KEYWORD:
-            continue
-        pname = p.name.lower()
-        if pname in ("category", "cat", "key", "desk", "horizon"):
-            val = key
-        elif pname in ("m", "snap", "snapshot", "market", "data"):
-            val = m
-        elif pname in ("now_ms", "ts_ms", "timestamp_ms", "now"):
-            val = now_ms
-        elif pname in ("store", "db"):
-            val = store
-        elif pname in ("cfg", "config", "settings", "opts", "options", "params"):
-            val = {}
-        elif p.default is not inspect.Parameter.empty:
-            continue
-        else:
-            val = key if len(pos_args) == 0 else (m if len(pos_args) == 1 else now_ms)
+    # Detect explicit parameter order from names/annotations
+    first_name = pos_params[0].name.lower() if len(pos_params) >= 1 else ""
+    first_ann = str(pos_params[0].annotation).lower() if len(pos_params) >= 1 and pos_params[0].annotation is not inspect.Parameter.empty else ""
+    snap_first = (
+        first_name in ("m", "snap", "snapshot", "market", "data")
+        or "snapshot" in first_ann
+    )
 
-        if p.kind == inspect.Parameter.KEYWORD_ONLY:
-            kw_args[p.name] = val
-        else:
-            pos_args.append(val)
+    # Try exact signature-matched call first, then (m, key) before (key, m)
+    attempts = []
+    if snap_first:
+        if len(pos_params) >= 3:
+            attempts.append(lambda: fn(m, key, now_ms))
+        attempts.append(lambda: fn(m, key))
+        attempts.append(lambda: fn(key, m, now_ms))
+        attempts.append(lambda: fn(key, m))
+    else:
+        if len(pos_params) >= 3:
+            attempts.append(lambda: fn(m, key, now_ms))
+        attempts.append(lambda: fn(m, key))
+        if len(pos_params) >= 3:
+            attempts.append(lambda: fn(key, m, now_ms))
+        attempts.append(lambda: fn(key, m))
 
-    return fn(*pos_args, **kw_args)
+    last_exc = None
+    for call in attempts:
+        try:
+            res = call()
+            if res is not None:
+                return res
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            continue
+    if last_exc is not None:
+        raise last_exc
+    return None
 
 
 def _compute_analyses(m, now_ms: int) -> dict:
@@ -456,45 +467,10 @@ def _compute_analyses(m, now_ms: int) -> dict:
     for key in CATEGORIES:
         try:
             out[key] = _invoke_category_analyzer(_CAT_ANALYZER, key, m, now_ms)
-        except TypeError:
-            for fallback_call in (
-                lambda: _CAT_ANALYZER(key, m, now_ms),
-                lambda: _CAT_ANALYZER(key, m, {}),
-                lambda: _CAT_ANALYZER(key, m),
-                lambda: _CAT_ANALYZER(m, key),
-            ):
-                try:
-                    out[key] = fallback_call()
-                    break
-                except TypeError:
-                    continue
-                except Exception as exc:  # noqa: BLE001
-                    log.warning("analysis failed for %s: %s", key, exc)
-                    out[key] = None
-                    break
-            else:
-                out[key] = None
         except Exception as exc:  # noqa: BLE001
             log.warning("analysis failed for %s: %s", key, exc)
             out[key] = None
     return out
-
-
-def _call_with_optional_store(fn, *args):
-    try:
-        params = inspect.signature(fn).parameters
-        if "store" in params and store is not None:
-            return fn(*args, store=store)
-        req = [
-            p for p in params.values()
-            if p.default is inspect.Parameter.empty
-            and p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
-        ]
-        if len(req) == len(args) + 1 and store is not None:
-            return fn(*args, store)
-    except (TypeError, ValueError):
-        pass
-    return fn(*args)
 
 
 def _sync_accuracy(m, analyses: dict, now_ms: int) -> dict:
@@ -504,11 +480,20 @@ def _sync_accuracy(m, analyses: dict, now_ms: int) -> dict:
         return empty
     try:
         if hasattr(accuracy, "record_calls"):
-            _call_with_optional_store(accuracy.record_calls, m, analyses, now_ms)
+            try:
+                accuracy.record_calls(m, analyses, now_ms, store)
+            except TypeError:
+                accuracy.record_calls(m, analyses, now_ms)
         if hasattr(accuracy, "score_due"):
-            _call_with_optional_store(accuracy.score_due, m, now_ms)
+            try:
+                accuracy.score_due(m, now_ms, store)
+            except TypeError:
+                accuracy.score_due(m, now_ms)
         if hasattr(accuracy, "summary"):
-            return _call_with_optional_store(accuracy.summary)
+            try:
+                return accuracy.summary(store)
+            except TypeError:
+                return accuracy.summary()
     except Exception as exc:  # noqa: BLE001
         log.warning("accuracy ledger failed: %s", exc)
     return empty
