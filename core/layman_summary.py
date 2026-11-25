@@ -308,6 +308,21 @@ def lines(a, derivs: dict | None, fear_greed: int | None, now_ms: int, evidence=
     else:
         expect = "no setup until this desk has a level to act from"
         directive = "NO SETUP. No level to trade from on this desk."
+
+    conflict_note = ""
+    if g.opposing:
+        conflict_note = (
+            " Conflicting pressure: "
+            + "; ".join(f"{x.label} ({x.note})" for x in g.opposing)
+            + "."
+        )
+    if g.bar is not None:
+        conflict_note += f" Path blocker: {g.bar.note}."
+    if conflict_note:
+        expect = (expect + conflict_note).strip()
+        if g.verdict != "TRADE":
+            directive = (directive + conflict_note).strip()
+
     regime = _regime(ev, now_ms)
     if regime.active:
         from core.trades import fmt_when
