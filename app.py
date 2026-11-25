@@ -377,6 +377,34 @@ def _snapshot(force: bool = False) -> tuple:
     return _load_snapshot(bucket)
 
 
+def _category_spec_for(key: str):
+    tfs = CATEGORY_TIMEFRAMES.get(key, ("1h", "4h"))
+    for mod in (_cfg, cat_ind, recon_profiles):
+        if mod is None:
+            continue
+        for attr in ("CATEGORY_SPECS", "CATEGORY_CONFIGS", "CATEGORIES_BY_KEY", "DESKS", "FOR_CATEGORY"):
+            container = getattr(mod, attr, None)
+            if isinstance(container, dict) and key in container:
+                return container[key]
+        for _n, obj in inspect.getmembers(mod):
+            if hasattr(obj, "chart_tf") and (
+                getattr(obj, "key", None) == key
+                or getattr(obj, "category", None) == key
+                or getattr(obj, "name", None) == key
+                or getattr(obj, "chart_tf", None) == tfs[0]
+            ):
+                return obj
+    return SimpleNamespace(
+        key=key,
+        category=key,
+        name=key,
+        label=CATEGORY_LABELS.get(key, key.title()),
+        chart_tf=tfs[0],
+        ctx_tf=tfs[1],
+        context_tf=tfs[1],
+    )
+
+
 def _resolve_category_analyzer():
     for name in (
         "analyze",
@@ -413,14 +441,16 @@ def _resolve_category_analyzer():
 _CAT_ANALYZER = _resolve_category_analyzer()
 
 
-def _map_param_value(p: inspect.Parameter, key: str, m, now_ms: int):
+def _map_param_value(p: inspect.Parameter, key: str, spec, m, now_ms: int):
     pname = p.name.lower()
     ann = str(p.annotation).lower() if p.annotation is not inspect.Parameter.empty else ""
     frames = getattr(getattr(m, "spot", None), "frames", None) or {}
     tfs = CATEGORY_TIMEFRAMES.get(key, ("1h", "4h"))
 
-    if pname in ("category", "cat", "key", "desk", "horizon"):
+    if pname in ("category_key", "cat_key", "key"):
         return key
+    if pname in ("category", "cat", "desk", "horizon", "spec", "profile"):
+        return spec
     if pname in ("m", "snap", "snapshot", "market", "data") or "snapshot" in ann:
         return m
     if pname in ("frames", "candles", "ohlc", "ohlcv"):
@@ -441,6 +471,7 @@ def _map_param_value(p: inspect.Parameter, key: str, m, now_ms: int):
 
 
 def _invoke_category_analyzer(fn, key: str, m, now_ms: int):
+    spec = _category_spec_for(key)
     sig = inspect.signature(fn)
     pos_args = []
     kw_args = {}
@@ -448,7 +479,7 @@ def _invoke_category_analyzer(fn, key: str, m, now_ms: int):
     for p in sig.parameters.values():
         if p.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
             continue
-        val = _map_param_value(p, key, m, now_ms)
+        val = _map_param_value(p, key, spec, m, now_ms)
         if val is None and p.default is not inspect.Parameter.empty:
             continue
         if p.kind == inspect.Parameter.KEYWORD_ONLY:
@@ -456,10 +487,7 @@ def _invoke_category_analyzer(fn, key: str, m, now_ms: int):
         else:
             pos_args.append(val)
 
-    try:
-        return fn(*pos_args, **kw_args)
-    except TypeError:
-        return fn(key, m)
+    return fn(*pos_args, **kw_args)
 
 
 def _compute_analyses(m, now_ms: int) -> dict:
@@ -483,21 +511,36 @@ def _sync_accuracy(m, analyses: dict, now_ms: int) -> dict:
         return empty
     try:
         if hasattr(accuracy, "record_calls"):
-            try:
-                accuracy.record_calls(m, analyses, now_ms, store)
-            except TypeError:
-                accuracy.record_calls(m, analyses, now_ms)
+            for call in (
+                lambda: accuracy.record_calls(m, analyses, now_ms, store),
+                lambda: accuracy.record_calls(m, analyses, now_ms),
+            ):
+                try:
+                    call()
+                    break
+                except TypeError:
+                    continue
         if hasattr(accuracy, "score_due"):
-            try:
-                accuracy.score_due(m, now_ms, store)
-            except TypeError:
-                accuracy.score_due(m, now_ms)
+            for call in (
+                lambda: accuracy.score_due(m, now_ms, store),
+                lambda: accuracy.score_due(m, now_ms),
+            ):
+                try:
+                    call()
+                    break
+                except TypeError:
+                    continue
         if hasattr(accuracy, "summary"):
-            try:
-                res = accuracy.summary(store)
-            except TypeError:
-                res = accuracy.summary()
-            return res if isinstance(res, dict) else empty
+            for call in (
+                lambda: accuracy.summary(store=store),
+                lambda: accuracy.summary(store),
+                lambda: accuracy.summary(),
+            ):
+                try:
+                    res = call()
+                    return res if isinstance(res, dict) else empty
+                except TypeError:
+                    continue
     except Exception as exc:  # noqa: BLE001
         log.warning("accuracy ledger failed: %s", exc)
     return empty
