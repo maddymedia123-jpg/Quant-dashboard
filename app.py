@@ -413,49 +413,68 @@ def _resolve_category_analyzer():
 _CAT_ANALYZER = _resolve_category_analyzer()
 
 
+def _map_param_value(p: inspect.Parameter, key: str, m, now_ms: int):
+    pname = p.name.lower()
+    ann = str(p.annotation).lower() if p.annotation is not inspect.Parameter.empty else ""
+    frames = getattr(getattr(m, "spot", None), "frames", None) or {}
+    tfs = CATEGORY_TIMEFRAMES.get(key, ("1h", "4h"))
+
+    if pname in ("category", "cat", "key", "desk", "horizon"):
+        return key
+    if pname in ("m", "snap", "snapshot", "market", "data") or "snapshot" in ann:
+        return m
+    if pname in ("frames", "candles", "ohlc", "ohlcv"):
+        return frames
+    if pname in ("primary_tf", "tf", "timeframe", "entry_tf"):
+        return tfs[0]
+    if pname in ("context_tf", "ctx_tf", "higher_tf", "htf"):
+        return tfs[1]
+    if pname in ("tfs", "timeframes"):
+        return tfs
+    if pname in ("now_ms", "ts_ms", "timestamp_ms", "now") or "int" in ann:
+        return now_ms
+    if pname in ("store", "db"):
+        return store
+    if pname in ("cfg", "config", "settings", "opts", "options", "params") or "dict" in ann:
+        return {}
+    return None
+
+
 def _invoke_category_analyzer(fn, key: str, m, now_ms: int):
     sig = inspect.signature(fn)
-    params = list(sig.parameters.values())
-    pos_params = [
-        p for p in params
-        if p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
-    ]
+    pos_args = []
+    kw_args = {}
 
-    # Detect explicit parameter order from names/annotations
-    first_name = pos_params[0].name.lower() if len(pos_params) >= 1 else ""
-    first_ann = str(pos_params[0].annotation).lower() if len(pos_params) >= 1 and pos_params[0].annotation is not inspect.Parameter.empty else ""
-    snap_first = (
-        first_name in ("m", "snap", "snapshot", "market", "data")
-        or "snapshot" in first_ann
-    )
+    for p in sig.parameters.values():
+        if p.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+            continue
+        val = _map_param_value(p, key, m, now_ms)
+        if val is None and p.default is not inspect.Parameter.empty:
+            continue
+        if p.kind == inspect.Parameter.KEYWORD_ONLY:
+            kw_args[p.name] = val
+        else:
+            pos_args.append(val)
 
-    # Try exact signature-matched call first, then (m, key) before (key, m)
-    attempts = []
-    if snap_first:
-        if len(pos_params) >= 3:
-            attempts.append(lambda: fn(m, key, now_ms))
-        attempts.append(lambda: fn(m, key))
-        attempts.append(lambda: fn(key, m, now_ms))
-        attempts.append(lambda: fn(key, m))
-    else:
-        if len(pos_params) >= 3:
-            attempts.append(lambda: fn(m, key, now_ms))
-        attempts.append(lambda: fn(m, key))
-        if len(pos_params) >= 3:
-            attempts.append(lambda: fn(key, m, now_ms))
-        attempts.append(lambda: fn(key, m))
+    try:
+        res = fn(*pos_args, **kw_args)
+        if res is not None:
+            return res
+    except Exception:  # noqa: BLE001
+        pass
 
-    last_exc = None
-    for call in attempts:
+    for call in (
+        lambda: fn(key, m, now_ms),
+        lambda: fn(m, key, now_ms),
+        lambda: fn(key, m),
+        lambda: fn(m, key),
+    ):
         try:
             res = call()
             if res is not None:
                 return res
-        except Exception as exc:  # noqa: BLE001
-            last_exc = exc
+        except Exception:  # noqa: BLE001
             continue
-    if last_exc is not None:
-        raise last_exc
     return None
 
 
