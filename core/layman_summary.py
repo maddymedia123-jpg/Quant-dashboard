@@ -314,9 +314,10 @@ def lines(a, derivs: dict | None, fear_greed: int | None, now_ms: int, evidence=
         directive += (f" Event regime ({regime.title}): wider stop, smaller size, no range trade until "
                       f"{fmt_when(regime.until_ms)}.")
     phase_now = (f"What's happening: BTC is {_money(a.price)}, {lean}"
-                 + (f"; the {kind} at {_money(f.level)} is the zone ({score})" if f.zone else "")
+                 + (f"; preemptive {side} trigger ({entry})" if g.verdict == "DEFCON_1_PREEMPTIVE"
+                    else f"; the {kind} at {_money(f.level)} is the zone ({score})" if f.zone else "")
                  + f". What to expect: {expect}" + ("" if expect.endswith(".") else "."))
-    zone_why = (f"preemptive entry from the live price before a candle-close confirmation"
+    zone_why = (f"preemptive entry ({entry}) from live price ahead of a candle close"
                 if g.verdict == "DEFCON_1_PREEMPTIVE" else
                 f"the nearest {kind} {beyond} price, a quarter of a {TF_WORDS.get(a.chart_tf, a.chart_tf)} swing either side"
                 + ("; backed by " + "; ".join(x.note for x in g.agreeing) if g.agreeing else "; nothing else backs it yet")
