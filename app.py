@@ -1,6 +1,7 @@
 """Streamlit entrypoint for TRAP INTELLIGENCE."""
 from __future__ import annotations
 
+import importlib
 import logging
 import sys
 import time
@@ -13,15 +14,31 @@ if str(ROOT) not in sys.path:
 import streamlit as st  # noqa: E402
 import streamlit.components.v1 as components  # noqa: E402
 
-from core import alert_state, accuracy, audit, history, qf_alerts, quant_forecast, store, traps  # noqa: E402
-from core.agents import handshake, recon_profiles, runner, war_room  # noqa: E402
-from core.agents.types import LLMConfig  # noqa: E402
 from core.config import CATEGORIES, CATEGORY_LABELS, CATEGORY_TIMEFRAMES  # noqa: E402
 from core.data import fetch_all  # noqa: E402
 from core.indicators import category as cat_ind  # noqa: E402
-from core.indicators import desk_derivs, trade_map  # noqa: E402
+from core.indicators import desk_derivs  # noqa: E402
 from core.trades import fmt_when  # noqa: E402
 from ui import charts, panels, theme  # noqa: E402
+
+
+def _opt_import(module_path: str):
+    try:
+        return importlib.import_module(module_path)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+accuracy = _opt_import("core.accuracy")
+qf_alerts = _opt_import("core.qf_alerts")
+quant_forecast = _opt_import("core.quant_forecast")
+store = _opt_import("core.store")
+traps = _opt_import("core.traps")
+recon_profiles = _opt_import("core.agents.recon_profiles")
+runner = _opt_import("core.agents.runner")
+agents_types = _opt_import("core.agents.types")
+LLMConfig = getattr(agents_types, "LLMConfig", None) if agents_types else None
+trade_map = _opt_import("core.indicators.trade_map")
 
 log = logging.getLogger("trap_intelligence")
 
@@ -83,17 +100,25 @@ def _compute_analyses(m) -> dict:
 
 
 def _sync_accuracy(m, analyses: dict, now_ms: int) -> dict:
-    try:
-        accuracy.record_calls(m, analyses, now_ms)
-        accuracy.score_due(m, now_ms)
-        return accuracy.summary()
-    except Exception as exc:  # noqa: BLE001
-        log.warning("accuracy ledger failed: %s", exc)
+    if accuracy is None:
         return {"total_scored": 0, "open_calls": 0, "by_category": {},
                 "by_classification_24h": {}, "by_classification_7d": {}, "recent_calls": []}
+    try:
+        if hasattr(accuracy, "record_calls"):
+            accuracy.record_calls(m, analyses, now_ms)
+        if hasattr(accuracy, "score_due"):
+            accuracy.score_due(m, now_ms)
+        if hasattr(accuracy, "summary"):
+            return accuracy.summary()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("accuracy ledger failed: %s", exc)
+    return {"total_scored": 0, "open_calls": 0, "by_category": {},
+            "by_classification_24h": {}, "by_classification_7d": {}, "recent_calls": []}
 
 
-def _llm_config_from_env() -> LLMConfig | None:
+def _llm_config_from_env():
+    if LLMConfig is None:
+        return None
     import os
     for provider, env_key, default_model in (
         ("openrouter", "OPENROUTER_API_KEY", "deepseek/deepseek-chat-v3-0324:free"),
@@ -178,8 +203,10 @@ def _render_desk(key: str, m, analyses: dict, now_ms: int, dark: bool, signal: b
     if a is None:
         st.warning(f"No analysis available for {CATEGORY_LABELS[key]}.")
         return
-    profile = recon_profiles.FOR_CATEGORY.get(key) or recon_profiles.LIVE
-    panels.render(panels.desk_hero_html(DESK_INDEX[key], profile, a, now_ms))
+    for_cat = getattr(recon_profiles, "FOR_CATEGORY", None) or {}
+    profile = for_cat.get(key) or getattr(recon_profiles, "LIVE", None)
+    if profile is not None:
+        panels.render(panels.desk_hero_html(DESK_INDEX[key], profile, a, now_ms))
     gamma = desk_derivs.gamma_for(key, m)
     panels.render(panels.gamma_bar_html(gamma, getattr(m.spot, "last", None), CATEGORY_LABELS[key]))
 
@@ -210,12 +237,16 @@ def _render_traps(m, analyses: dict, now_ms: int) -> None:
     gamma = desk_derivs.gamma_for(None, m)
     panels.render(panels.gamma_bar_html(gamma, getattr(m.spot, "last", None)))
 
-    rows = traps.all_traps()
+    if traps is None:
+        st.info("TRAP intelligence module not present in this build.")
+        return
+
+    rows = traps.all_traps() if hasattr(traps, "all_traps") else []
     candidates = st.session_state.get("trap_candidates") or []
     swept_ms = st.session_state.get("trap_swept_ms")
     judged = st.session_state.get("trap_judged") or []
     settled = [r for r in rows if r.get("status") != "active"][:12]
-    plan = traps.sweep_plan()
+    plan = traps.sweep_plan() if hasattr(traps, "sweep_plan") else []
 
     if st.button("Sweep timeframes now", use_container_width=False):
         try:
@@ -224,7 +255,7 @@ def _render_traps(m, analyses: dict, now_ms: int) -> None:
             st.session_state["trap_candidates"] = candidates
             st.session_state["trap_swept_ms"] = swept_ms
             st.session_state["trap_judged"] = judged
-            rows = traps.all_traps()
+            rows = traps.all_traps() if hasattr(traps, "all_traps") else rows
             settled = [r for r in rows if r.get("status") != "active"][:12]
         except Exception as exc:  # noqa: BLE001
             st.error(f"Sweep failed: {exc}")
@@ -248,7 +279,8 @@ def _render_trade(m, analyses: dict, now_ms: int) -> None:
     ))
     gamma = desk_derivs.gamma_for(None, m)
     panels.render(panels.gamma_bar_html(gamma, getattr(m.spot, "last", None)))
-    panels.render(panels.master_lanes_html(analyses, m, now_ms))
+    if hasattr(panels, "master_lanes_html"):
+        panels.render(panels.master_lanes_html(analyses, m, now_ms))
 
     st.subheader("Open a position")
     spot_px = float(getattr(m.spot, "last", None) or 60000.0)
@@ -275,25 +307,28 @@ def _render_trade(m, analyses: dict, now_ms: int) -> None:
     )
 
     if st.button("Open and track this trade", type="primary"):
-        try:
-            tm = trade_map.build_trade_map(
-                m=m,
-                analyses=analyses,
-                category=horizon_key,
-                side=side,
-                entry=float(entry),
-                stop=float(stop_in) if stop_in > 0 else None,
-                leverage=5.0,
-            )
-            panels.render(panels.trade_result_html(tm))
-            st.session_state["last_trade_map"] = tm
-        except Exception as exc:  # noqa: BLE001
-            st.error(f"Could not evaluate trade: {exc}")
+        if trade_map is None or not hasattr(trade_map, "build_trade_map"):
+            st.warning("Trade map builder not available in this build.")
+        else:
+            try:
+                tm = trade_map.build_trade_map(
+                    m=m,
+                    analyses=analyses,
+                    category=horizon_key,
+                    side=side,
+                    entry=float(entry),
+                    stop=float(stop_in) if stop_in > 0 else None,
+                    leverage=5.0,
+                )
+                panels.render(panels.trade_result_html(tm))
+                st.session_state["last_trade_map"] = tm
+            except Exception as exc:  # noqa: BLE001
+                st.error(f"Could not evaluate trade: {exc}")
 
     if "last_trade_map" in st.session_state:
         panels.render(panels.trade_result_html(st.session_state["last_trade_map"]))
 
-    open_trades = store.open_trades()
+    open_trades = store.open_trades() if (store is not None and hasattr(store, "open_trades")) else []
     if not open_trades:
         st.caption("No position is being tracked. Open one above and it stays pinned here.")
     else:
@@ -306,11 +341,14 @@ def _render_director(m, analyses: dict, now_ms: int) -> None:
         7, "Director Report",
         "Multi-agent synthesis across technicals, order flow, derivatives, and macro."
     ))
-    report = st.session_state.get("latest_report") or store.latest_report()
+    latest_fn = getattr(store, "latest_report", None) if store is not None else None
+    report = st.session_state.get("latest_report") or (latest_fn() if callable(latest_fn) else None)
     if st.session_state.pop("run_analysis_requested", False):
         cfg = _llm_config_from_env()
         if cfg is None:
             st.warning("No LLM API key configured in environment (OPENROUTER_API_KEY, GROQ_API_KEY, or GEMINI_API_KEY).")
+        elif runner is None or not hasattr(runner, "run_15_agent"):
+            st.warning("Multi-agent runner not available in this build.")
         else:
             with st.spinner("Running multi-agent analysis..."):
                 try:
@@ -352,6 +390,9 @@ def _render_qf(m, analyses: dict, now_ms: int) -> None:
         9, "Quant Forecast",
         "24-hour quantitative plan, volatility windows, timeline, and live self-audit."
     ))
+    if quant_forecast is None or qf_alerts is None:
+        st.info("Quant forecast module not present in this build.")
+        return
     try:
         plan = quant_forecast.ensure_plan(m, analyses, now_ms)
         live = quant_forecast.live_state(plan, m, now_ms)
