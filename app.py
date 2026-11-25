@@ -908,7 +908,7 @@ if screen == "trap":
         try:
             panels.render(panels.trap_settled_html(settled, now_ms, labels))
         except Exception as e:  # noqa: BLE001
-            st.warning(f"Settled traps could not be drawn: {type(e).__name__}: {e}")
+            st.warning(f"Settled traps could not be drawn: {e}")
     st.caption("A trap is declared when its five sub-agents score 60 or more, the Head calls it engineered, and "
                "the category desk does not read the move as an authentic break. It is invalidated when the "
                "break proves real and played out when price returns inside value. Nothing expires on a clock.")
@@ -1039,6 +1039,11 @@ if screen == "trade":
         "Enter a position and it is evaluated, pinned and tracked until you kill it. Levels are computed in "
         "code first; ten sub-agents, the four category heads and the TRAP head are consulted second. Cards "
         "live in the database and survive a refresh and a redeploy."))
+
+    try:
+        panels.render(panels.master_lanes_html(analyses, m, now_ms))
+    except Exception as e:  # noqa: BLE001
+        st.warning(f"Master trade lanes unavailable: {e}")
 
     spot = _trade_price()
     with st.form("new_trade", clear_on_submit=False, border=False):
@@ -1431,6 +1436,10 @@ if screen == "qf":
             if _qf_audit_card:
                 panels.render(_qf_audit_card)
             panels.render(panels.qf_directive_html(_qf_plan))
+            try:
+                panels.render(panels.master_lanes_html(analyses, m, now_ms))
+            except Exception as _e:  # noqa: BLE001
+                _qf_problem = _qf_problem or f"Master trade lanes unavailable: {_e}"
             panels.render(panels.qf_timeline_html(_qf_plan, now_ms, _h1))
         # the raw data and audit drawer, closed by default
         with st.expander("Raw data & audit (odds, record, levels, the lean, the schedule, the bot's messages, JSON payload)",
