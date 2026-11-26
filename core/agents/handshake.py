@@ -155,4 +155,4 @@ def apply(res, hs: Handshake):
 
 
 def notify(store, category: str, bias: str, now_ms: int, price: float | None = None) -> list[str]:
-    """The other half of the handshake
+    ""The other half of the handshake
