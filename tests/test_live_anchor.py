@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timezone
 
 import pytest
@@ -201,3 +202,37 @@ def test_publish_pins_each_category_to_its_own_candle(store):
     later = la.publish(store, result(0.2, 0.9, ms=tuesday + 3_600_000), tuesday + 3_600_000, profile=weekly)
     assert not later.anchored and [n.kind for n in later.appended] == [la.BIAS_FLIP]
     assert len(store.side_notes(monday, category="weekly")) == 1 and store.side_notes(monday) == []
+
+
+@pytest.mark.parametrize("category", ("live", "intraday", "weekly", "monthly"))
+def test_published_head_brief_survives_anchor_reload_for_each_category(tmp_path, category):
+    from core.agents.live_recon import HeadBrief
+    from core.agents.recon_profiles import PROFILES
+
+    profile = PROFILES[category]
+    now_ms = int(datetime(2026, 9, 22, 10, 0, tzinfo=timezone.utc).timestamp() * 1000)
+    recon = result(0.8, 0.3, ms=now_ms)
+    recon.head_brief = HeadBrief(
+        horizon=profile.horizon,
+        window_open_utc="2026-09-22 10:00 UTC",
+        window_close_utc="2026-09-22 14:00 UTC",
+        spot_price=78_000.0,
+        stance="LONG BIAS",
+        confluence_thesis="A saved thesis.",
+        buy_zone=(77_000.0, 78_000.0),
+        sell_zone=(79_000.0, 80_000.0),
+        target_price=80_000.0,
+        invalidation_level=76_000.0,
+        invalidation_reason="Below support.",
+        inflection_window="Next hourly close.",
+    )
+    path = tmp_path / f"{category}.sqlite"
+    first = Store(path)
+    published = la.publish(first, recon, now_ms, profile=profile)
+    first.close()
+
+    reopened = Store(path)
+    payload = reopened.get_live_anchor(published.window_open_ms, category=category)["payload"]
+    reopened.close()
+
+    assert payload["head_brief"] == json.loads(json.dumps(recon.head_brief.to_dict()))

@@ -115,6 +115,31 @@ def test_conviction_never_exceeds_one():
     assert hsk.apply(res, hs).confidence <= 1.0
 
 
+def test_handshake_updates_the_head_brief_thesis_with_final_confidence():
+    from core.agents.live_recon import HeadBrief
+
+    res = result(0.9, 0.2)
+    res.head_brief = HeadBrief(
+        horizon="24 hours",
+        window_open_utc="",
+        window_close_utc="",
+        spot_price=80_000.0,
+        stance="LONG BIAS",
+        confluence_thesis=f"calibrated confidence {res.confidence:.0%}.",
+        buy_zone=None,
+        sell_zone=None,
+        target_price=None,
+        invalidation_level=None,
+        invalidation_reason="",
+        inflection_window="",
+    )
+    hs = hsk.Handshake("intraday", res.bias, (), 0.8, ())
+
+    done = hsk.apply(res, hs)
+
+    assert done.head_brief.confluence_thesis == f"post-handshake confidence {done.confidence:.0%}."
+
+
 def test_the_pinned_summary_carries_the_exchange(store):
     anchor(store, "weekly", "BULL")
     res = hsk.apply(result(0.9, 0.2), hsk.consult(store, "intraday", "BULL", NOW))

@@ -72,6 +72,7 @@ def anchor_payload(res: LiveReconResult, price: float | None = None) -> dict:
         "notes": list(res.notes),
         "degraded": res.degraded,
         "price": price,
+        "head_brief": res.head_brief.to_dict() if res.head_brief is not None else None,
         "domains": {
             side.side: {d.key: round(d.points, 2) for d in side.domains}
             for side in (res.bull, res.bear)

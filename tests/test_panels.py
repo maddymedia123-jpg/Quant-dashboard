@@ -260,6 +260,39 @@ def test_anchored_summary_panel_states_how_long_it_stays_pinned():
     assert "never rewrite this summary" in held
 
 
+def test_anchored_summary_renders_the_persisted_head_brief_for_every_category():
+    from core.agents.recon_profiles import PROFILES
+    from core.live_anchor import anchor_payload
+
+    recon = _recon()
+    from core.agents.live_recon import HeadBrief
+    recon.head_brief = HeadBrief(
+        horizon="four hours",
+        window_open_utc="2026-09-22 12:00 UTC",
+        window_close_utc="2026-09-22 16:00 UTC",
+        spot_price=78_000.0,
+        stance="LONG BIAS — BUY PULLBACKS",
+        confluence_thesis="Saved 4-hour thesis.",
+        buy_zone=(77_000.0, 78_000.0),
+        sell_zone=(79_000.0, 80_000.0),
+        target_price=80_000.0,
+        invalidation_level=76_000.0,
+        invalidation_reason="Below support.",
+        inflection_window="Next hourly close.",
+        one_hour_shifts=("1h structure shifted higher.",),
+        memory_calibration={"hit_rate_pct": 75.0, "wins": 3, "resolved_directional": 4},
+    )
+    payload = anchor_payload(recon, price=78_000.0)
+
+    for profile in PROFILES.values():
+        html = panels.anchored_summary_html(
+            payload, profile.window_close(1_790_000_000_000), 1_790_000_000_000, False, profile,
+        )
+        assert "Head-agent 4-hour partner brief" in html
+        assert "Saved 4-hour thesis." in html
+        assert "Self-audit 75.0% (3/4)" in html
+
+
 def test_side_note_panel_lists_appended_notes_and_says_when_there_are_none():
     assert "Nothing substantial has changed" in panels.side_notes_html([])
     rows = [{"kind": "BIAS_FLIP", "headline": "Bias has changed from BULL to BEAR since the anchored summary.",

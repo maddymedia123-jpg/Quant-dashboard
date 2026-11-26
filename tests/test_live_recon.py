@@ -1,7 +1,9 @@
 import asyncio
 import json
+from datetime import datetime, timezone
 
 import httpx
+import pandas as pd
 import pytest
 
 from core.agents import live_recon as lr
@@ -119,8 +121,9 @@ def test_a_silent_trap_agent_is_reported_and_changes_nothing():
 
 
 # ---- end to end, no network ----
-def test_run_live_recon_makes_three_calls_on_one_shared_state(market_and_analyses):
+def test_run_live_recon_makes_three_calls_on_one_shared_state(market_and_analyses, tmp_path, monkeypatch):
     m, analyses = market_and_analyses
+    monkeypatch.setenv("TI_DATA_DIR", str(tmp_path))
     seen = []
 
     def handler(request: httpx.Request):
@@ -147,6 +150,8 @@ def test_run_live_recon_makes_three_calls_on_one_shared_state(market_and_analyse
     assert res.trap.choice == "BULL_TRAP" and res.trap.confidence == 0.78 and res.leader is res.bull
     assert res.prompt_tokens == 2000 and res.completion_tokens == 100
     assert not res.degraded and res.generated_at.tzinfo is not None
+    memory_records = [json.loads(line) for line in (tmp_path / "recon_memory.jsonl").read_text().splitlines()]
+    assert len(memory_records) == 1 and memory_records[0]["category"] == "live"
 
 
 def test_run_live_recon_survives_a_dead_provider(market_and_analyses):
@@ -363,6 +368,107 @@ def test_each_war_room_reads_gamma_from_its_own_expiries(market_and_analyses):
         d = lr.build_state(m, analyses, profile=PROFILES[key])["derivatives"]
         assert d["options"]["gamma"] == m.options.gamma_by_desk[key], key
         assert d["matched_window"]["gamma"] == m.options.gamma_by_desk[key], key
+
+
+@pytest.mark.parametrize("spot_key, band_key", [("price", "sigma1_dn"), ("last", "sigma1_down")])
+def test_head_partner_uses_spot_and_down_sigma_fallbacks(spot_key, band_key):
+    spot = 100.0
+    bands = {
+        band_key: 90.0,
+        "sigma2_dn" if band_key == "sigma1_dn" else "sigma2_down": 80.0,
+        "sigma1_up": 110.0,
+        "sigma2_up": 120.0,
+    }
+    state = {
+        "spot": {spot_key: spot},
+        "volatility": {"4h": {"bands": bands, "memory": "trending"}},
+        "liquidity": {"1h": {"volume_profile": {
+            "value_area_low": 85.0, "value_area_high": 115.0, "point_of_control": 100.0,
+        }}},
+        "smc": {"1h": {}, "4h": {"premium_discount": {"zone": "discount"}}},
+    }
+    result = lr.build_head_partner_brief(
+        state, flat(BULLISH, 0.8), flat(BEARISH, 0.2),
+        ChoiceResult(choice="NO_TRAP"), "BULL", 0.7, lr.LIVE, 1_790_000_000_000,
+    )
+    assert result.spot_price == spot
+    assert result.buy_zone == (80.0, 90.0)
+    assert result.target_price == 110.0
+
+
+def test_memory_grading_handles_second_resolution_and_excludes_the_close_bar():
+    open_ms = 1_790_000_000_000
+    close_ms = open_ms + 2 * 3_600_000
+    index = pd.date_range(
+        datetime.fromtimestamp(open_ms / 1000, timezone.utc), periods=3, freq="h"
+    ).as_unit("s")
+    frame = pd.DataFrame(
+        {"high": [105.0, 106.0, 150.0], "low": [98.0, 97.0, 50.0], "close": [100.5, 101.0, 120.0]},
+        index=index,
+    )
+    outcome = lr.ReconMemoryStore._grade_record(
+        {"window_open_ms": open_ms, "window_close_ms": close_ms, "spot_price": 100.0,
+         "bias": "BULL", "invalidation_level": 90.0},
+        frame,
+    )
+    assert outcome is not None and outcome["status"] == "WIN"
+    assert outcome["realized_close"] == 101.0
+
+
+def test_memory_reader_surfaces_corrupt_records(tmp_path):
+    path = tmp_path / "recon_memory.jsonl"
+    path.write_text('{"category":"live"}\nnot-json\n', encoding="utf-8")
+    with pytest.raises(ValueError, match=r"recon_memory\.jsonl:2"):
+        lr.ReconMemoryStore(path)._read_records()
+
+
+@pytest.mark.parametrize("category", ("live", "intraday", "weekly", "monthly"))
+def test_memory_records_each_category_once_per_anchored_window(tmp_path, category):
+    from core.agents.recon_profiles import PROFILES
+
+    profile = PROFILES[category]
+    now_ms = 1_790_000_000_000
+    bull, bear = flat(BULLISH, 0.8), flat(BEARISH, 0.2)
+    trap = ChoiceResult(choice="NO_TRAP")
+    bias, margin, confidence, consulted, override, notes = lr.resolve(bull, bear, trap)
+    brief = lr.HeadBrief(
+        horizon=profile.horizon,
+        window_open_utc="",
+        window_close_utc="",
+        spot_price=80_000.0,
+        stance="LONG BIAS",
+        confluence_thesis="",
+        buy_zone=None,
+        sell_zone=None,
+        target_price=82_000.0,
+        invalidation_level=78_000.0,
+        invalidation_reason="",
+        inflection_window="",
+    )
+    recon = lr.LiveReconResult(
+        generated_at=datetime.fromtimestamp(now_ms / 1000, timezone.utc),
+        bull=bull,
+        bear=bear,
+        trap=trap,
+        bias=bias,
+        margin=margin,
+        confidence=confidence,
+        consulted=consulted,
+        override=override,
+        notes=notes,
+        category=category,
+        head_brief=brief,
+    )
+    memory = lr.ReconMemoryStore(tmp_path / "recon_memory.jsonl")
+
+    memory.record_prediction(recon, {}, profile, now_ms)
+    memory.record_prediction(recon, {}, profile, now_ms)
+    records = memory._read_records()
+
+    assert len(records) == 1
+    assert records[0]["category"] == category
+    assert records[0]["window_open_ms"] == profile.window_open(now_ms)
+    assert records[0]["window_close_ms"] == profile.window_close(now_ms)
 
 
 

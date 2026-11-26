@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -167,32 +168,33 @@ LIVE_TIMEFRAMES = LIVE.timeframes
 # ---------------------------------------------------------------------------
 
 class ReconMemoryStore:
-    """Append-only JSONL ledger that audits expired 4h calls against realized OHLC candles
+    """Append-only JSONL ledger that audits expired calls against realized OHLC candles
     and computes empirical domain reliability weights for future Head-Agent calibration."""
 
-    def __init__(self, path: Path = DEFAULT_MEMORY_PATH) -> None:
-        self.path = path
+    def __init__(self, path: Path | None = None) -> None:
+        self.path = Path(path) if path is not None else Path(
+            os.environ.get("TI_DATA_DIR", str(DEFAULT_MEMORY_PATH.parent))
+        ) / DEFAULT_MEMORY_PATH.name
 
     def _read_records(self) -> list[dict[str, Any]]:
         if not self.path.exists():
             return []
         records: list[dict[str, Any]] = []
-        try:
-            for line in self.path.read_text(encoding="utf-8").splitlines():
-                line = line.strip()
-                if line:
+        for line_no, line in enumerate(self.path.read_text(encoding="utf-8").splitlines(), 1):
+            line = line.strip()
+            if line:
+                try:
                     records.append(json.loads(line))
-        except Exception as exc:  # noqa: BLE001
-            log.debug("recon memory read skipped: %s", exc)
+                except json.JSONDecodeError as exc:
+                    raise ValueError(f"Invalid recon memory JSON at {self.path}:{line_no}") from exc
+                if not isinstance(records[-1], dict):
+                    raise ValueError(f"Recon memory record at {self.path}:{line_no} must be an object")
         return records
 
     def _write_records(self, records: list[dict[str, Any]]) -> None:
-        try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            payload = "\n".join(json.dumps(r, sort_keys=True) for r in records)
-            self.path.write_text((payload + "\n") if payload else "", encoding="utf-8")
-        except Exception as exc:  # noqa: BLE001
-            log.debug("recon memory write skipped: %s", exc)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        payload = "\n".join(json.dumps(r, sort_keys=True) for r in records)
+        self.path.write_text((payload + "\n") if payload else "", encoding="utf-8")
 
     def audit_and_calibrate(self, m, category: str = "live", now_ms: int | None = None) -> dict[str, Any]:
         """Resolves any open predictions whose window_close_ms has passed using 1h/4h spot frames,
@@ -259,13 +261,14 @@ class ReconMemoryStore:
             if dt_idx.tz is None:
                 dt_idx = dt_idx.tz_localize("UTC")
             ts_ms = dt_idx.as_unit("ns").astype("int64") // 10**6
-            window_df = df_1h[(ts_ms >= open_ms) & (ts_ms <= close_ms)]
+            window_df = df_1h[(ts_ms >= open_ms) & (ts_ms < close_ms)]
             if window_df.empty:
                 return None
             hi = float(window_df["high"].max())
             lo = float(window_df["low"].min())
             end_close = float(window_df["close"].iloc[-1])
-        except Exception:  # noqa: BLE001
+        except (AttributeError, KeyError, TypeError, ValueError, OverflowError) as exc:
+            log.warning("recon memory record could not be graded: %s", exc)
             return None
 
         entry = float(rec.get("spot_price") or end_close)
@@ -301,7 +304,7 @@ class ReconMemoryStore:
         open_ms = profile.window_open(now_ms)
         close_ms = profile.window_close(now_ms)
         records = self._read_records()
-        # Deduplicate per category + 4h candle window so repeated UI refreshes don't spam the log
+        # Deduplicate per category + anchored candle window so UI refreshes don't spam the log
         if any(r.get("category") == profile.category and r.get("window_open_ms") == open_ms for r in records):
             return
         leader = res.leader
