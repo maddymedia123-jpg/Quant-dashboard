@@ -36,6 +36,8 @@ def section_head_html(kicker: str, title: str | None = None) -> str:
     """A section opener: a steel kicker on a hairline rule, then the section's own heading."""
     out = f"<div class='ti-section'><span class='ti-kicker'>{html.escape(kicker)}</span><div class='ti-rule'></div></div>"
     return out + (f"<h2 class='ti-h2'>{html.escape(title)}</h2>" if title else "")
+
+
 def _liq_kpi(l) -> dict:
     if not l.available or not l.total_usd:
         return {"label": "Liq 24h", "value": "—", "delta": None, "tone": None}
@@ -140,7 +142,7 @@ def _conf_word(c: float) -> str:
 
 def layman_lines(a: CategoryAnalysis) -> list[tuple[str, str]]:
     """The read in everyday words: what is happening, the levels that matter, what changes the view, and
-    - only when one applies - what else is worth noting. Built only from the deterministic analysis; the
+- only when one applies - what else is worth noting. Built only from the deterministic analysis; the
     jargon and the exact numbers (EMA stack, confidence %, 2-sigma band, upcoming Fibonacci zones) stay in
     the detail cards below."""
     d, v, s = a.direction, a.vol, a.squeeze
@@ -331,6 +333,8 @@ def early_warning_html(ws) -> str | None:
                  f"{html.escape(w.kind.replace('_', ' '))}</span><strong>{html.escape(w.level)}</strong></div>"
                  + "<div class='ti-early-drivers'>" + "".join(f"<span>— {html.escape(d)}</span>" for d in w.drivers) + "</div>")
     return f"<div class='ti-early blueprint ti-card warn'>{CORNERS}{body}</div>"
+
+
 def _rate_rows(d: dict, chance: bool = False) -> str:
     rows = ""
     for k, h in sorted(d.items()):
@@ -365,7 +369,6 @@ def accuracy_html(s: dict) -> str:
 
 
 def _utc(ms: int | None) -> str:
-    from datetime import datetime, timezone
     from core.trades import fmt_when
     return fmt_when(int(ms)) if ms else "—"
 
@@ -424,6 +427,8 @@ def patterns_html(a: CategoryAnalysis) -> str:
         if tone == "neutral":
             tone = tone_for_direction({"bullish": "BULLISH", "bearish": "BEARISH"}.get(p.bias, ""))
     return card_html("Chart patterns", body, tone)
+
+
 def divergence_html(a: CategoryAnalysis) -> str:
     rsi_last = float(a.rsi.dropna().iloc[-1]) if a.rsi.notna().any() else None
     foot = (f"<div class='ti-foot'>{_kv('RSI 14', fmt_num(rsi_last, 0), 'big')}</div>")
@@ -441,6 +446,8 @@ def divergence_html(a: CategoryAnalysis) -> str:
         elif tone == "neutral":
             tone = cls
     return card_html("RSI divergence", body + foot, tone)
+
+
 def volatility_html(a: CategoryAnalysis) -> str:
     v, s = a.vol, a.squeeze
     body = (f"<div class='ti-split'><span class='ti-h3'>{html.escape(v.regime)} regime</span>"
@@ -460,6 +467,8 @@ def volatility_html(a: CategoryAnalysis) -> str:
                  f"<strong>{s.score}/100</strong></div>" + _bar(s.score, "warn" if hot else "") + _li(s.drivers))
     tone = "warn" if (s.score or 0) >= 60 or v.regime == "HIGH" else "neutral"
     return card_html("Volatility · positioning", body, tone)
+
+
 def squeeze_banner_html(a: CategoryAnalysis) -> str | None:
     s = a.squeeze
     if s.score is None or s.score < 60:
@@ -477,6 +486,8 @@ def agent_summary_html(a: CategoryAnalysis, report) -> str:
                     f"{report.director.trap_classification.replace('_', ' ').lower()} · report "
                     f"{html.escape(report.report_id)} · {_utc(int(report.generated_at.timestamp() * 1000))}</span></div>")
     return agent_placeholder_html(a)
+
+
 def report_stats_html(report) -> str:
     ok = sum(1 for r in report.runs if r.ok)
     models = sorted({r.model for r in report.runs})
@@ -607,9 +618,13 @@ def anchor_audit_html(rows: list[dict]) -> str:
         for r in rows)
     return (f"<table><thead><tr><th>Time</th><th>Desk</th><th>Change</th><th>Price</th><th>Triggers</th></tr></thead>"
             f"<tbody>{body}</tbody></table>")
+
+
 def agent_placeholder_html(a: CategoryAnalysis) -> str:
     return ("<div class='ti-head-summary'><span class='ti-kicker'>Head-agent summary</span>"
             "<p class='muted'>Run Analysis to add the Director's paragraph for this desk.</p></div>")
+
+
 def trade_result_html(tm: TradeMap) -> str:
     tone = {"OPTIMAL": "up", "ELEVATED": "warn", "EXTREME": "down"}[tm.risk_label]
     body = (f"<div class='ti-h3'>{tm.classification} · {tm.direction} {tm.leverage:.0f}x from {fmt_num(tm.entry, 0, '$')}</div>"
@@ -626,6 +641,8 @@ def trade_result_html(tm: TradeMap) -> str:
         body += "<span class='ti-label'>Warnings</span>" + _li(tm.warnings)
     body += "<span class='ti-label'>Verdict stays anchored until</span>" + _li(tm.anchor_triggers)
     return card_html("Active trade stress-test", body, tone)
+
+
 def macro_html(events: list[dict]) -> str:
     rows = [f"{e['date_utc']} · {e['title']} · {e['impact']} impact. {e['note']}" for e in events]
     return card_html("Macro calendar (curated)", _li(rows) + "<p class='muted'>Fallback list; the live calendar feed was unavailable.</p>")
@@ -663,6 +680,8 @@ def calendar_html(m: MarketSnapshot, now_ms: int, limit: int = 8) -> str:
     body += (f"<p class='muted ti-note'>Source: Forex Factory weekly calendar via {html.escape(c.source)}. A release "
              "inside 24 hours fires the macro trigger.</p>")
     return card_html("Macro calendar · high-impact USD", body, "warn" if soon else "neutral")
+
+
 FEED_NAMES = {"spot": "price"}   # the snapshot keeps its old name in code; it is the perp first now
 
 
@@ -718,6 +737,8 @@ def _team_card(side: str, points, verdict: str, domains: list[tuple[int, str, fl
     head = f"<span class='ti-card-meta'>{html.escape(meta)}</span>" if meta else ""
     return (f"{head}<div class='ti-team-pts {tone}'>{float(points or 0):.0f}<span> / 100</span></div>"
             f"<p>{html.escape(verdict or '')}</p>{rows}")
+
+
 def team_html(team) -> str:
     """One team's scorecard from a run: five domain agents, twenty points each."""
     if not team.ok:
@@ -742,6 +763,8 @@ def payload_team_html(side: str, anchor: dict) -> str:
     body = _team_card(side, anchor.get(f"{'bull' if side == 'bullish' else 'bear'}_points"),
                       str(anchor.get(f"{'bull' if side == 'bullish' else 'bear'}_verdict") or ""), domains, "pinned run")
     return card_html(f"{side.title()} team", body, "up" if side == "bullish" else "down").replace("<h4>", "<h4 class='big'>", 1)
+
+
 def trap_audit_html(choice, probabilities: dict, consulted: bool, override=None, error=None) -> str:
     """The trap agent's distribution, most likely first, and whether the Head had to consult it."""
     if error:
@@ -765,6 +788,95 @@ def war_room_html(res) -> str:
     t = res.trap
     return trap_audit_html(t.choice, t.probabilities, res.consulted, res.override,
                            None if t.ok else (t.error or "unknown error"))
+
+
+def head_partner_panel_html(brief_or_res, standalone: bool = True) -> str:
+    """4-Hour Predictive Head-Agent Partner panel: renders stance, confluence thesis, buy/sell zones,
+    invalidation level, top/bottom inflection window, 1h shifts, and self-audit hit rate."""
+    if brief_or_res is None:
+        return ""
+    brief = getattr(brief_or_res, "head_brief", None) or brief_or_res
+    if hasattr(brief, "to_dict"):
+        data = brief.to_dict()
+    elif isinstance(brief, dict):
+        data = brief
+    else:
+        return ""
+    if not data:
+        return ""
+
+    stance = str(data.get("stance") or "WAIT / STAND ASIDE")
+    stance_up = stance.upper()
+    if "LONG" in stance_up or "BEAR TRAP" in stance_up:
+        tone = "up"
+    elif "SHORT" in stance_up or "BULL TRAP" in stance_up:
+        tone = "down"
+    elif "DEFENSIVE" in stance_up or "FADE" in stance_up:
+        tone = "warn"
+    else:
+        tone = "neutral"
+
+    bz = data.get("buy_zone")
+    sz = data.get("sell_zone")
+    buy_txt = (f"{fmt_num(bz[0], 0, '$')} – {fmt_num(bz[1], 0, '$')}"
+               if isinstance(bz, (list, tuple)) and len(bz) >= 2 and bz[0] is not None and bz[1] is not None else "—")
+    sell_txt = (f"{fmt_num(sz[0], 0, '$')} – {fmt_num(sz[1], 0, '$')}"
+                if isinstance(sz, (list, tuple)) and len(sz) >= 2 and sz[0] is not None and sz[1] is not None else "—")
+    tgt_txt = fmt_num(data.get("target_price"), 0, "$") if data.get("target_price") is not None else "—"
+    inv_txt = fmt_num(data.get("invalidation_level"), 0, "$") if data.get("invalidation_level") is not None else "—"
+
+    cal = data.get("memory_calibration") or {}
+    hit_pct = cal.get("hit_rate_pct")
+    audit_chip = (
+        chip(f"Self-audit {hit_pct:.1f}% ({cal.get('wins', 0)}/{cal.get('resolved_directional', 0)})",
+             "up" if hit_pct >= 55 else "warn")
+        if hit_pct is not None and cal.get("resolved_directional")
+        else chip("Self-audit calibrating", "outline")
+    )
+
+    body = (
+        f"<div class='ti-split'><span class='ti-h3 {tone}'>{html.escape(stance)}</span>{audit_chip}</div>"
+        f"<p>{html.escape(str(data.get('confluence_thesis') or ''))}</p>"
+        "<div class='ti-grid4'>"
+        + _kv("Buy zone", buy_txt, "up")
+        + _kv("Sell zone", sell_txt, "down")
+        + _kv("Target", tgt_txt, tone if tone in ("up", "down") else "")
+        + _kv("Hard invalidation", inv_txt, "down")
+        + "</div>"
+    )
+    if data.get("inflection_window"):
+        body += f"<p><strong>Top/Bottom inflection window:</strong> {html.escape(str(data['inflection_window']))}</p>"
+    if data.get("invalidation_reason"):
+        body += f"<p class='muted'>Invalidation trigger: {html.escape(str(data['invalidation_reason']))}</p>"
+
+    shifts = list(data.get("one_hour_shifts") or [])
+    drivers = list(data.get("key_drivers") or [])
+    if shifts or drivers:
+        body += (
+            "<div class='ti-two'><div><span class='ti-label'>1-Hour structural shifts</span>"
+            + (_li(shifts) or "<p class='muted'>No 1h shift active.</p>")
+            + "</div><div><span class='ti-label'>Memory-weighted drivers</span>"
+            + (_li(drivers) or "<p class='muted'>No dominant driver.</p>")
+            + "</div></div>"
+        )
+
+    warnings = list(data.get("risk_warnings") or [])
+    if warnings:
+        body += "<span class='ti-label'>Active hazards</span>" + _li(warnings)
+
+    lessons = list(cal.get("recent_lessons") or [])
+    if lessons:
+        body += (f"<p class='muted ti-note'>Self-audit memory ({cal.get('total_logged', 0)} windows logged): "
+                 f"{html.escape('; '.join(str(x) for x in lessons[-2:]))}</p>")
+
+    if not standalone:
+        return f"<div class='ti-foot'><span class='ti-label'>Head-agent 4-hour partner brief</span>{body}</div>"
+    window_span = ""
+    if data.get("window_open_utc") and data.get("window_close_utc"):
+        window_span = f" · {data['window_open_utc']} → {data['window_close_utc']}"
+    return card_html(f"Head-agent partner · 4-hour outlook{window_span}", body, tone)
+
+
 def _remaining(mins: int) -> str:
     if mins >= 24 * 60:
         return f"{mins // 1440}d {(mins % 1440) // 60:02d}h"
@@ -806,6 +918,8 @@ def anchored_summary_html(anchor: dict, window_close_ms: int, now_ms: int, ancho
                 "side notes; they never rewrite this summary.") + "</p>")
     if anchor.get("degraded"):
         body += "<p><span class='ti-chip warn'>degraded</span> part of the checklist did not score.</p>"
+    if anchor.get("head_brief"):
+        body += head_partner_panel_html(anchor["head_brief"], standalone=False)
     body += handshake_html(anchor)
     return card_html(f"{p.window_title} anchored summary", body, tone)
 
@@ -837,6 +951,8 @@ def handshake_html(anchor: dict) -> str:
             "<p class='muted ti-note'>Each desk answers with the verdict it has anchored for its current candle. "
             "A higher desk agreeing adds 10% to conviction and opposing takes 20% off; a lower desk opposing "
             "takes 5%. The direction itself is the war room's.</p>")
+
+
 def side_notes_html(rows: list[dict]) -> str:
     """Interim invalidations, appended alongside the anchor and never replacing it."""
     if not rows:
@@ -852,6 +968,8 @@ def side_notes_html(rows: list[dict]) -> str:
                  + "</p>" + (f"<p class='muted'>{html.escape(str(r['detail']))}</p>" if r.get("detail") else "")
                  + "</div>")
     return card_html(f"Interim side notes · {len(rows)}", body, "warn")
+
+
 # ---------- SMC and liquidity protocols ----------
 def _dash(v, digits=0, prefix="") -> str:
     return "—" if v is None else fmt_num(v, digits, prefix)
@@ -976,6 +1094,8 @@ def accuracy_report_html(rep) -> str:
         body += "<p class='muted'>Accuracy is below the floor but no single protocol stands out yet.</p>"
     body += "<p class='muted'>These are suggestions for a person to review; nothing is changed automatically.</p>"
     return card_html("Accuracy report · calibration needed", body, "warn")
+
+
 # ---------- volatility matrix (spec section 2) ----------
 def vol_matrix_html(by_tf: dict) -> str:
     """Realized and implied volatility, ATR, the sigma channels and market memory, per timeframe."""
@@ -1510,6 +1630,8 @@ def channels_html(channels) -> str:
         f"<span class='src'>{'configured' if c.configured else html.escape(c.reason or 'not configured')}</span></div>"
         for c in channels)
     return f"<div class='ti-feeds'>{rows}</div>"
+
+
 # ---------- macro and news engines (spec section 2) ----------
 IMPACT_TONE = {"high": "down", "medium": "warn", "low": "neutral"}
 BAND_TONE = {"clean": "up", "watch": "warn", "fragile": "down", "unknown": "neutral"}
@@ -1584,6 +1706,8 @@ def _news_rows(rows: list[dict], now_ms: int) -> str:
                  + (chip(impact, IMPACT_TONE.get(impact, "neutral")) if impact else "")
                  + "</div></div></div>")
     return body
+
+
 def gold_html(metals, now_ms: int) -> str:
     """Gold spot, with the feed's own freshness carried through."""
     if not getattr(metals, "available", False):
@@ -1609,6 +1733,8 @@ def gold_html(metals, now_ms: int) -> str:
              "<p class='muted ti-note'>Gold only: silver and copper are gated behind a paid tier on this feed, so "
              "they are not shown rather than guessed at.</p>")
     return card_html("Gold · XAU/USD", body, "warn" if getattr(metals, "is_stale", False) else "neutral")
+
+
 EVENT_TONE = {"sell_the_news": "warn", "spike_faded": "warn", "positioned": "warn", "confirmed": "", "absorbed": "",
               "flat": "", "reacting": "", "scheduled": "", "no_data": ""}
 EVENT_LABEL = {"sell_the_news": "sell the news", "spike_faded": "spike faded", "positioned": "positioned",
@@ -1708,6 +1834,8 @@ def predictions_html(preds, now_ms: int, asset: str | None = None, limit: int = 
     if attribution:
         body += f"<p class='muted ti-note'>{html.escape(attribution)}</p>"
     return card_html("Prediction markets", body, "neutral")
+
+
 # ---------- the sidebar clock ----------
 # Rendered as a self-contained ticking component rather than a formatted string: Streamlit only redraws
 # on a rerun, so a server-rendered clock sits frozen at the page-load time, which is worse than none.
@@ -2184,8 +2312,6 @@ def chart_head_html(a, signal: bool = False, symbol: str | None = None, call_tf:
     view = f" view · call on {html.escape(call_tf)}" if call_tf and call_tf != a.chart_tf else ""
     return (f"<div class='ti-chart-head'><span class='ti-chart-title'>{html.escape(market_label(symbol))} · {html.escape(a.chart_tf)}{view}</span>"
             "</div>")
-
-
 
 
 # ---------- the timeframe cascade (bias / anchor / engine) ----------
@@ -2918,7 +3044,7 @@ def _qf_record_line(rec: dict, name: str) -> str:
             f"{rec.get('direction_days', 0)} · range days held {rec.get('range_held', 0)} of {rec.get('range_days', 0)} "
             f"(a range day is right whenever its box holds, so it is counted apart) · predicted high "
             f"within tolerance {rec['high_hit']} · low {rec['low_hit']} · high's time within 2h "
-            f"{rec['high_time_hit']} · low's {rec['low_time_hit']} · closed inside the 68% envelope "
+            f"{rec['high_time_hit']} · low's time within 2h {rec['low_time_hit']} · closed inside the 68% envelope "
             f"{rec['band_held']} · invalidated {rec['invalidated']}</p>")
 
 
