@@ -52,8 +52,15 @@ class DeskAnswer:
     note: str = ""
 
     def to_payload(self) -> dict:
-        return {"category": self.category, "label": self.label, "relation": self.relation, "bias": self.bias,
-                "answer": self.answer, "confidence": self.confidence, "note": self.note}
+        return {
+            "category": self.category,
+            "label": self.label,
+            "relation": self.relation,
+            "bias": self.bias,
+            "answer": self.answer,
+            "confidence": self.confidence,
+            "note": self.note,
+        }
 
 
 @dataclass(frozen=True)
@@ -65,8 +72,12 @@ class Handshake:
     notes: tuple[str, ...]
 
     def to_payload(self) -> dict:
-        return {"asked_by": self.asked_by, "factor": round(self.factor, 3),
-                "answers": [a.to_payload() for a in self.answers], "notes": list(self.notes)}
+        return {
+            "asked_by": self.asked_by,
+            "factor": round(self.factor, 3),
+            "answers": [a.to_payload() for a in self.answers],
+            "notes": list(self.notes),
+        }
 
 
 def consult(store, category: str, bias: str, now_ms: int) -> Handshake:
@@ -90,12 +101,26 @@ def consult(store, category: str, bias: str, now_ms: int) -> Handshake:
             continue
         theirs = str(anchor.get("bias") or "")
         if anchor.get("window_close_ms") and anchor["window_close_ms"] <= now_ms:
-            answers.append(DeskAnswer(other, label, relation, theirs, "silent", anchor.get("confidence"),
-                                      "its candle has closed, so this verdict is not current"))
+            answers.append(
+                DeskAnswer(
+                    other,
+                    label,
+                    relation,
+                    theirs,
+                    "silent",
+                    anchor.get("confidence"),
+                    "its candle has closed, so this verdict is not current",
+                )
+            )
             continue
         their_lean = lean(theirs)
-        answer = ("neutral" if mine is None or their_lean is None else
-                  "agrees" if their_lean == mine else "opposes")
+        answer = (
+            "neutral"
+            if mine is None or their_lean is None
+            else "agrees"
+            if their_lean == mine
+            else "opposes"
+        )
         answers.append(DeskAnswer(other, label, relation, theirs, answer, anchor.get("confidence")))
 
     higher = [a for a in answers if a.relation == "higher"]
@@ -121,21 +146,27 @@ def _notes(answers: list[DeskAnswer], mine: str | None, factor: float) -> list[s
     h_against = [a for a in higher if a.answer == "opposes"]
     l_against = [a for a in answers if a.relation == "lower" and a.answer == "opposes"]
     if h_against:
-        out.append(f"Against the higher desk{'s' if len(h_against) > 1 else ''}: {_names(h_against)}. The higher "
-                   "timeframe sets the vector.")
+        plural = "s" if len(h_against) > 1 else ""
+        out.append(
+            f"Against the higher desk{plural}: {_names(h_against)}. The higher timeframe sets the vector."
+        )
     if higher and len(h_against) == len(higher):
         out.append("Counter-trend: every higher desk with a current verdict reads the other way.")
     if h_with:
-        out.append(f"With the higher desk{'s' if len(h_with) > 1 else ''}: {_names(h_with)}.")
+        plural = "s" if len(h_with) > 1 else ""
+        out.append(f"With the higher desk{plural}: {_names(h_with)}.")
     if l_against:
-        out.append(f"The lower desk{'s' if len(l_against) > 1 else ''} {_names(l_against)} "
-                   f"{'read' if len(l_against) > 1 else 'reads'} the other way: an early warning, not a veto.")
+        plural = "s" if len(l_against) > 1 else ""
+        verb = "read" if len(l_against) > 1 else "reads"
+        out.append(
+            f"The lower desk{plural} {_names(l_against)} {verb} the other way: an early warning, not a veto."
+        )
     silent = [a.label for a in answers if a.answer == "silent"]
     if silent:
         out.append(f"No current verdict from {', '.join(silent)}.")
     if abs(factor - 1.0) > 1e-9:
-        out.append(f"Cross-desk handshake {'raised' if factor > 1 else 'cut'} conviction by "
-                   f"{abs(factor - 1.0):.0%}.")
+        direction = "raised" if factor > 1 else "cut"
+        out.append(f"Cross-desk handshake {direction} conviction by {abs(factor - 1.0):.0%}.")
     return out
 
 
@@ -148,11 +179,53 @@ def apply(res, hs: Handshake):
         new_pct = f"post-handshake confidence {new_conf:.0%}"
         new_thesis = updated_brief.confluence_thesis.replace(old_pct, new_pct)
         updated_brief = replace(updated_brief, confluence_thesis=new_thesis)
-    return replace(res, confidence=new_conf,
-                   confidence_before_handshake=res.confidence,
-                   notes=tuple(res.notes) + hs.notes, handshake=hs.to_payload(),
-                   head_brief=updated_brief)
+    return replace(
+        res,
+        confidence=new_conf,
+        confidence_before_handshake=res.confidence,
+        notes=tuple(res.notes) + hs.notes,
+        handshake=hs.to_payload(),
+        head_brief=updated_brief,
+    )
 
 
 def notify(store, category: str, bias: str, now_ms: int, price: float | None = None) -> list[str]:
-    ""The other half of the handshake
+    """The other half of the handshake: tell each desk whose live verdict this one opposes. Append-only,
+    one note per desk, direction and window. Returns the desks that were told."""
+    mine = lean(bias)
+    if mine is None:
+        return []
+    told = []
+    label = PROFILES[category].label
+    for other in ORDER:
+        if other == category:
+            continue
+        try:
+            anchor = store.get_live_anchor(category=other)
+        except Exception as e:  # noqa: BLE001
+            log.warning("handshake notify: %s unreadable (%s)", other, e)
+            continue
+        if not anchor or (anchor.get("window_close_ms") and anchor["window_close_ms"] <= now_ms):
+            continue
+        theirs = lean(str(anchor.get("bias") or ""))
+        if theirs is None or theirs == mine:
+            continue
+        higher = ORDER.index(category) > ORDER.index(other)
+        detail = (
+            "A higher timeframe sets the vector: weigh this desk's call against it."
+            if higher
+            else "A lower timeframe turning first is an early warning for this candle, not a reversal by itself."
+        )
+        wrote = store.add_side_note(
+            anchor["window_open_ms"],
+            now_ms,
+            HANDSHAKE,
+            f"handshake:{category}:{mine}",
+            f"The {label} desk now reads {bias}, against this desk's {anchor.get('bias')}.",
+            detail,
+            price,
+            category=other,
+        )
+        if wrote:
+            told.append(other)
+    return told
