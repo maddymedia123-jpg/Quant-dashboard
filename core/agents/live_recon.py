@@ -19,6 +19,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
+
 from core.agents.context import category_brief, common_payload, derivatives_payload
 from core.agents.judge import ChoiceResult, Judge, JudgeResult
 from core.agents.recon_profiles import LIVE, ReconProfile
@@ -253,11 +255,10 @@ class ReconMemoryStore:
         open_ms = int(rec.get("window_open_ms", 0))
         close_ms = int(rec.get("window_close_ms", 0))
         try:
-            idx = df_1h.index
-            if hasattr(idx, "tz") and idx.tz is not None:
-                ts_ms = (idx.astype("int64") // 10**6)
-            else:
-                ts_ms = (idx.astype("int64") // 10**6)
+            dt_idx = pd.DatetimeIndex(df_1h.index)
+            if dt_idx.tz is None:
+                dt_idx = dt_idx.tz_localize("UTC")
+            ts_ms = dt_idx.as_unit("ns").astype("int64") // 10**6
             window_df = df_1h[(ts_ms >= open_ms) & (ts_ms <= close_ms)]
             if window_df.empty:
                 return None
@@ -567,7 +568,8 @@ def build_head_partner_brief(
 ) -> HeadBrief:
     """Synthesizes 1-hour shifts, 4-hour volatility/structure levels, trap risks, and historical
     memory weights into an actionable 4-hour Head-Agent Partner brief."""
-    spot = state.get("spot", {}).get("price")
+    spot_block = state.get("spot") or {}
+    spot = spot_block.get("price") if spot_block.get("price") is not None else spot_block.get("last")
     spot_f = float(spot) if spot is not None else None
 
     open_ms = profile.window_open(now_ms)
@@ -605,8 +607,10 @@ def build_head_partner_brief(
     val = vp_mtf.get("value_area_low")
     vah = vp_mtf.get("value_area_high")
     poc = vp_mtf.get("point_of_control")
-    s1_dn, s2_dn = bands.get("sigma1_down"), bands.get("sigma2_down")
-    s1_up, s2_up = bands.get("sigma1_up"), bands.get("sigma2_up")
+    s1_dn = bands.get("sigma1_dn") if bands.get("sigma1_dn") is not None else bands.get("sigma1_down")
+    s2_dn = bands.get("sigma2_dn") if bands.get("sigma2_dn") is not None else bands.get("sigma2_down")
+    s1_up = bands.get("sigma1_up")
+    s2_up = bands.get("sigma2_up")
 
     buy_low = s2_dn or val or (spot_f * 0.988 if spot_f else None)
     buy_high = s1_dn or poc or (spot_f * 0.995 if spot_f else None)
@@ -726,7 +730,7 @@ async def run_live_recon(
     now: datetime | None = None,
     profile: ReconProfile | None = None,
     memory_store: ReconMemoryStore | None = None,
-    persist_memory: bool = False,
+    persist_memory: bool = True,
 ) -> LiveReconResult:
     """One war-room pass: both teams and the trap consult, in parallel, on one shared state.
 
