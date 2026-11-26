@@ -21,9 +21,12 @@ if str(ROOT) not in sys.path:
 import streamlit as st  # noqa: E402
 import streamlit.components.v1 as components  # noqa: E402
 
+from core import pipeline as core_pipeline  # noqa: E402
+from core import qf_alerts, quant_forecast  # noqa: E402
+from core.agents import live_recon, recon_profiles  # noqa: E402
 from core.config import CATEGORIES, CHART_VIEWS  # noqa: E402
+from core.indicators import anomaly_trap, cascade, desk_derivs, early_warning, forecast, harmonics, liquidity, smc, volatility, vwap_break, weekend  # noqa: E402
 from core.indicators import category as cat_ind  # noqa: E402
-from core.indicators import desk_derivs  # noqa: E402
 from core.trades import fmt_when  # noqa: E402
 from ui import charts, panels, theme  # noqa: E402
 
@@ -36,29 +39,16 @@ def _opt_import(module_path: str):
 
 
 core_data = _opt_import("core.data")
-core_pipeline = _opt_import("core.pipeline")
 accuracy = _opt_import("core.accuracy")
-qf_alerts = _opt_import("core.qf_alerts")
-quant_forecast = _opt_import("core.quant_forecast")
 _store_mod = _opt_import("core.store")
 traps = _opt_import("core.traps")
-recon_profiles = _opt_import("core.agents.recon_profiles")
 runner = _opt_import("core.agents.runner")
+judge_mod = _opt_import("core.agents.judge")
 agents_types = _opt_import("core.agents.types")
 LLMConfig = getattr(agents_types, "LLMConfig", None) if agents_types else None
 trade_map = _opt_import("core.indicators.trade_map")
-
-# Optional desk indicator modules
-cascade_mod = _opt_import("core.indicators.cascade")
-forecast_mod = _opt_import("core.indicators.forecast")
-harmonics_mod = _opt_import("core.indicators.harmonics")
-liquidity_mod = _opt_import("core.indicators.liquidity")
-smc_mod = _opt_import("core.indicators.smc")
-value_breaks_mod = _opt_import("core.indicators.value_breaks")
-vol_matrix_mod = _opt_import("core.indicators.vol_matrix")
-weekend_mod = _opt_import("core.indicators.weekend")
-anomaly_mod = _opt_import("core.indicators.anomaly_traps")
 sine_mod = _opt_import("core.indicators.sine_wave")
+handshake_mod = _opt_import("core.agents.handshake")
 
 log = logging.getLogger("trap_intelligence")
 
@@ -69,13 +59,19 @@ CATEGORY_KEYS = tuple(CATEGORIES.keys())
 CATEGORY_LABELS = {k: c.label for k, c in CATEGORIES.items()}
 CATEGORY_TIMEFRAMES = {k: (c.chart_tf, c.context_tf) for k, c in CATEGORIES.items()}
 
+# Master Trades are strictly two swing tiers: Intraday/Swing (12h/1d) and Weekly/Swing (1d/1w).
+MASTER_TRADE_DESKS: tuple[tuple[str, str, str], ...] = (
+    ("intraday", "Master Trade I · Intraday / Swing", "12h chart · 1d anchor · $1,000–$3,000+ BTC swing tier"),
+    ("weekly", "Master Trade II · Weekly / Structural Swing", "1d chart · 1w anchor · multi-day structural swing tier"),
+)
+
 MAX_TRADES = 20
 NAV = (
     *[("desk", k, c.label, f"{CHART_VIEWS.get(k, (c.chart_tf, c.context_tf))[0]} chart · {c.context_tf} ctx")
       for k, c in CATEGORIES.items()],
     ("traps", "traps", "TRAP intelligence", "Sweep, anchored traps, watch list"),
-    ("trade", "trade", "Active trade", "Positions, stops and targets"),
-    ("director", "director", "Director report", "Run Analysis to generate"),
+    ("trade", "trade", "Master trades", "Intraday & Weekly confluence swing setups"),
+    ("director", "director", "Director report", "15-agent synthesis & desk table"),
     ("macro", "macro", "Macro & news", "Headlines, gold, rates, odds"),
     ("qf", "qf", "Quant forecast", "Today's 24h plan, audited live"),
 )
@@ -191,7 +187,7 @@ def _run_coro_sync(coro):
 
     t = threading.Thread(target=_worker, daemon=True)
     t.start()
-    t.join(timeout=60)
+    t.join(timeout=90)
     if "err" in err_holder:
         raise err_holder["err"]
     return holder.get("val")
@@ -209,18 +205,9 @@ def _resolve_snapshot_loader():
                 if m is not None:
                     mods.append(m)
     preferred = (
-        "fetch_all",
-        "fetch_snapshot",
-        "load_snapshot",
-        "get_snapshot",
-        "build_snapshot",
-        "collect_snapshot",
-        "gather_snapshot",
-        "fetch_market_snapshot",
-        "fetch",
-        "load_all",
-        "collect",
-        "snapshot",
+        "fetch_all", "fetch_snapshot", "load_snapshot", "get_snapshot",
+        "build_snapshot", "collect_snapshot", "gather_snapshot",
+        "fetch_market_snapshot", "fetch", "load_all", "collect", "snapshot",
     )
     for mod in mods:
         for name in preferred:
@@ -265,6 +252,7 @@ def _fallback_snapshot(bucket_ms: int):
                         change_24h_pp=None, change_7d_pp=None, total_mcap_usd=None,
                         mcap_change_24h_pct=None, as_of_ms=None),
         news=_feed("news", headlines=[]),
+        unavailable=lambda: [],
     ), ["Fallback snapshot used"]
 
 
@@ -339,7 +327,7 @@ def _compute_analyses(m) -> dict[str, cat_ind.CategoryAnalysis | None]:
 
 
 def _run_pipeline_pass(store, m, analyses: dict, now_ms: int) -> dict:
-    if store is None or core_pipeline is None:
+    if store is None:
         return {}
     valid_analyses = {k: v for k, v in analyses.items() if v is not None}
     try:
@@ -365,6 +353,68 @@ def _llm_config_from_env():
         if key:
             return LLMConfig(provider=provider, api_key=key, model=default_model)
     return None
+
+
+def _build_judge(cfg):
+    if judge_mod is None or cfg is None:
+        return None
+    JudgeCls = getattr(judge_mod, "Judge", None)
+    if JudgeCls is None:
+        return None
+    try:
+        return JudgeCls(cfg)
+    except Exception:  # noqa: BLE001
+        for factory_name in ("from_config", "build_judge", "create_judge"):
+            fn = getattr(judge_mod, factory_name, None)
+            if callable(fn):
+                try:
+                    return fn(cfg)
+                except Exception:  # noqa: BLE001
+                    pass
+    return None
+
+
+def _execute_full_ai_run(store, m, analyses: dict, now_ms: int) -> None:
+    """Run the 11-agent war room across all 4 desks (anchored until invalidated) + 15-agent Director report."""
+    cfg = _llm_config_from_env()
+    if cfg is None:
+        st.warning("No LLM API key found in environment (OPENROUTER_API_KEY, GROQ_API_KEY, or GEMINI_API_KEY).")
+        return
+
+    valid_analyses = {k: v for k, v in analyses.items() if v is not None}
+    now_dt = datetime.fromtimestamp(now_ms / 1000.0, tz=timezone.utc)
+
+    with st.spinner("Running 11-agent confluence war rooms across Live Recon, Intraday, Weekly & Monthly..."):
+        judge = _build_judge(cfg)
+        if judge is not None:
+            async def _run_all_desks():
+                tasks = [
+                    live_recon.run_live_recon(judge, m, valid_analyses, now=now_dt, profile=recon_profiles.PROFILES[k])
+                    for k in CATEGORY_KEYS
+                ]
+                return await asyncio.gather(*tasks, return_exceptions=True)
+
+            results = _run_coro_sync(_run_all_desks()) or []
+            war_rooms: dict[str, live_recon.LiveReconResult] = {}
+            for k, res in zip(CATEGORY_KEYS, results):
+                if isinstance(res, Exception):
+                    log.warning("war room failed for %s: %s", k, res)
+                elif res is not None:
+                    war_rooms[k] = res
+            if handshake_mod is not None and hasattr(handshake_mod, "apply"):
+                try:
+                    handshake_mod.apply(war_rooms)
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("handshake failed: %s", exc)
+            st.session_state["desk_war_rooms"] = war_rooms
+            st.session_state["desk_war_rooms_ms"] = now_ms
+
+        if runner is not None and hasattr(runner, "run_15_agent"):
+            try:
+                report = runner.run_15_agent(cfg, m, valid_analyses, now_ms=now_ms)
+                st.session_state["latest_report"] = report
+            except Exception as exc:  # noqa: BLE001
+                log.warning("15-agent director failed: %s", exc)
 
 
 def _render_sidebar(m, analyses: dict, verdicts: dict) -> tuple[bool, bool, str, bool]:
@@ -429,9 +479,8 @@ def _render_topbar(m, now_ms: int) -> bool:
         if st.button("REFRESH DATA", use_container_width=True):
             refresh_clicked = True
     with c3:
-        run_clicked = st.button("RUN ANALYSIS", type="primary", use_container_width=True)
-    if run_clicked:
-        st.session_state["run_analysis_requested"] = True
+        if st.button("RUN ANALYSIS", type="primary", use_container_width=True):
+            st.session_state["run_analysis_requested"] = True
     return refresh_clicked
 
 
@@ -450,40 +499,6 @@ def _render_kpi_strip(kpis: list[dict]) -> None:
                 )
 
 
-def _compute_forecast(base_a: cat_ind.CategoryAnalysis, m, gamma: dict | None):
-    if forecast_mod is None:
-        return None
-    for fn_name in ("forecast_category", "build_forecast", "run_forecast", "forecast", "project"):
-        fn = getattr(forecast_mod, fn_name, None)
-        if not callable(fn):
-            continue
-        sig = inspect.signature(fn)
-        kwargs = {}
-        for p in sig.parameters.values():
-            if p.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
-                continue
-            pname = p.name.lower()
-            if pname in ("a", "analysis"):
-                kwargs[p.name] = base_a
-            elif pname in ("m", "snapshot"):
-                kwargs[p.name] = m
-            elif pname == "gamma":
-                kwargs[p.name] = gamma
-            elif pname == "frames":
-                kwargs[p.name] = getattr(getattr(m, "spot", None), "frames", None) or {}
-        try:
-            return fn(**kwargs)
-        except Exception:  # noqa: BLE001
-            try:
-                return fn(base_a, m, gamma)
-            except Exception:  # noqa: BLE001
-                try:
-                    return fn(base_a)
-                except Exception:  # noqa: BLE001
-                    pass
-    return None
-
-
 def _render_desk(key: str, store, m, analyses: dict, verdicts: dict, now_ms: int, dark: bool, signal: bool) -> None:
     base_a = analyses.get(key)
     cat = CATEGORIES[key]
@@ -491,23 +506,20 @@ def _render_desk(key: str, store, m, analyses: dict, verdicts: dict, now_ms: int
         st.warning(f"No analysis available for {cat.label}.")
         return
 
-    for_cat = getattr(recon_profiles, "FOR_CATEGORY", None) or getattr(recon_profiles, "PROFILES", None) or {}
-    profile = for_cat.get(key) or getattr(recon_profiles, "LIVE", None)
-    if profile is not None:
-        panels.render(panels.desk_hero_html(DESK_INDEX[key], profile, base_a, now_ms))
+    profile = recon_profiles.PROFILES[key]
+    panels.render(panels.desk_hero_html(DESK_INDEX[key], profile, base_a, now_ms))
 
-    # Top banners: weekend tape, active TRAP warnings, anomaly traps
-    if weekend_mod is not None and hasattr(weekend_mod, "classify"):
-        try:
-            w_banner = panels.weekend_html(weekend_mod.classify(now_ms))
-            if w_banner:
-                panels.render(w_banner)
-        except Exception:  # noqa: BLE001
-            pass
+    # Top banners: weekend tape, active TRAP warnings, anomaly traps, early warnings, squeeze
+    try:
+        w_banner = panels.weekend_html(weekend.read(now_ms))
+        if w_banner:
+            panels.render(w_banner)
+    except Exception:  # noqa: BLE001
+        pass
 
     if store is not None and hasattr(store, "traps"):
         try:
-            desk_tfs = set(profile.read_order) if profile is not None else {cat.chart_tf, cat.context_tf}
+            desk_tfs = set(profile.read_order)
             active_traps = [r for r in store.traps(limit=100)
                             if r.get("status") == "active" and (not desk_tfs or r.get("timeframe") in desk_tfs)]
             t_banner = panels.trap_warning_html(active_traps, now_ms)
@@ -516,22 +528,65 @@ def _render_desk(key: str, store, m, analyses: dict, verdicts: dict, now_ms: int
         except Exception:  # noqa: BLE001
             pass
 
-    if anomaly_mod is not None and hasattr(anomaly_mod, "detect"):
-        try:
-            for at in anomaly_mod.detect(m, base_a) or []:
-                panels.render(panels.anomaly_trap_html(at))
-        except Exception:  # noqa: BLE001
-            pass
+    derivs = desk_derivs.read(key, m, now_ms)
+    frames = getattr(getattr(m, "spot", None), "frames", None) or {}
+    oi_hist = desk_derivs.oi_history(m)
+    flow_frames = getattr(m.taker_flow, "frames", None) if getattr(getattr(m, "taker_flow", None), "available", False) else {}
+
+    # Compute multi-timeframe confluence blocks (exact signatures from core/indicators/*.py)
+    smc_by_tf, liq_by_tf, vol_by_tf, vb_by_tf, harm_by_tf = {}, {}, {}, {}, {}
+    gamma = desk_derivs.gamma_for(key, m)
+    for tf in profile.read_order:
+        df = frames.get(tf)
+        if df is None or df.empty:
+            continue
+        smc_by_tf[tf] = smc.summarise(df)
+        liq_by_tf[tf] = liquidity.summarise(
+            df, oi_hist, now_ms, windows=profile.timeframes,
+            flow=(flow_frames or {}).get(tf),
+        )
+        vol_by_tf[tf] = volatility.matrix_summary(df, tf, getattr(m, "options", None))
+        if tf in vwap_break.TIMEFRAMES:
+            vb_by_tf[tf] = vwap_break.read(df, tf).to_state()
+        if tf in harmonics.TIMEFRAMES:
+            try:
+                harm_by_tf[tf] = [h.to_state() for h in harmonics.find(df, tf, gamma)]
+            except Exception:  # noqa: BLE001
+                harm_by_tf[tf] = []
+
+    try:
+        fg = m.sentiment.fear_greed if getattr(getattr(m, "sentiment", None), "available", False) else None
+        fut = m.futures if getattr(getattr(m, "futures", None), "available", False) else None
+        at = anomaly_trap.read(fg, fut, derivs, liq_by_tf.get(cat.chart_tf),
+                               base_a.price_change_24h_pct, oi_hist, now_ms)
+        if at is not None:
+            panels.render(panels.anomaly_trap_html(at))
+    except Exception:  # noqa: BLE001
+        pass
+
+    try:
+        if getattr(getattr(m, "futures", None), "available", False):
+            last_sq = getattr(getattr(base_a, "squeeze", None), "score", None)
+            ews = early_warning.early_warnings(base_a, m.futures, last_sq)
+            ew_banner = panels.early_warning_html(ews)
+            if ew_banner:
+                panels.render(ew_banner)
+    except Exception:  # noqa: BLE001
+        pass
 
     sq_banner = panels.squeeze_banner_html(base_a)
     if sq_banner:
         panels.render(sq_banner)
 
-    gamma = desk_derivs.gamma_for(key, m)
     panels.render(panels.gamma_bar_html(gamma, getattr(m.spot, "last", None), cat.label))
-
-    derivs = desk_derivs.read(key, m, now_ms)
     _render_kpi_strip(panels.kpis_for(base_a, m, derivs))
+
+    # Desk Forecast (projected path + record)
+    fc, fc_record = None, None
+    try:
+        fc, fc_record = forecast.desk_forecast(base_a, gamma, frames.get(cat.chart_tf))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("desk_forecast failed for %s: %s", key, exc)
 
     views = CHART_VIEWS.get(key, (cat.chart_tf, cat.context_tf))
     view_tf = st.radio(
@@ -540,10 +595,7 @@ def _render_desk(key: str, store, m, analyses: dict, verdicts: dict, now_ms: int
         horizontal=True,
         key=f"chart_view_{key}",
     )
-    frames = getattr(getattr(m, "spot", None), "frames", None) or {}
     chart_a = cat_ind.view_analysis(cat, view_tf, frames, getattr(m, "futures", None), base_a) or base_a
-    fc = _compute_forecast(base_a, m, gamma)
-    fg = getattr(m.sentiment, "fear_greed", None)
 
     left, right = st.columns([7, 5], gap="large")
     with left:
@@ -566,80 +618,59 @@ def _render_desk(key: str, store, m, analyses: dict, verdicts: dict, now_ms: int
         panels.render(panels.volatility_html(base_a))
         panels.render(panels.fib_html(chart_a))
 
-    # Timeframe cascade
-    if cascade_mod is not None and profile is not None and hasattr(cascade_mod, "classify"):
-        try:
-            bias_tf, anchor_tf, engine_tfs = profile.cascade
-            c_state = cascade_mod.classify(frames, bias_tf, anchor_tf, engine_tfs)
-            inval = verdicts[key].anchored.invalidation if verdicts.get(key) is not None else base_a.direction.invalidation
-            panels.render(panels.cascade_html(c_state, invalidation=inval, price=base_a.price))
-        except Exception as exc:  # noqa: BLE001
-            log.warning("cascade panel failed for %s: %s", key, exc)
+    # 11-Agent War Room Anchored Partner Summary (persists until invalidated)
+    war_rooms = st.session_state.get("desk_war_rooms") or {}
+    wr = war_rooms.get(key)
+    if wr is not None:
+        st.markdown("---")
+        verdict = verdicts.get(key)
+        if verdict is not None and hasattr(panels, "anchored_summary_html"):
+            panels.render(panels.anchored_summary_html(wr, verdict, now_ms))
+        elif hasattr(panels, "agent_summary_html"):
+            panels.render(panels.agent_summary_html(wr, now_ms))
+        w1, w2 = st.columns(2, gap="large")
+        with w1:
+            if hasattr(panels, "team_html"):
+                panels.render(panels.team_html(wr.bull, signal=signal))
+        with w2:
+            if hasattr(panels, "team_html"):
+                panels.render(panels.team_html(wr.bear, signal=signal))
+        if hasattr(panels, "trap_audit_html"):
+            panels.render(panels.trap_audit_html(wr))
+    else:
+        st.info(f"Click **RUN ANALYSIS** in the top bar to run the 11-agent confluence partner verdict for {cat.label} (held until invalidated).")
 
-    # Forecast path table
+    # Timeframe cascade
+    try:
+        bias_tf, anchor_tf, engine_tfs = profile.cascade
+        c_state = cascade.classify(frames, bias_tf, anchor_tf, engine_tfs)
+        inval = verdicts[key].anchored.invalidation if verdicts.get(key) is not None else base_a.direction.invalidation
+        panels.render(panels.cascade_html(c_state, invalidation=inval, price=base_a.price))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("cascade panel failed for %s: %s", key, exc)
+
+    # Forecast path & hit-rate table
     if fc is not None:
         try:
-            panels.render(panels.forecast_html(fc, None, cat.horizon_label))
+            panels.render(panels.forecast_html(fc, fc_record, cat.horizon_label))
         except Exception as exc:  # noqa: BLE001
             log.warning("forecast panel failed for %s: %s", key, exc)
 
-    # Multi-timeframe structure, liquidity & volatility matrices
-    read_tfs = list(profile.read_order) if profile is not None else [cat.chart_tf, cat.context_tf]
+    # Multi-timeframe confluence matrices (SMC, Liquidity, Harmonics, Value Breaks, Volatility Matrix)
     c_a, c_b = st.columns(2, gap="large")
     with c_a:
-        if smc_mod is not None:
-            for fn_name in ("analyze_multi", "scan_timeframes", "read_timeframes", "by_timeframe"):
-                fn = getattr(smc_mod, fn_name, None)
-                if callable(fn):
-                    try:
-                        panels.render(panels.smc_html(fn(frames, read_tfs)))
-                    except Exception:  # noqa: BLE001
-                        pass
-                    break
-        if harmonics_mod is not None:
-            for fn_name in ("scan_timeframes", "detect_multi", "find_harmonics", "by_timeframe"):
-                fn = getattr(harmonics_mod, fn_name, None)
-                if callable(fn):
-                    try:
-                        panels.render(panels.harmonics_html(fn(frames, read_tfs)))
-                    except Exception:  # noqa: BLE001
-                        pass
-                    break
+        if smc_by_tf:
+            panels.render(panels.smc_html(smc_by_tf))
+        if harm_by_tf:
+            panels.render(panels.harmonics_html(harm_by_tf))
     with c_b:
-        if liquidity_mod is not None:
-            for fn_name in ("analyze_multi", "scan_timeframes", "read_timeframes", "by_timeframe"):
-                fn = getattr(liquidity_mod, fn_name, None)
-                if callable(fn):
-                    try:
-                        panels.render(panels.liquidity_html(fn(m, read_tfs)))
-                    except Exception:  # noqa: BLE001
-                        try:
-                            panels.render(panels.liquidity_html(fn(frames, read_tfs)))
-                        except Exception:  # noqa: BLE001
-                            pass
-                    break
-        if value_breaks_mod is not None:
-            for fn_name in ("scan_timeframes", "read_timeframes", "by_timeframe"):
-                fn = getattr(value_breaks_mod, fn_name, None)
-                if callable(fn):
-                    try:
-                        panels.render(panels.value_breaks_html(fn(frames, read_tfs)))
-                    except Exception:  # noqa: BLE001
-                        pass
-                    break
+        if liq_by_tf:
+            panels.render(panels.liquidity_html(liq_by_tf))
+        if vb_by_tf:
+            panels.render(panels.value_breaks_html(vb_by_tf))
 
-    if vol_matrix_mod is not None:
-        for fn_name in ("build_matrix", "scan_timeframes", "vol_matrix", "by_timeframe"):
-            fn = getattr(vol_matrix_mod, fn_name, None)
-            if callable(fn):
-                try:
-                    panels.render(panels.vol_matrix_html(fn(m, read_tfs)))
-                except Exception:  # noqa: BLE001
-                    try:
-                        panels.render(panels.vol_matrix_html(fn(frames, read_tfs)))
-                    except Exception:  # noqa: BLE001
-                        pass
-                break
+    if vol_by_tf:
+        panels.render(panels.vol_matrix_html(vol_by_tf))
 
     if key == "live" and sine_mod is not None and hasattr(sine_mod, "evaluate"):
         try:
@@ -647,9 +678,6 @@ def _render_desk(key: str, store, m, analyses: dict, verdicts: dict, now_ms: int
             panels.render(panels.sine_experimental_html(warn, ny_now, rec))
         except Exception:  # noqa: BLE001
             pass
-
-    st.markdown("---")
-    panels.render(panels.layman_summary_html(base_a, cat.label, derivs, fg, now_ms))
 
 
 def _render_traps(store, m, analyses: dict, now_ms: int) -> None:
@@ -701,43 +729,87 @@ def _render_traps(store, m, analyses: dict, now_ms: int) -> None:
     panels.render(panels.trap_settled_html(settled, now_ms, CATEGORY_LABELS))
 
 
-def _render_trade(store, m, analyses: dict, now_ms: int) -> None:
+def _render_trade(store, m, analyses: dict, verdicts: dict, now_ms: int) -> None:
     panels.render(panels.engine_hero_html(
-        6, "Active Trade",
-        "Enter a position and it is evaluated, pinned and tracked until you kill it. Levels are computed in code first; "
-        "ten sub-agents, the four category heads and the TRAP head are consulted second. Cards live in the database "
-        "and survive a refresh and a redeploy."
+        6, "Master Swing Trades",
+        "Confluence across all feeds distilled into two master swing setups only: (1) Intraday / Swing (12h/1d) and "
+        "(2) Weekly / Structural Swing (1d/1w). Category desks provide directional confluence until invalidated; "
+        "actual trade execution lives strictly in these two master lanes."
     ))
     gamma = desk_derivs.gamma_for(None, m)
     panels.render(panels.gamma_bar_html(gamma, getattr(m.spot, "last", None)))
+
+    # Master Lanes overview (Intraday/Swing & Weekly/Swing confluence)
     if hasattr(panels, "master_lanes_html"):
         panels.render(panels.master_lanes_html(analyses, m, now_ms))
 
-    st.subheader("Open a position")
-    spot_px = float(getattr(m.spot, "last", None) or 60000.0)
+    # Synthesize the two Master Trades directly from full multi-desk confluence
+    spot_px = float(getattr(m.spot, "last", None) or 0.0)
+    war_rooms = st.session_state.get("desk_war_rooms") or {}
+
+    st.subheader("Confluence Master Setups (Intraday Swing & Weekly Swing)")
+    cols = st.columns(2, gap="large")
+    for col, (desk_key, title, subtitle) in zip(cols, MASTER_TRADE_DESKS):
+        with col:
+            a = analyses.get(desk_key)
+            v = verdicts.get(desk_key)
+            wr = war_rooms.get(desk_key)
+            if a is None:
+                st.info(f"{title}: waiting for candle data.")
+                continue
+
+            # Determine confluent direction from AI war room if run, else anchored verdict
+            if wr is not None and wr.bias in ("BULL", "BEAR"):
+                confluent_dir = "LONG" if wr.bias == "BULL" else "SHORT"
+                basis = f"11-Agent War Room ({wr.bias}, {wr.confidence:.0%} conf)"
+            elif wr is not None and "TRAP" in wr.bias:
+                confluent_dir = None
+                basis = f"STAND ASIDE — {wr.bias}"
+            elif v is not None and v.anchored.direction in ("BULLISH", "BEARISH"):
+                confluent_dir = "LONG" if v.anchored.direction == "BULLISH" else "SHORT"
+                basis = f"Anchored Desk ({v.anchored.direction}, {v.anchored.confidence:.0%} conf)"
+            elif a.direction.direction in ("BULLISH", "BEARISH"):
+                confluent_dir = "LONG" if a.direction.direction == "BULLISH" else "SHORT"
+                basis = f"Desk Direction ({a.direction.direction}, {a.direction.confidence:.0%} conf)"
+            else:
+                confluent_dir = None
+                basis = "BALANCED / NO CONFLUENCE — STAND ASIDE"
+
+            st.markdown(f"**{title}**  \n_{subtitle}_  \n**Confluence:** `{basis}`")
+            if confluent_dir is None:
+                st.caption("No directional master trade is active on this tier until confluence resolves.")
+            elif trade_map is not None and hasattr(trade_map, "build_trade_map") and spot_px > 0:
+                try:
+                    tm = trade_map.build_trade_map(
+                        m=m,
+                        analyses=analyses,
+                        category=desk_key,
+                        side=confluent_dir,
+                        entry=spot_px,
+                        stop=None,
+                        leverage=5.0,
+                    )
+                    panels.render(panels.trade_result_html(tm))
+                except Exception as exc:  # noqa: BLE001
+                    st.caption(f"Master setup calculation pending: {exc}")
+
+    st.markdown("---")
+    st.subheader("Pin a Master Swing Trade for Live 24/7 Monitoring")
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        _asset = st.text_input("Asset", value="BTC/USDT")
+        horizon_key = st.selectbox(
+            "Master Tier",
+            ["intraday", "weekly"],
+            format_func=lambda k: "Intraday / Swing (12h · 1d)" if k == "intraday" else "Weekly / Structural Swing (1d · 1w)",
+        )
     with c2:
         side = st.selectbox("Direction", ["LONG", "SHORT"])
     with c3:
-        entry = st.number_input("Entry ($) · defaults to spot", value=round(spot_px, 2), min_value=1.0, step=50.0)
+        entry = st.number_input("Entry ($) · defaults to spot", value=round(spot_px or 60000.0, 2), min_value=1.0, step=50.0)
     with c4:
-        stop_in = st.number_input("Stop loss ($) · 0 lets the desk place it", value=0.0, min_value=0.0, step=50.0)
+        stop_in = st.number_input("Stop loss ($) · 0 lets desk place it", value=0.0, min_value=0.0, step=50.0)
 
-    horizon_key = st.radio(
-        "Judge it over",
-        list(CATEGORY_KEYS),
-        format_func=lambda k: {
-            "live": "Live Recon · four hours",
-            "intraday": "Intraday · 24 hours",
-            "weekly": "Weekly · seven days",
-            "monthly": "Monthly · 30 days",
-        }.get(k, k),
-        horizontal=True,
-    )
-
-    if st.button("Open and track this trade", type="primary"):
+    if st.button("Open and pin Master Trade", type="primary"):
         if trade_map is None or not hasattr(trade_map, "build_trade_map"):
             st.warning("Trade map builder not available in this build.")
         else:
@@ -752,12 +824,12 @@ def _render_trade(store, m, analyses: dict, now_ms: int) -> None:
                     leverage=5.0,
                 )
                 panels.render(panels.trade_result_html(tm))
-                st.session_state["last_trade_map"] = tm
+                st.session_state["last_pinned_master_trade"] = tm
             except Exception as exc:  # noqa: BLE001
-                st.error(f"Could not evaluate trade: {exc}")
+                st.error(f"Could not evaluate master trade: {exc}")
 
-    if "last_trade_map" in st.session_state:
-        panels.render(panels.trade_result_html(st.session_state["last_trade_map"]))
+    if "last_pinned_master_trade" in st.session_state:
+        panels.render(panels.trade_result_html(st.session_state["last_pinned_master_trade"]))
 
     open_trades = []
     if store is not None:
@@ -766,7 +838,7 @@ def _render_trade(store, m, analyses: dict, now_ms: int) -> None:
         elif hasattr(store, "open_trades"):
             open_trades = store.open_trades()
     if not open_trades:
-        st.caption("No position is being tracked. Open one above and it stays pinned here.")
+        st.caption("No master swing position is currently pinned in the ledger.")
     else:
         for t in open_trades[:MAX_TRADES]:
             panels.render(panels.trade_card_html(t, now_ms=now_ms, price_now=getattr(m.spot, "last", None)))
@@ -775,7 +847,7 @@ def _render_trade(store, m, analyses: dict, now_ms: int) -> None:
 def _render_director(store, m, analyses: dict, now_ms: int) -> None:
     panels.render(panels.engine_hero_html(
         7, "Director Report",
-        "Multi-agent synthesis across technicals, order flow, derivatives, and macro."
+        "15-agent multi-desk synthesis across technicals, order flow, derivatives, and macro."
     ))
     report = st.session_state.get("latest_report")
     if report is None and store is not None:
@@ -785,22 +857,8 @@ def _render_director(store, m, analyses: dict, now_ms: int) -> None:
         elif hasattr(store, "latest_report"):
             report = store.latest_report()
 
-    if st.session_state.pop("run_analysis_requested", False):
-        cfg = _llm_config_from_env()
-        if cfg is None:
-            st.warning("No LLM API key configured in environment (OPENROUTER_API_KEY, GROQ_API_KEY, or GEMINI_API_KEY).")
-        elif runner is None or not hasattr(runner, "run_15_agent"):
-            st.warning("Multi-agent runner not available in this build.")
-        else:
-            with st.spinner("Running multi-agent analysis..."):
-                try:
-                    report = runner.run_15_agent(cfg, m, analyses, now_ms=now_ms)
-                    st.session_state["latest_report"] = report
-                except Exception as exc:  # noqa: BLE001
-                    st.error(f"Analysis run failed: {exc}")
-
     if report is None:
-        st.info("Run Analysis to generate a Director report.")
+        st.info("Click **RUN ANALYSIS** in the top bar to generate the 15-agent Director report and all 4 desk war-room summaries.")
         if accuracy is not None and hasattr(accuracy, "summary") and store is not None:
             try:
                 panels.render(panels.accuracy_html(accuracy.summary(store)))
@@ -842,26 +900,68 @@ def _render_qf(store, m, analyses: dict, now_ms: int) -> None:
         9, "Quant Forecast",
         "24-hour quantitative plan, volatility windows, timeline, and live self-audit."
     ))
-    if quant_forecast is None or qf_alerts is None:
-        st.info("Quant forecast module not present in this build.")
-        return
+    h1 = (getattr(getattr(m, "spot", None), "frames", None) or {}).get("1h")
+    flow = getattr(m.taker_flow, "frames", None).get("1h") if getattr(getattr(m, "taker_flow", None), "available", False) else None
+    price = float(getattr(m.spot, "last", None) or 0.0)
+
     try:
-        try:
-            plan = quant_forecast.ensure_plan(store, m, analyses, now_ms)
-        except TypeError:
-            plan = quant_forecast.ensure_plan(m, analyses, now_ms)
-        live = quant_forecast.live_state(plan, m, now_ms)
-        status, msgs = qf_alerts.evaluate(plan, live, m, now_ms)
-        panels.render(panels.qf_wire_html(plan, status=status, live=live))
-        h1 = (getattr(getattr(m, "spot", None), "frames", None) or {}).get("1h")
+        # Run the official pipeline audit/build step when store is available, else compute directly
+        if store is not None and hasattr(qf_alerts, "run"):
+            try:
+                qf_alerts.run(
+                    store, m, now_ms, desk_derivs.gamma_for("intraday", m),
+                    weekly=analyses.get("weekly"), weekly_gamma=desk_derivs.gamma_for("weekly", m),
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.warning("qf_alerts.run failed: %s", exc)
+
+        plan = None
+        if store is not None:
+            for attr in ("latest_qf_plan", "qf_plan", "get_qf_plan"):
+                fn = getattr(store, attr, None)
+                if callable(fn):
+                    try:
+                        plan = fn(quant_forecast.day_start(now_ms))
+                    except TypeError:
+                        plan = fn()
+                    if plan:
+                        break
+
+        if not plan or not plan.get("available"):
+            if h1 is None or h1.empty or price <= 0:
+                st.warning("Waiting for 1h candle history to build today's Quant Forecast.")
+                return
+            start_ms = quant_forecast.day_start(now_ms)
+            end_ms = start_ms + quant_forecast.DAY_MS
+            plan = quant_forecast.build_plan(
+                h1, now_ms, end_ms, price,
+                flow=flow,
+                gamma=desk_derivs.gamma_for("intraday", m),
+            )
+            if not plan.get("backtest"):
+                plan["backtest"] = quant_forecast.backtest(h1, now_ms)
+
+        if not plan.get("available"):
+            st.warning(f"Quant Forecast unavailable: {plan.get('reason', 'insufficient history')}")
+            return
+
+        live_outcomes = []
+        if store is not None and hasattr(store, "qf_outcomes"):
+            try:
+                live_outcomes = store.qf_outcomes(limit=30)
+            except Exception:  # noqa: BLE001
+                pass
+        live_rec = quant_forecast.record(live_outcomes) if live_outcomes else None
+
+        panels.render(panels.qf_wire_html(plan, status="ACTIVE", live=live_rec))
         if h1 is not None and len(h1):
             charts.render_qf_chart(plan, h1, dark=True, height=520, signal=True, now_ms=now_ms)
         panels.render(panels.qf_directive_html(plan))
         panels.render(panels.qf_schedule_html(plan, now_ms))
         panels.render(panels.qf_timeline_html(plan, now_ms, h1))
-        panels.render(panels.qf_status_html(status, msgs, [plan]))
+        panels.render(panels.qf_status_html("ACTIVE", [], [plan]))
     except Exception as exc:  # noqa: BLE001
-        st.error(f"Quant forecast unavailable: {exc}")
+        st.error(f"Quant forecast error: {exc}")
 
 
 def main() -> None:
@@ -886,13 +986,16 @@ def main() -> None:
         verdicts = _run_pipeline_pass(store, m, analyses, now_ms)
         st.rerun()
 
+    if st.session_state.pop("run_analysis_requested", False):
+        _execute_full_ai_run(store, m, analyses, now_ms)
+
     kind, key = NAV_BY_LABEL[choice]
     if kind == "desk":
         _render_desk(key, store, m, analyses, verdicts, now_ms, dark, signal)
     elif kind == "traps":
         _render_traps(store, m, analyses, now_ms)
     elif kind == "trade":
-        _render_trade(store, m, analyses, now_ms)
+        _render_trade(store, m, analyses, verdicts, now_ms)
     elif kind == "director":
         _render_director(store, m, analyses, now_ms)
     elif kind == "macro":
