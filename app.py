@@ -1,6 +1,4 @@
-Here is the complete, updated `app.py` with `_safe_rail_tone`, Discord alert dispatch (`market_alerts`, `all_trade_alerts`, `closed_trade_alerts`), the 11-agent war rooms, two Master Swing Trades, Quant Forecast, and the AI Layman Summary integrated:
 
-```python
 """Streamlit entrypoint for TRAP INTELLIGENCE."""
 from __future__ import annotations
 
