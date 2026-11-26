@@ -10,10 +10,10 @@ that desk's current view and stays silent.
 
 What the answers do, and only to conviction (the direction is the war room's evidence, not a vote):
 
-* a HIGHER desk agreeing adds 10% to conviction; a higher desk opposing takes 20% off. The higher
+- a HIGHER desk agreeing adds 10% to conviction; a higher desk opposing takes 20% off. The higher
   timeframe sets the vector, so going against it costs more than going with it earns.
-* a LOWER desk opposing takes 5% off: it is the engine timeframe, an early warning, not a veto.
-* the multiplier is held between 0.5 and 1.15, and conviction never exceeds 100%.
+- a LOWER desk opposing takes 5% off: it is the engine timeframe, an early warning, not a veto.
+- the multiplier is held between 0.5 and 1.15, and conviction never exceeds 100%.
 
 Both ways: when a desk publishes a verdict that opposes another desk's live anchored verdict, a side note
 is appended to that other desk's window, so the desk that was overruled hears about it too."""
@@ -141,39 +141,18 @@ def _notes(answers: list[DeskAnswer], mine: str | None, factor: float) -> list[s
 
 def apply(res, hs: Handshake):
     """The war-room result with its conviction finalised by the handshake, and the exchange attached."""
-    return replace(res, confidence=min(1.0, res.confidence * hs.factor),
+    new_conf = min(1.0, res.confidence * hs.factor)
+    updated_brief = getattr(res, "head_brief", None)
+    if updated_brief is not None and abs(new_conf - res.confidence) > 1e-9:
+        old_pct = f"calibrated confidence {res.confidence:.0%}"
+        new_pct = f"post-handshake confidence {new_conf:.0%}"
+        new_thesis = updated_brief.confluence_thesis.replace(old_pct, new_pct)
+        updated_brief = replace(updated_brief, confluence_thesis=new_thesis)
+    return replace(res, confidence=new_conf,
                    confidence_before_handshake=res.confidence,
-                   notes=tuple(res.notes) + hs.notes, handshake=hs.to_payload())
+                   notes=tuple(res.notes) + hs.notes, handshake=hs.to_payload(),
+                   head_brief=updated_brief)
 
 
 def notify(store, category: str, bias: str, now_ms: int, price: float | None = None) -> list[str]:
-    """The other half of the handshake: tell each desk whose live verdict this one opposes. Append-only,
-    one note per desk, direction and window. Returns the desks that were told."""
-    mine = lean(bias)
-    if mine is None:
-        return []
-    told = []
-    label = PROFILES[category].label
-    for other in ORDER:
-        if other == category:
-            continue
-        try:
-            anchor = store.get_live_anchor(category=other)
-        except Exception as e:  # noqa: BLE001
-            log.warning("handshake notify: %s unreadable (%s)", other, e)
-            continue
-        if not anchor or (anchor.get("window_close_ms") and anchor["window_close_ms"] <= now_ms):
-            continue
-        theirs = lean(str(anchor.get("bias") or ""))
-        if theirs is None or theirs == mine:
-            continue
-        higher = ORDER.index(category) > ORDER.index(other)
-        wrote = store.add_side_note(
-            anchor["window_open_ms"], now_ms, HANDSHAKE, f"handshake:{category}:{mine}",
-            f"The {label} desk now reads {bias}, against this desk's {anchor.get('bias')}.",
-            ("A higher timeframe sets the vector: weigh this desk's call against it." if higher else
-             "A lower timeframe turning first is an early warning for this candle, not a reversal by itself."),
-            price, category=other)
-        if wrote:
-            told.append(other)
-    return told
+    """The other half of the handshake
